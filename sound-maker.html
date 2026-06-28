@@ -1,0 +1,1840 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>C64 GameMaker Sound Editor</title>
+<link rel="stylesheet" href="css/gm-ui.css">
+<style>
+/* Page-specific: centered flex layout */
+body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+}
+
+/* Wrapper for the whole tool. Fixed pixel size matches the other editors
+   (sprite-maker/editor: 720×520) and anchors the quit-menu overlay so it
+   covers exactly this area instead of the full viewport. Flex column with
+   centered cross-axis so header + editor panel sit in the middle. */
+#screen {
+    position: relative;
+    width: 720px;
+    height: 520px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.header-row {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-bottom: 10px;
+    width: 100%;
+    max-width: 600px;
+}
+
+.file-name {
+    color: var(--c64-yellow);
+    text-transform: lowercase;
+}
+
+/* Main container */
+.main-container {
+    display: flex;
+    gap: 10px;
+}
+
+/* Editor panel - styled like the screenshot */
+.editor-panel {
+    flex: 0 1 auto;
+    background: linear-gradient(135deg, #b06020 0%, #c07030 20%, #804010 40%, #904820 60%, #703010 80%, #602000 100%);
+    border: 4px solid #000;
+    border-radius: 8px;
+    padding: 12px;
+}
+
+/* Dark inner area - using actual table for proper rowspan support */
+.editor-inner {
+    background-color: var(--c64-black);
+    border: 3px solid var(--c64-gray1);
+    border-radius: 4px;
+    padding: 8px;
+}
+
+/* Table layout matching original C64 GameMaker */
+.editor-table {
+    border-collapse: collapse;
+    border: 1px solid var(--c64-gray1);
+}
+
+.editor-table td {
+    border: 1px solid var(--c64-gray1);
+    padding: 4px 6px;
+    vertical-align: middle;
+}
+
+.editor-table td[rowspan] {
+    vertical-align: top;
+}
+
+/* Center knobs in their cells */
+.editor-table td:has(.knob) {
+    text-align: center;
+    min-width: 40px;
+}
+
+/* Constrain value column width */
+.editor-table td:has(.value) {
+    width: 50px;
+    text-align: right;
+}
+
+/* Double-height row */
+.editor-table tr.double-height td {
+    height: 60px;
+}
+
+.eq-values-row {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+}
+
+/* Row color schemes matching original C64 GameMaker */
+.row-wave .label,
+.row-wave .wave-name,
+.row-wave .value {
+    color: var(--c64-lt-red);
+}
+.row-wave .knob {
+    background: var(--c64-lt-red);
+}
+
+.row-adsr .label,
+.row-adsr .value {
+    color: var(--c64-cyan);
+}
+.row-adsr .knob {
+    background: var(--c64-cyan);
+}
+
+/* Remove borders between ADSR rows to look like one span */
+.adsr-group + .adsr-group td.row-adsr {
+    border-top: none;
+}
+.adsr-group:has(+ .adsr-group) td.row-adsr {
+    border-bottom: none;
+}
+
+.row-freq .label,
+.row-freq .cell-label,
+.row-freq .value {
+    color: var(--c64-lt-blue);
+}
+.row-freq .knob {
+    background: var(--c64-lt-blue);
+}
+
+/* Remove borders between freq rows for knob and value columns only */
+/* First frq row (has label): knob=cell2, value=cell3 - remove bottom */
+tr:has(.frq-label) td:nth-child(2),
+tr:has(.frq-label) td:nth-child(3) {
+    border-bottom: none;
+}
+/* Second frq row (merged label): knob=cell1, value=cell2 - remove top and bottom */
+tr:has(.frq-label) + tr td:nth-child(1),
+tr:has(.frq-label) + tr td:nth-child(2) {
+    border-top: none;
+    border-bottom: none;
+}
+/* Spd row: knob=cell2, value=cell3 - remove top */
+.spd-label + td,
+.spd-label + td + td {
+    border-top: none;
+}
+
+.row-pls .label,
+.row-pls .cell-label,
+.row-pls .value {
+    color: var(--c64-yellow);
+}
+.row-pls .knob {
+    background: var(--c64-yellow);
+}
+
+/* Remove borders between pls rows for knob and value columns */
+/* First pls row (has label): knob=cell2, value=cell3 - remove bottom */
+tr:has(.pls-label) td:nth-child(2),
+tr:has(.pls-label) td:nth-child(3) {
+    border-bottom: none;
+}
+/* Second pls row (merged label): knob=cell1, value=cell2 - remove top */
+tr:has(.pls-label) + tr td:nth-child(1),
+tr:has(.pls-label) + tr td:nth-child(2) {
+    border-top: none;
+}
+
+.row-dur .label,
+.row-dur .value {
+    color: var(--c64-white);
+}
+
+/* Action labels (hear frame, hear sound, constant, quiet) */
+.action-cell {
+    border-top: none !important;
+    border-bottom: none !important;
+}
+.action-label {
+    cursor: pointer;
+}
+
+/* Constant button pulsing when active */
+@keyframes pulse-constant {
+    0%, 100% { color: var(--c64-yellow); }
+    50% { color: var(--c64-brown); }
+}
+
+#btnConstant.active {
+    animation: pulse-constant 0.25s ease-in-out infinite;
+}
+
+/* Hear buttons turn white while playing */
+#btnHearFrame.playing,
+#btnHearSound.playing {
+    color: var(--c64-white) !important;
+}
+
+/* Repeats title cell */
+.repeats-title {
+    text-align: center;
+    border-bottom: none !important;
+}
+
+/* Repeats knobs cell */
+.repeats-knobs {
+    border-top: none !important;
+    text-align: left !important;
+    padding: 4px 6px;
+    vertical-align: middle !important;
+}
+.repeats-knobs .knob {
+    background: var(--c64-lt-red);
+}
+.repeats-knobs .label-green {
+    color: var(--c64-lt-red);
+}
+.repeats-knobs .value {
+    color: var(--c64-lt-red);
+}
+.repeats-knobs .box-row {
+    margin: 0;
+    line-height: 1;
+}
+.repeats-knobs .box-row:has(.knob) {
+    padding-left: 14px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.repeats-knobs .box-row:has(.value):not(:has(.knob)) {
+    padding-top: 3px;
+}
+/* Add space above delay row (3rd box-row) */
+.repeats-knobs .box-row:nth-child(3) {
+    margin-top: 8px;
+}
+
+/* h/l subscripts are gray */
+.sub {
+    color: var(--c64-gray1);
+    vertical-align: sub;
+}
+
+/* Stacked subscripts for frq h/l and pls h/l */
+.sub-stack {
+    display: inline-flex;
+    flex-direction: column;
+    justify-content: space-around;
+    vertical-align: middle;
+    line-height: 1;
+    margin-left: 2px;
+    height: 100%;
+}
+.sub-stack .sub {
+    vertical-align: baseline;
+}
+
+/* Make the merged label cells use full height for alignment */
+.frq-label, .pls-label {
+    height: 1px; /* triggers full rowspan height */
+}
+
+/* Wrapper for label + stacked subscripts */
+.label-with-subs {
+    display: flex;
+    align-items: center;
+    height: 100%;
+}
+.label-with-subs .sub-stack {
+    height: 100%;
+    justify-content: space-around;
+}
+
+/* frq label cell - remove bottom border to merge with spd */
+.frq-label {
+    border-bottom: none !important;
+}
+
+/* spd label cell - remove top border to merge with frq above */
+.spd-label {
+    border-top: none !important;
+}
+
+/* Remove border between frq l row and spd row */
+tr:has(.spd-label) td.row-freq {
+    border-top: none !important;
+}
+/* Target the row before spd (frq l row) */
+tr:has(.frq-label) + tr td.row-freq {
+    border-bottom: none !important;
+}
+
+/* Remove border between frame and used cells */
+tr:has(.frq-label) td[colspan="3"] {
+    border-bottom: none;
+}
+tr:has(.frq-label) + tr td[colspan="3"] {
+    border-top: none;
+    border-bottom: 1px solid var(--c64-gray1); /* restore border with equalizer */
+}
+
+/* Wave name with fixed width to prevent layout shift */
+.wave-name {
+    display: inline-block;
+    text-align: left;
+}
+
+.label-green {
+    color: var(--c64-lt-green);
+}
+
+.label-reg-green {
+    color: var(--c64-green);
+}
+
+/* Frame/used cells - label left, number right */
+.frame-used-cell {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+/* Value display - clickable */
+.value {
+    color: var(--c64-yellow);
+    cursor: pointer;
+    padding: 2px 4px;
+    min-width: 32px;
+    text-align: right;
+}
+
+.value:hover {
+    background-color: var(--c64-hover-bg);
+    border-radius: 2px;
+}
+
+/* Editable input that replaces value */
+.value-input {
+    background-color: var(--c64-panel-border);
+    border: 1px solid var(--c64-green);
+    color: var(--c64-yellow);
+    font-family: C64, monospace;
+    width: 40px;
+    padding: 2px 4px;
+    text-align: right;
+    -moz-appearance: textfield; /* Firefox */
+}
+
+/* Hide number input spinners */
+.value-input::-webkit-outer-spin-button,
+.value-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+/* Knob styling - flat C64-style */
+.knob {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--c64-cyan); /* default, overridden by row classes */
+    border: 2px solid var(--c64-black);
+    cursor: pointer;
+    position: relative;
+    display: inline-block;
+    vertical-align: middle;
+    flex-shrink: 0;
+}
+
+.knob::after {
+    content: '';
+    position: absolute;
+    width: 2px;
+    height: 10px;
+    background: #000;
+    top: 2px;
+    left: 50%;
+    transform-origin: center 12px;
+    transform: translateX(-50%) rotate(var(--knob-angle, 0deg));
+    pointer-events: none;
+}
+
+.knob.disabled {
+    background: var(--c64-gray2);
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.btn-cell {
+    position: relative;
+    background: var(--c64-gray1);
+}
+
+.btn-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+}
+
+.btn-grid button {
+    margin: 0;
+}
+
+/* Copy UI - overlay on button grid */
+.copy-ui {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: var(--c64-black);
+    gap: 6px;
+    padding: 4px;
+}
+
+.copy-ui.active {
+    display: flex;
+}
+
+.copy-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.copy-label,
+.copy-frame {
+    color: var(--c64-lt-green);
+}
+
+.copy-to {
+    color: var(--c64-white);
+}
+
+.copy-select {
+    font-family: C64, monospace;
+    font-size: 16px;
+    background: var(--c64-gray1);
+    color: var(--c64-white);
+    border: none;
+    padding: 0 2px;
+    cursor: pointer;
+}
+
+.frame-select {
+    font-family: C64, monospace;
+    font-size: 16px;
+    background: transparent;
+    color: var(--c64-lt-green);
+    border: none;
+    cursor: pointer;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+    padding: 0;
+}
+
+.copy-buttons {
+    display: flex;
+    gap: 16px;
+    margin-top: 4px;
+}
+
+.copy-btn {
+    color: var(--c64-lt-green);
+    cursor: pointer;
+}
+
+.copy-btn:hover {
+    color: var(--c64-white);
+}
+
+/* Checkbox */
+.checkbox {
+    width: 12px;
+    height: 12px;
+    background-color: transparent;
+    border: 2px solid var(--c64-gray1);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    vertical-align: middle;
+}
+
+.checkbox.checked {
+    background-color: var(--c64-white);
+    border-color: var(--c64-white);
+}
+
+/* Tie checkbox and label */
+.tie-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.tie-label {
+    color: var(--c64-gray1);
+    cursor: pointer;
+}
+
+.tie-group:has(.checkbox.checked) .tie-label {
+    color: var(--c64-white);
+}
+
+/* Equalizer display */
+/* EQ toggle row: off [checkbox] on */
+.eq-toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    margin-top: 2px;
+}
+
+.eq-toggle-label {
+    color: var(--c64-gray1);
+    cursor: pointer;
+}
+
+.eq-toggle-label.active {
+    color: var(--c64-white) !important;
+}
+
+/* EQ slider switch */
+.eq-switch {
+    width: 20px;
+    height: 10px;
+    border: 1px solid var(--c64-white);
+    cursor: pointer;
+    position: relative;
+    margin: 0 4px;
+}
+
+.eq-switch-knob {
+    width: 8px;
+    height: 8px;
+    background: var(--c64-white);
+    position: absolute;
+    top: 0;
+    left: 0;
+    transition: left 0.1s;
+}
+
+.eq-switch.on .eq-switch-knob {
+    left: 10px;
+}
+
+/* EQ sliders row */
+.eq-sliders-row {
+    display: flex;
+    gap: 6px;
+    justify-content: center;
+}
+
+.eq-val {
+    min-width: 20px;
+    text-align: center;
+    color: var(--c64-green);
+}
+
+.slider-box {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+    height: 100%;
+}
+
+.slider-box .value {
+    margin-bottom: 6px;
+}
+
+.slider-box .slider-inner {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+}
+
+.slider-box .slider-label {
+    margin-right: 8px;
+}
+
+.slider-track {
+    width: 36px;
+    height: 60px;
+    background: repeating-linear-gradient(
+        to bottom,
+        var(--c64-gray1) 0px,
+        var(--c64-gray1) 2px,
+        var(--c64-white) 2px,
+        var(--c64-white) 4px
+    );
+    border: none;
+    position: relative;
+    cursor: pointer;
+}
+
+.slider-track::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 4px;
+    bottom: 4px;
+    width: 4px;
+    transform: translateX(-50%);
+    background: var(--c64-gray1);
+}
+
+.slider-thumb {
+    width: 32px;
+    height: 20px;
+    background: linear-gradient(to bottom,
+        #c07030 0%,
+        #a05020 30%,
+        #804010 70%,
+        #602000 100%
+    );
+    border: 1px solid #000;
+    border-radius: 2px;
+    position: absolute;
+    left: 2px;
+    cursor: grab;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.slider-thumb::after {
+    content: '';
+    width: 80%;
+    height: 3px;
+    background: var(--c64-yellow);
+}
+
+/* Colored centerlines for specific sliders */
+.slider-volume .slider-thumb::after {
+    background: var(--c64-cyan);
+}
+
+.slider-speed .slider-thumb::after {
+    background: var(--c64-lt-red);
+}
+
+.slider-label {
+    color: var(--c64-cyan);
+    writing-mode: vertical-lr;
+    text-orientation: upright;
+    letter-spacing: -2px;
+}
+
+/* More letter spacing for volume/speed labels */
+.slider-volume .slider-label,
+.slider-speed .slider-label {
+    letter-spacing: 2px;
+}
+
+/* Large sliders (volume, speed) - shared sizing */
+.slider-volume .slider-track,
+.slider-speed .slider-track {
+    width: 40px;
+    height: 140px;
+}
+.slider-volume .slider-thumb,
+.slider-speed .slider-thumb {
+    width: 36px;
+    height: 22px;
+    left: 2px;
+}
+
+/* Volume slider - cyan */
+.slider-volume .value,
+.slider-volume .slider-label {
+    color: var(--c64-cyan);
+}
+
+/* Speed slider - lt red */
+.slider-speed .value,
+.slider-speed .slider-label {
+    color: var(--c64-lt-red);
+}
+
+/* EQ cells - remove borders between rows */
+.eq-cell {
+    border-top: none !important;
+    border-bottom: none !important;
+    text-align: center;
+    vertical-align: middle;
+}
+.eq-cell-top {
+    border-top: 1px solid var(--c64-gray1) !important;
+}
+.eq-cell-bottom {
+    border-bottom: 1px solid var(--c64-gray1) !important;
+    vertical-align: middle;
+    padding: 8px 4px;
+}
+
+/* Cells containing sliders need bottom padding */
+td:has(.slider-track) {
+    padding-bottom: 8px !important;
+}
+
+/* Volume and speed cells - align to bottom */
+td:has(.slider-volume),
+td:has(.slider-speed) {
+    vertical-align: bottom !important;
+    padding-top: 4px !important;
+}
+
+/* EQ sliders */
+.eq-slider-box {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.eq-slider-box .slider-thumb::after {
+    background: var(--c64-green);
+}
+
+.slider-value {
+    color: var(--c64-white);
+}
+
+
+/* Info box */
+.info-box {
+    background-color: var(--c64-panel-border);
+    border: 1px solid var(--c64-gray1);
+    padding: 2px 4px;
+    color: var(--c64-yellow);
+}
+
+</style>
+</head>
+<body>
+
+<div id="screen">
+<div class="header-row">
+    <!-- &nbsp; padding around the name keeps the header row at its natural
+         height/width whether the name span is empty or populated. -->
+    <div class="file-name">&nbsp;<span id="fileName"></span>&nbsp;</div>
+</div>
+
+<div class="main-container">
+    <!-- Editor Panel -->
+    <div class="editor-panel">
+        <div class="editor-inner">
+            <table class="editor-table">
+                <!-- Row 1: wave | knob | sawtooth (colspan 2) | tie | buttons (rowspan 3) -->
+                <tr>
+                    <td class="row-wave"><span class="label">wave</span></td>
+                    <td class="row-wave"><div class="knob" id="knobWave" data-param="wave" data-min="0" data-max="3"></div></td>
+                    <td class="row-wave" colspan="3"><span class="wave-name" id="waveName">sawtooth</span></td>
+                    <td><div class="tie-group"><div class="checkbox" id="chkTie"></div><span class="tie-label">tie</span></div></td>
+                    <td rowspan="3" colspan="2" class="btn-cell">
+                        <div class="btn-grid" id="btnGrid">
+                            <button onclick="showDiskPopup()">file</button>
+                            <button onclick="quitEditor()">menu</button>
+                            <button onclick="insertFrame()">ins</button>
+                            <button onclick="showDeleteUI()">del</button>
+                            <button onclick="showCopyUI()">copy</button>
+                            <button onclick="showClearUI()">clr</button>
+                        </div>
+                        <div class="copy-ui" id="copyUI">
+                            <div class="copy-row">
+                                <span class="copy-label">copy </span>
+                                <span class="copy-frame" id="copyFromFrame">001</span>
+                            </div>
+                            <div class="copy-row">
+                                <span class="copy-to">to </span>
+                                <select class="copy-select" id="copyToSelect"></select>
+                                <span class="copy-to">?</span>
+                            </div>
+                            <div class="copy-buttons">
+                                <span class="copy-btn" onclick="doCopy()">[yes]</span>
+                                <span class="copy-btn" onclick="hideCopyUI()">[no]</span>
+                            </div>
+                        </div>
+                        <div class="copy-ui" id="clearUI">
+                            <div class="copy-row">
+                                <span class="copy-label">clear</span>
+                            </div>
+                            <div class="copy-row">
+                                <span class="copy-to">sound?</span>
+                            </div>
+                            <div class="copy-buttons">
+                                <span class="copy-btn" onclick="doClear()">[yes]</span>
+                                <span class="copy-btn" onclick="hideClearUI()">[no]</span>
+                            </div>
+                        </div>
+                        <div class="copy-ui" id="deleteUI">
+                            <div class="copy-row">
+                                <span class="copy-label">delete</span>
+                            </div>
+                            <div class="copy-row">
+                                <span class="copy-to">frame </span>
+                                <span class="copy-to" id="deleteFrameNum">001</span>
+                            </div>
+                            <div class="copy-buttons">
+                                <span class="copy-btn" onclick="doDelete()">[yes]</span>
+                                <span class="copy-btn" onclick="hideDeleteUI()">[no]</span>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+                <!-- Row 2: att | knob | 000 | repeats title (colspan 3) | buttons cont -->
+                <tr class="adsr-group">
+                    <td class="row-adsr"><span class="label">att</span></td>
+                    <td class="row-adsr"><div class="knob" id="knobAtt" data-param="att" data-min="0" data-max="15"></div></td>
+                    <td class="row-adsr"><span class="value" id="valAtt" data-param="att" data-min="0" data-max="15">000</span></td>
+                    <td colspan="3" class="repeats-title"><span class="box-title" style="color: var(--c64-lt-blue);">repeats</span></td>
+                </tr>
+                <!-- Row 3: dec | knob | 015 | repeats knobs (colspan 3, rowspan 3) | buttons cont -->
+                <tr class="adsr-group">
+                    <td class="row-adsr"><span class="label">dec</span></td>
+                    <td class="row-adsr"><div class="knob" id="knobDec" data-param="dec" data-min="0" data-max="15"></div></td>
+                    <td class="row-adsr"><span class="value" id="valDec" data-param="dec" data-min="0" data-max="15">015</span></td>
+                    <td colspan="3" rowspan="3" class="repeats-knobs">
+                        <div class="box-row">
+                            <div class="knob" id="knobRepeats" data-param="repeatCount" data-min="0" data-max="255"></div>
+                            <span class="label-green">number</span>
+                        </div>
+                        <div class="box-row">
+                            <span class="value" id="valRepeats" data-param="repeatCount" data-min="0" data-max="255">000</span>
+                        </div>
+                        <div class="box-row">
+                            <div class="knob" id="knobDelay" data-param="repeatDelay" data-min="0" data-max="255"></div>
+                            <span class="label-green">delay</span>
+                        </div>
+                        <div class="box-row">
+                            <span class="value" id="valDelay" data-param="repeatDelay" data-min="0" data-max="255">000</span>
+                        </div>
+                    </td>
+                </tr>
+                <!-- Row 4: sus | knob | 015 | (repeats cont) | hear frame -->
+                <tr class="adsr-group">
+                    <td class="row-adsr"><span class="label">sus</span></td>
+                    <td class="row-adsr"><div class="knob" id="knobSus" data-param="sus" data-min="0" data-max="15"></div></td>
+                    <td class="row-adsr"><span class="value" id="valSus" data-param="sus" data-min="0" data-max="15">015</span></td>
+                    <td class="action-cell" colspan="2"><span class="action-label" id="btnHearFrame" style="color: var(--c64-gray3);" onclick="hearFrame()">hear frame</span></td>
+                </tr>
+                <!-- Row 5: rel | knob | 004 | (repeats cont) | hear sound -->
+                <tr class="adsr-group">
+                    <td class="row-adsr"><span class="label">rel</span></td>
+                    <td class="row-adsr"><div class="knob" id="knobRel" data-param="rel" data-min="0" data-max="15"></div></td>
+                    <td class="row-adsr"><span class="value" id="valRel" data-param="rel" data-min="0" data-max="15">004</span></td>
+                    <td class="action-cell" colspan="2"><span class="action-label" id="btnHearSound" style="color: var(--c64-gray3);" onclick="hearSound()">hear sound</span></td>
+                </tr>
+                <!-- Row 6: frq h | knob | 016 | frame+used (colspan 3, rowspan 2) | constant -->
+                <tr class="freq-group">
+                    <td class="row-freq frq-label" rowspan="2">
+                        <div class="label-with-subs">
+                            <span class="label">frq</span>
+                            <span class="sub-stack"><span class="sub">h</span><span class="sub">l</span></span>
+                        </div>
+                    </td>
+                    <td class="row-freq"><div class="knob" id="knobFreqH" data-param="freqHi" data-min="0" data-max="255"></div></td>
+                    <td class="row-freq"><span class="value" id="valFreqH" data-param="freqHi" data-min="0" data-max="255">016</span></td>
+                    <td colspan="3"><div class="frame-used-cell"><span class="label-green">frame</span> <select class="frame-select" id="frameSelect" onchange="doFrameSelect()"></select></div></td>
+                    <td class="action-cell" colspan="2"><span class="action-label" id="btnConstant" style="color: var(--c64-yellow);" onclick="toggleConstant()">constant</span></td>
+                </tr>
+                <!-- Row 7: frq l | knob | 195 | used | quiet -->
+                <tr class="freq-group">
+                    <!-- frq label merged from row above -->
+                    <td class="row-freq"><div class="knob" id="knobFreqL" data-param="freqLo" data-min="0" data-max="255"></div></td>
+                    <td class="row-freq"><span class="value" id="valFreqL" data-param="freqLo" data-min="0" data-max="255">195</span></td>
+                    <td colspan="3"><div class="frame-used-cell"><span class="label-green">used</span> <span class="label-green" id="frameUsed">001</span></div></td>
+                    <td class="action-cell" colspan="2"><span class="action-label" id="btnQuiet" style="color: var(--c64-lt-red);" onclick="quietAll()">quiet</span></td>
+                </tr>
+                <!-- Row 8: spd | knob | 000 | equalizer label | sliders (rowspan 4) -->
+                <tr class="freq-group">
+                    <td class="row-freq spd-label"><span class="label">spd</span></td>
+                    <td class="row-freq"><div class="knob" id="knobSpd" data-param="spd" data-min="0" data-max="255"></div></td>
+                    <td class="row-freq"><span class="value" id="valSpd" data-param="spd" data-min="0" data-max="255">000</span></td>
+                    <td colspan="3" class="eq-cell eq-cell-top"><span class="label-reg-green">equalizer</span></td>
+                    <td rowspan="4" style="border-top: 1px solid var(--c64-gray1);">
+                        <div class="slider-box slider-volume">
+                            <span class="value" id="valVolume" data-param="volume" data-min="0" data-max="15">015</span>
+                            <div class="slider-inner">
+                                <div class="slider-label">volume</div>
+                                <div class="slider-track" id="sliderVolume" data-param="volume" data-min="0" data-max="15">
+                                    <div class="slider-thumb" id="thumbVolume"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </td>
+                    <td rowspan="4" style="border-top: 1px solid var(--c64-gray1);">
+                        <div class="slider-box slider-speed">
+                            <span class="value" id="valSpeed" data-param="speed" data-min="0" data-max="254">254</span>
+                            <div class="slider-inner">
+                                <div class="slider-label">speed</div>
+                                <div class="slider-track" id="sliderSpeed" data-param="speed" data-min="0" data-max="254">
+                                    <div class="slider-thumb" id="thumbSpeed"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+                <!-- Row 9: pls h | knob | 000 | eq toggle -->
+                <tr class="pls-group">
+                    <td class="row-pls pls-label" rowspan="2">
+                        <div class="label-with-subs">
+                            <span class="label">pls</span>
+                            <span class="sub-stack"><span class="sub">h</span><span class="sub">l</span></span>
+                        </div>
+                    </td>
+                    <td class="row-pls"><div class="knob" id="knobPlsH" data-param="pulseHi" data-min="0" data-max="15"></div></td>
+                    <td class="row-pls"><span class="value" id="valPlsH" data-param="pulseHi" data-min="0" data-max="15">000</span></td>
+                    <td colspan="3" class="eq-cell eq-cell-mid">
+                        <div class="eq-toggle-row">
+                            <span class="eq-toggle-label active" id="lblEqOff" onclick="setEqOn(false)">off</span>
+                            <div class="eq-switch" id="eqSwitch" onclick="toggleEq()"><div class="eq-switch-knob"></div></div>
+                            <span class="eq-toggle-label" id="lblEqOn" onclick="setEqOn(true)">on</span>
+                        </div>
+                    </td>
+                </tr>
+                <!-- Row 10: pls l | knob | 000 | eq values -->
+                <tr class="pls-group">
+                    <!-- pls label merged from row above -->
+                    <td class="row-pls"><div class="knob" id="knobPlsL" data-param="pulseLo" data-min="0" data-max="255"></div></td>
+                    <td class="row-pls"><span class="value" id="valPlsL" data-param="pulseLo" data-min="0" data-max="255">000</span></td>
+                    <td colspan="3" class="eq-cell eq-cell-mid">
+                        <div class="eq-values-row">
+                            <span class="value eq-val" id="valEqLo" data-param="eqLowPass" data-min="0" data-max="7">00</span>
+                            <span class="value eq-val" id="valEqMid" data-param="eqBandPass" data-min="0" data-max="15">00</span>
+                            <span class="value eq-val" id="valEqHi" data-param="eqHighPass" data-min="0" data-max="15">00</span>
+                        </div>
+                    </td>
+                </tr>
+                <!-- Row 11: dur | slider | 024 | eq sliders -->
+                <tr>
+                    <td class="row-dur"><span class="label">dur</span></td>
+                    <td class="row-dur">
+                        <div class="slider-track" id="sliderDur" data-param="dur" data-min="0" data-max="255">
+                            <div class="slider-thumb" id="thumbDur"></div>
+                        </div>
+                    </td>
+                    <td class="row-dur"><span class="value" id="valDur" data-param="dur" data-min="0" data-max="255">024</span></td>
+                    <td colspan="3" class="eq-cell eq-cell-bottom">
+                        <div class="eq-sliders-row">
+                            <div class="eq-slider-box">
+                                <div class="slider-track" id="sliderEqLo" data-param="eqLowPass" data-min="0" data-max="7">
+                                    <div class="slider-thumb" id="thumbEqLo"></div>
+                                </div>
+                            </div>
+                            <div class="eq-slider-box">
+                                <div class="slider-track" id="sliderEqMid" data-param="eqBandPass" data-min="0" data-max="15">
+                                    <div class="slider-thumb" id="thumbEqMid"></div>
+                                </div>
+                            </div>
+                            <div class="eq-slider-box">
+                                <div class="slider-track" id="sliderEqHi" data-param="eqHighPass" data-min="0" data-max="15">
+                                    <div class="slider-thumb" id="thumbEqHi"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+            </table>
+        </div>
+    </div>
+</div>
+</div>
+
+<script src="js/d64lib.js"></script>
+<script src="js/gmDisk.js"></script>
+<script src="js/c64lib.js"></script>
+<script src="js/gmSound.js"></script>
+<script src="js/gmTools.js"></script>
+<script>
+
+// GMDisk instance
+const disk = new GMDisk();
+disk.autoLoad();
+
+// Sound editor state
+let currentSound = null;
+let currentSoundFileName = null; // Track the D64 filename for saving
+
+// Default frame values (single source of truth). All "new frame" sites
+// spread this constant, so changes here propagate to: new sound, append
+// frame, insert frame, replace-first-frame.
+//
+// tie defaults to ON: matches original GM behavior. tie also gates the
+// release envelope — turning it off makes a frame's rel parameter a
+// no-op (see gmSound.js:395). Defaulting to ON lets users hear their
+// rel settings without first discovering the tie checkbox.
+const DEFAULT_FRAME = {
+    wave: gmSound.WAVE_SAWTOOTH,
+    att: 0,
+    dec: 0,
+    sus: 15,
+    rel: 0,
+    freqHi: 4,
+    freqLo: 0,
+    spd: 0,
+    pulseHi: 0,
+    pulseLo: 0,
+    dur: 32,
+    eqLowPass: 0,
+    eqBandPass: 0,
+    eqHighPass: 0,
+    tie: true
+};
+
+// Show disk popup
+function showDiskPopup() {
+    disk.showPopup({
+        fileType: GMDisk.FILE_TYPES.SOUND,
+        showSave: true,
+        suggestedSaveName: () => currentSoundFileName || '',
+        onSave: saveSound,
+        onSelect: loadSoundFromDisk
+    });
+}
+
+// Load sound from disk (called by GMDisk popup)
+// Show a filename in the header (strips /SND extension; CSS lowercases).
+function _setSoundNameDisplay(fileName) {
+    const stripped = (fileName || '').replace(/\/SND$/i, '').trim();
+    document.getElementById('fileName').textContent = stripped;
+}
+
+function loadSoundFromDisk(fileName, fileData) {
+    if (currentSound) {
+        currentSound.stop();
+    }
+
+    _setSoundNameDisplay(fileName);
+    currentSoundFileName = fileName;
+
+    currentSound = new gmSound(fileData);
+    currentFrame = 0;
+    console.log('Loaded sound:', currentSound);
+    updateUI();
+}
+let currentFrame = 0;
+let audioContext = null;
+let masterGain = null;
+let constantMode = false;
+let constantSound = null; // Track the sound playing in constant mode
+let allPlayingSounds = []; // Track all playing sounds for quiet button
+
+// Wave order for knob (uses gmSound constants)
+const WAVE_ORDER = [gmSound.WAVE_NOISE, gmSound.WAVE_SQUARE, gmSound.WAVE_SAWTOOTH, gmSound.WAVE_TRIANGLE];
+
+// SPD knob mapping: GM's knob goes 128→255→0→127 (circular)
+// This creates a "knob position" (0-255) that maps to stored value
+// Knob pos 0 = stored 128 (fastest down)
+// Knob pos 127 = stored 255 (slow down / dead zone)
+// Knob pos 128 = stored 0 (dead zone)
+// Knob pos 255 = stored 127 (fastest up)
+function spdKnobToStored(knobPos) {
+    // knobPos 0-127 maps to stored 128-255
+    // knobPos 128-255 maps to stored 0-127
+    if (knobPos < 128) {
+        return knobPos + 128;
+    } else {
+        return knobPos - 128;
+    }
+}
+
+function spdStoredToKnob(stored) {
+    // stored 128-255 maps to knobPos 0-127
+    // stored 0-127 maps to knobPos 128-255
+    if (stored >= 128) {
+        return stored - 128;
+    } else {
+        return stored + 128;
+    }
+}
+
+// Initialize with a default sound
+function newSound() {
+    currentSound = new gmSound();
+    currentSound.name = "NEW   ";
+    currentSound.repeatCount = 0;
+    currentSound.repeatDelay = 0;
+    currentSound.speed = 254;
+    currentSound.eqOn = false;
+    currentSound.volume = 15;
+    currentSound.frames = [{...DEFAULT_FRAME}];
+    currentFrame = 0;
+    currentSoundFileName = null; // New sound, no file yet
+    // Blank header until a name is assigned via load or save — the wrapping
+    // &nbsp;'s in the HTML keep the row height stable on their own.
+    document.getElementById('fileName').textContent = '';
+    updateUI();
+}
+
+
+// Save current sound to D64
+function saveSound(fileName) {
+    if (!currentSound) {
+        disk.showInfoMessage('No sound to save');
+        return false;
+    }
+
+    // Sync the sound's internal name to the disk filename's base so the
+    // header field shown by GM (real or our editor) matches what the
+    // file is actually called. Without this, files saved as "kcheer"
+    // still report "NEW" inside, which is the name GM displays on load.
+    currentSound.name = fileName.substring(0, 6).toUpperCase();
+
+    const fileData = currentSound.serialize();
+    if (disk.saveFile(fileName, fileData)) {
+        currentSoundFileName = fileName;
+        _setSoundNameDisplay(fileName);
+        return true;
+    }
+    disk.showInfoMessage('Failed to save. Disk may be full.');
+    return false;
+}
+
+// Update all UI elements from currentSound
+function updateUI() {
+    if (!currentSound || currentSound.frames.length === 0) return;
+
+    // Persist current state to localStorage (debounced)
+    saveSoundSession();
+
+    const frame = currentSound.frames[currentFrame];
+
+    // Wave type
+    const waveIndex = WAVE_ORDER.indexOf(frame.wave);
+    setKnobRotation('knobWave', waveIndex, 0, 3);
+    document.getElementById('waveName').textContent = (gmSound.WAVE_NAMES[frame.wave] || 'unknown').padEnd(8, '\u00A0');
+
+    // ADSR
+    setKnobRotation('knobAtt', frame.att, 0, 15);
+    document.getElementById('valAtt').textContent = String(frame.att).padStart(3, '0');
+
+    setKnobRotation('knobDec', frame.dec, 0, 15);
+    document.getElementById('valDec').textContent = String(frame.dec).padStart(3, '0');
+
+    setKnobRotation('knobSus', frame.sus, 0, 15);
+    document.getElementById('valSus').textContent = String(frame.sus).padStart(3, '0');
+
+    setKnobRotation('knobRel', frame.rel, 0, 15);
+    document.getElementById('valRel').textContent = String(frame.rel).padStart(3, '0');
+
+    // Frequency
+    setKnobRotation('knobFreqH', frame.freqHi, 0, 255);
+    document.getElementById('valFreqH').textContent = String(frame.freqHi).padStart(3, '0');
+
+    setKnobRotation('knobFreqL', frame.freqLo, 0, 255);
+    document.getElementById('valFreqL').textContent = String(frame.freqLo).padStart(3, '0');
+
+    // Speed (pitch sweep) - knob uses GM's circular mapping (128→255→0→127)
+    const spdKnobPos = spdStoredToKnob(frame.spd);
+    setKnobRotation('knobSpd', spdKnobPos, 0, 255);
+    document.getElementById('valSpd').textContent = String(frame.spd).padStart(3, '0'); // Show stored value
+
+    // Pulse width
+    setKnobRotation('knobPlsH', frame.pulseHi, 0, 15);
+    document.getElementById('valPlsH').textContent = String(frame.pulseHi).padStart(3, '0');
+
+    setKnobRotation('knobPlsL', frame.pulseLo, 0, 255);
+    document.getElementById('valPlsL').textContent = String(frame.pulseLo).padStart(3, '0');
+
+    // Duration
+    setSliderPosition('thumbDur', frame.dur, 0, 255);
+    document.getElementById('valDur').textContent = String(frame.dur).padStart(3, '0');
+
+    // Tie
+    const tieChk = document.getElementById('chkTie');
+    if (frame.tie) {
+        tieChk.classList.add('checked');
+    } else {
+        tieChk.classList.remove('checked');
+    }
+
+    // Global params
+    setKnobRotation('knobRepeats', currentSound.repeatCount, 0, 255);
+    document.getElementById('valRepeats').textContent = String(currentSound.repeatCount).padStart(3, '0');
+
+    setKnobRotation('knobDelay', currentSound.repeatDelay, 0, 255);
+    document.getElementById('valDelay').textContent = String(currentSound.repeatDelay).padStart(3, '0');
+
+    // Frame info
+    // Frame dropdown
+    updateFrameSelect();
+    document.getElementById('frameUsed').textContent = String(currentSound.frames.length).padStart(3, '0');
+
+    // Volume slider
+    document.getElementById('valVolume').textContent = String(currentSound.volume).padStart(3, '0');
+    setSliderPosition('thumbVolume', currentSound.volume, 0, 15);
+
+    // Speed slider
+    document.getElementById('valSpeed').textContent = String(currentSound.speed).padStart(3, '0');
+    setSliderPosition('thumbSpeed', currentSound.speed, 0, 254);
+
+    // EQ on/off toggle
+    updateEqToggle();
+
+    // EQ values for current frame
+    const eqLo = frame.eqLowPass || 0;
+    const eqMid = frame.eqBandPass || 0;
+    const eqHi = frame.eqHighPass || 0;
+    document.getElementById('valEqLo').textContent = String(eqLo).padStart(2, '0');
+    document.getElementById('valEqMid').textContent = String(eqMid).padStart(2, '0');
+    document.getElementById('valEqHi').textContent = String(eqHi).padStart(2, '0');
+
+    // EQ sliders
+    setSliderPosition('thumbEqLo', eqLo, 0, 7);
+    setSliderPosition('thumbEqMid', eqMid, 0, 15);
+    setSliderPosition('thumbEqHi', eqHi, 0, 15);
+}
+
+// Set knob rotation based on value
+function setKnobRotation(knobId, value, min, max) {
+    const knob = document.getElementById(knobId);
+    if (!knob) return;
+    const range = max - min;
+    const normalized = range > 0 ? (value - min) / range : 0;
+    const angle = -135 + (normalized * 270); // -135 to +135 degrees
+    knob.style.setProperty('--knob-angle', `${angle}deg`);
+}
+
+// Set vertical slider thumb position
+function setSliderPosition(thumbId, value, min, max) {
+    const thumb = document.getElementById(thumbId);
+    if (!thumb) return;
+    const track = thumb.parentElement;
+    const thumbHeight = thumb.offsetHeight || 20;
+    const trackHeight = track.clientHeight;
+    const usableHeight = trackHeight - thumbHeight;
+    const range = max - min;
+    const normalized = range > 0 ? (value - min) / range : 0;
+    const top = usableHeight - (normalized * usableHeight);
+    thumb.style.top = top + 'px';
+}
+
+// Unified drag handling
+let dragState = {
+    type: null,      // 'knob', 'vslider'
+    element: null,
+    startY: 0,
+    startX: 0,
+    startValue: 0
+};
+
+// Single mousedown handler for all interactive elements
+document.addEventListener('mousedown', (e) => {
+    const target = e.target;
+
+    // Knob drag
+    if (target.classList.contains('knob') && !target.classList.contains('disabled')) {
+        const param = target.dataset.param;
+        if (param) {
+            dragState.type = 'knob';
+            dragState.element = target;
+            dragState.startY = e.clientY;
+            dragState.startValue = getParamValue(param);
+            e.preventDefault();
+        }
+    }
+    // Vertical slider thumb or track
+    else if (target.classList.contains('slider-thumb') || target.classList.contains('slider-track')) {
+        const track = target.classList.contains('slider-track') ? target : target.parentElement;
+        const param = track.dataset.param;
+        dragState.type = 'vslider';
+        dragState.element = track;
+        dragState.startY = e.clientY;
+        dragState.startValue = getParamValue(param);
+        e.preventDefault();
+
+        // If clicking on track (not thumb), immediately move to that position
+        if (target.classList.contains('slider-track')) {
+            const rect = track.getBoundingClientRect();
+            const thumb = track.querySelector('.slider-thumb');
+            const thumbHeight = thumb ? thumb.offsetHeight : 20;
+            const usableHeight = rect.height - thumbHeight;
+            let y = e.clientY - rect.top - (thumbHeight / 2);
+            y = Math.max(0, Math.min(usableHeight, y));
+
+            const min = parseInt(track.dataset.min);
+            const max = parseInt(track.dataset.max);
+            const normalized = 1 - (y / usableHeight);
+            const value = Math.round(min + normalized * (max - min));
+
+            setParamValue(param, value);
+            dragState.startValue = value; // Update for subsequent drag
+            updateUI();
+        }
+    }
+});
+
+// Single mousemove handler
+document.addEventListener('mousemove', (e) => {
+    if (!dragState.type) return;
+
+    if (dragState.type === 'knob') {
+        const deltaY = dragState.startY - e.clientY;
+        const min = parseInt(dragState.element.dataset.min) || 0;
+        const max = parseInt(dragState.element.dataset.max) || 15;
+        const range = max - min;
+        const param = dragState.element.dataset.param;
+        // wave: very slow (4 positions), 256-range: 1px=1 value, 16-range: ~16px per value
+        const sensitivity = param === 'wave' ? 0.05 : (range > 15 ? 1.0 : 0.2);
+        let newValue = dragState.startValue + Math.round(deltaY * sensitivity);
+        newValue = Math.max(min, Math.min(max, newValue));
+
+        if (param) {
+            setParamValue(param, newValue);
+            updateUI();
+        }
+    }
+    else if (dragState.type === 'vslider') {
+        const param = dragState.element.dataset.param;
+        const min = parseInt(dragState.element.dataset.min);
+        const max = parseInt(dragState.element.dataset.max);
+        const range = max - min;
+
+        // Volume and EQ use absolute positioning; dur/speed use delta-based
+        const useAbsolute = ['volume', 'eqLowPass', 'eqBandPass', 'eqHighPass'].includes(param);
+
+        let newValue;
+        if (useAbsolute) {
+            // Absolute positioning based on mouse position in track
+            const rect = dragState.element.getBoundingClientRect();
+            const thumb = dragState.element.querySelector('.slider-thumb');
+            const thumbHeight = thumb ? thumb.offsetHeight : 20;
+            const usableHeight = rect.height - thumbHeight;
+            let y = e.clientY - rect.top - (thumbHeight / 2);
+            y = Math.max(0, Math.min(usableHeight, y));
+            const normalized = 1 - (y / usableHeight);
+            newValue = Math.round(min + normalized * range);
+        } else {
+            // Delta-based: 1 pixel = 1 value for fine control
+            const deltaY = dragState.startY - e.clientY;
+            newValue = dragState.startValue + Math.round(deltaY);
+            newValue = Math.max(min, Math.min(max, newValue));
+        }
+
+        setParamValue(param, newValue);
+        updateUI();
+    }
+});
+
+// Single mouseup handler
+document.addEventListener('mouseup', () => {
+    dragState.type = null;
+    dragState.element = null;
+});
+
+// Tie checkbox toggle
+document.getElementById('chkTie').addEventListener('click', () => {
+    if (!currentSound || currentSound.frames.length === 0) return;
+    currentSound.frames[currentFrame].tie = !currentSound.frames[currentFrame].tie;
+    updateUI();
+});
+
+// Click on value to edit directly
+document.addEventListener('click', (e) => {
+    const target = e.target;
+    if (target.classList.contains('value') && target.dataset.param) {
+        const param = target.dataset.param;
+        const min = parseInt(target.dataset.min) || 0;
+        const max = parseInt(target.dataset.max) || 255;
+
+        // For spd, we edit the stored value directly (not knob position)
+        let currentValue;
+        if (param === 'spd') {
+            currentValue = currentSound ? currentSound.frames[currentFrame].spd : 0;
+        } else {
+            currentValue = getParamValue(param);
+        }
+
+        // Create input element
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.className = 'value-input';
+        input.value = currentValue;
+        input.min = min;
+        input.max = max;
+
+        // Replace span with input
+        const originalText = target.textContent;
+        target.textContent = '';
+        target.appendChild(input);
+        input.focus();
+        input.select();
+
+        // Handle input completion
+        const finishEdit = () => {
+            let newValue = parseInt(input.value) || 0;
+            newValue = Math.max(min, Math.min(max, newValue));
+            // For spd, set stored value directly (bypass knob mapping)
+            if (param === 'spd') {
+                currentSound.frames[currentFrame].spd = newValue;
+            } else {
+                setParamValue(param, newValue);
+            }
+            updateUI();
+        };
+
+        input.addEventListener('blur', finishEdit);
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                finishEdit();
+            } else if (e.key === 'Escape') {
+                updateUI(); // Restore original value
+            }
+        });
+    }
+});
+
+// Get parameter value from currentSound
+function getParamValue(param) {
+    if (!currentSound) return 0;
+    const frame = currentSound.frames[currentFrame];
+
+    switch (param) {
+        case 'wave':
+            return WAVE_ORDER.indexOf(frame.wave);
+        case 'att': return frame.att;
+        case 'dec': return frame.dec;
+        case 'sus': return frame.sus;
+        case 'rel': return frame.rel;
+        case 'freqHi': return frame.freqHi;
+        case 'freqLo': return frame.freqLo;
+        case 'spd': return spdStoredToKnob(frame.spd); // Return knob position, not stored value
+        case 'pulseHi': return frame.pulseHi;
+        case 'pulseLo': return frame.pulseLo;
+        case 'dur': return frame.dur;
+        case 'eqLowPass': return frame.eqLowPass || 0;
+        case 'eqBandPass': return frame.eqBandPass || 0;
+        case 'eqHighPass': return frame.eqHighPass || 0;
+        case 'repeatCount': return currentSound.repeatCount;
+        case 'repeatDelay': return currentSound.repeatDelay;
+        case 'volume': return currentSound.volume;
+        case 'speed': return currentSound.speed;
+        default: return 0;
+    }
+}
+
+// Set parameter value in currentSound
+function setParamValue(param, value) {
+    if (!currentSound) return;
+    const frame = currentSound.frames[currentFrame];
+
+    switch (param) {
+        case 'wave':
+            frame.wave = WAVE_ORDER[Math.max(0, Math.min(3, value))];
+            break;
+        case 'att': frame.att = value; break;
+        case 'dec': frame.dec = value; break;
+        case 'sus': frame.sus = value; break;
+        case 'rel': frame.rel = value; break;
+        case 'freqHi': frame.freqHi = value; break;
+        case 'freqLo': frame.freqLo = value; break;
+        case 'spd': frame.spd = spdKnobToStored(value); break; // Convert knob position to stored value
+        case 'pulseHi': frame.pulseHi = value; break;
+        case 'pulseLo': frame.pulseLo = value; break;
+        case 'dur': frame.dur = value; break;
+        case 'eqLowPass': frame.eqLowPass = value; break;
+        case 'eqBandPass': frame.eqBandPass = value; break;
+        case 'eqHighPass': frame.eqHighPass = value; break;
+        case 'repeatCount': currentSound.repeatCount = value; break;
+        case 'repeatDelay': currentSound.repeatDelay = value; break;
+        case 'volume': currentSound.volume = value; break;
+        case 'speed': currentSound.speed = value; break;
+    }
+}
+
+// Toggle EQ on/off
+function setEqOn(on) {
+    if (!currentSound) return;
+    currentSound.eqOn = on;
+    updateEqToggle();
+    updateUI();
+}
+
+// Toggle EQ via checkbox
+function toggleEq() {
+    if (!currentSound) return;
+    setEqOn(!currentSound.eqOn);
+}
+
+// Update EQ toggle labels and switch
+function updateEqToggle() {
+    const on = currentSound?.eqOn ?? false;
+    document.getElementById('lblEqOff').classList.toggle('active', !on);
+    document.getElementById('lblEqOn').classList.toggle('active', on);
+    document.getElementById('eqSwitch').classList.toggle('on', on);
+}
+
+// Initialize audio context
+function initAudio() {
+    if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        masterGain = audioContext.createGain();
+        masterGain.gain.value = 0.1;
+        masterGain.connect(audioContext.destination);
+    }
+    if (audioContext.state === 'suspended') {
+        audioContext.resume();
+    }
+}
+
+// Stop all currently playing sounds (helper used by hearFrame/hearSound)
+function stopAllSounds() {
+    if (constantSound) {
+        constantSound.stop();
+        constantSound = null;
+    }
+    for (const sound of allPlayingSounds) {
+        if (sound && sound.stop) {
+            sound.stop();
+        }
+    }
+    allPlayingSounds = [];
+    if (currentSound) {
+        currentSound.stop();
+    }
+    // Clear playing indicators
+    document.getElementById('btnHearFrame').classList.remove('playing');
+    document.getElementById('btnHearSound').classList.remove('playing');
+}
+
+// Play current frame only
+function hearFrame() {
+    if (!currentSound || currentSound.frames.length === 0) return;
+    initAudio();
+
+    // Stop any currently playing sounds first
+    stopAllSounds();
+
+    // Show playing indicator
+    document.getElementById('btnHearFrame').classList.add('playing');
+
+    // Create a temporary sound with just this frame
+    const tempSound = new gmSound();
+    tempSound.frames = [currentSound.frames[currentFrame]];
+    tempSound.volume = currentSound.volume;
+    tempSound.speed = currentSound.speed;
+    tempSound.eqOn = currentSound.eqOn;
+
+    if (constantMode) {
+        // Infinite repeat with zero delay
+        tempSound.repeatCount = 255; // Max repeat
+        tempSound.repeatDelay = 0;
+        constantSound = tempSound;
+    } else {
+        tempSound.repeatCount = 0;
+        // Clear indicator after sound finishes
+        const frame = currentSound.frames[currentFrame];
+        const speedMult = currentSound.speed > 0 ? (254 / currentSound.speed) : 254;
+        const durMs = frame.dur * 16.67 * speedMult + 100; // frame duration + buffer
+        setTimeout(() => {
+            document.getElementById('btnHearFrame').classList.remove('playing');
+        }, durMs);
+    }
+
+    tempSound.play(audioContext, masterGain);
+    allPlayingSounds.push(tempSound);
+}
+
+// Play entire sound
+function hearSound() {
+    if (!currentSound) return;
+    initAudio();
+
+    // Stop any currently playing sounds first
+    stopAllSounds();
+
+    // Show playing indicator
+    document.getElementById('btnHearSound').classList.add('playing');
+
+    if (constantMode) {
+        // Create a copy for constant mode so we don't modify the original
+        const tempSound = new gmSound();
+        tempSound.frames = [...currentSound.frames];
+        tempSound.volume = currentSound.volume;
+        tempSound.speed = currentSound.speed;
+        tempSound.eqOn = currentSound.eqOn;
+        tempSound.repeatCount = 255; // Max repeat
+        tempSound.repeatDelay = 0;
+        constantSound = tempSound;
+        // Set up frame change callback to update UI
+        tempSound.setOnFrameChange((frameIndex, repeatIndex) => {
+            currentFrame = frameIndex;
+            updateUI();
+        });
+        tempSound.play(audioContext, masterGain);
+        allPlayingSounds.push(tempSound);
+    } else {
+        // Set up frame change callback to update UI
+        currentSound.setOnFrameChange((frameIndex, repeatIndex) => {
+            currentFrame = frameIndex;
+            updateUI();
+        });
+        currentSound.play(audioContext, masterGain);
+        allPlayingSounds.push(currentSound);
+
+        // Clear indicator after sound finishes
+        const speedMult = currentSound.speed > 0 ? (254 / currentSound.speed) : 254;
+        const totalFrameDur = currentSound.frames.reduce((sum, f) => sum + f.dur, 0);
+        const repeatDelayMs = (currentSound.repeatDelay / 255) * 8000;
+        const durMs = (totalFrameDur * 16.67 * speedMult * (currentSound.repeatCount + 1))
+                    + (repeatDelayMs * currentSound.repeatCount) + 100;
+        setTimeout(() => {
+            document.getElementById('btnHearSound').classList.remove('playing');
+        }, durMs);
+    }
+}
+
+// Stop all playing sounds (exposed for the quiet button)
+function quietAll() {
+    stopAllSounds();
+}
+
+// Toggle constant mode
+function toggleConstant() {
+    constantMode = !constantMode;
+    const btn = document.getElementById('btnConstant');
+    if (constantMode) {
+        btn.classList.add('active');
+    } else {
+        btn.classList.remove('active');
+        // When turning off constant mode, stop all sounds
+        quietAll();
+    }
+}
+
+// Update frame dropdown options
+function updateFrameSelect() {
+    const select = document.getElementById('frameSelect');
+    select.innerHTML = '';
+
+    // All existing frames in order
+    for (let i = 0; i < currentSound.frames.length; i++) {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = String(i + 1).padStart(3, '0');
+        if (i === currentFrame) opt.selected = true;
+        select.appendChild(opt);
+    }
+
+    // "+" to add frame at the end
+    const addOpt = document.createElement('option');
+    addOpt.value = 'add';
+    addOpt.textContent = '+';
+    select.appendChild(addOpt);
+}
+
+// Handle frame selection from dropdown
+function doFrameSelect() {
+    const select = document.getElementById('frameSelect');
+    const value = select.value;
+
+    if (value === 'add') {
+        // Add new frame at the end
+        currentSound.frames.push({...DEFAULT_FRAME});
+        currentFrame = currentSound.frames.length - 1;
+    } else {
+        // Navigate to selected frame
+        currentFrame = parseInt(value);
+    }
+
+    updateUI();
+}
+
+// Insert new frame at current position (pushes current and subsequent frames up)
+function insertFrame() {
+    if (!currentSound) return;
+    // Insert at current position, pushing current frame and all after it up
+    currentSound.frames.splice(currentFrame, 0, {...DEFAULT_FRAME});
+    // currentFrame now points to the new frame
+    updateUI();
+}
+
+// Show delete confirmation UI
+function showDeleteUI() {
+    if (!currentSound) return;
+    document.getElementById('deleteFrameNum').textContent = String(currentFrame + 1).padStart(3, '0');
+    document.getElementById('deleteUI').classList.add('active');
+}
+
+// Hide delete UI
+function hideDeleteUI() {
+    document.getElementById('deleteUI').classList.remove('active');
+}
+
+// Perform delete
+function doDelete() {
+    if (!currentSound) return;
+
+    if (currentSound.frames.length <= 1) {
+        // Reset the only frame to default instead of deleting
+        currentSound.frames[0] = {...DEFAULT_FRAME};
+        currentFrame = 0;
+    } else {
+        currentSound.frames.splice(currentFrame, 1);
+        if (currentFrame >= currentSound.frames.length) {
+            currentFrame = currentSound.frames.length - 1;
+        }
+    }
+    hideDeleteUI();
+    updateUI();
+}
+
+// Show copy UI
+function showCopyUI() {
+    if (!currentSound || currentSound.frames.length === 0) return;
+
+    // Update "copy XXX" display
+    document.getElementById('copyFromFrame').textContent = String(currentFrame + 1).padStart(3, '0');
+
+    // Populate dropdown with destinations in numerical order
+    const select = document.getElementById('copyToSelect');
+    select.innerHTML = '';
+
+    // Existing frames first (1, 2, 3...)
+    for (let i = 0; i < currentSound.frames.length; i++) {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = String(i + 1).padStart(3, '0');
+        select.appendChild(opt);
+    }
+
+    // New frame last (frameCount + 1), selected by default
+    const newFrameNum = currentSound.frames.length + 1;
+    const newOpt = document.createElement('option');
+    newOpt.value = 'new';
+    newOpt.textContent = String(newFrameNum).padStart(3, '0');
+    newOpt.selected = true;
+    select.appendChild(newOpt);
+
+    // Show copy UI overlay
+    document.getElementById('copyUI').classList.add('active');
+}
+
+// Hide copy UI
+function hideCopyUI() {
+    document.getElementById('copyUI').classList.remove('active');
+}
+
+// Perform copy
+function doCopy() {
+    if (!currentSound) return;
+
+    const select = document.getElementById('copyToSelect');
+    const destValue = select.value;
+
+    // Deep copy the current frame
+    const frameCopy = JSON.parse(JSON.stringify(currentSound.frames[currentFrame]));
+
+    if (destValue === 'new') {
+        // Append as new frame
+        currentSound.frames.push(frameCopy);
+        currentFrame = currentSound.frames.length - 1;
+    } else {
+        // Overwrite existing frame
+        const destIndex = parseInt(destValue);
+        currentSound.frames[destIndex] = frameCopy;
+        currentFrame = destIndex;
+    }
+
+    hideCopyUI();
+    updateUI();
+}
+
+// Show clear confirmation UI
+function showClearUI() {
+    document.getElementById('clearUI').classList.add('active');
+}
+
+// Hide clear UI
+function hideClearUI() {
+    document.getElementById('clearUI').classList.remove('active');
+}
+
+// Perform clear
+function doClear() {
+    hideClearUI();
+    newSound();
+}
+
+// Quit - show navigation menu
+function quitEditor() {
+    GMTools.quitMenu.show();
+}
+
+// === SESSION PERSISTENCE ===
+// Persists work-in-progress sound to localStorage. See GMTools.session.
+
+const saveSoundSession = GMTools.session.debouncedSaver('sound-maker', () => {
+    if (!currentSound) return null;
+    return {
+        bytes: GMTools.session.bytesToBase64(currentSound.serialize()),
+        fileName: currentSoundFileName,
+        frame: currentFrame
+    };
+});
+
+function restoreSoundSession() {
+    const s = GMTools.session.load('sound-maker');
+    if (!s || !s.bytes) return;
+    try {
+        const bytes = GMTools.session.base64ToBytes(s.bytes);
+        currentSound = new gmSound(bytes);
+        currentSoundFileName = s.fileName || null;
+        currentFrame = s.frame || 0;
+        if (currentSoundFileName) _setSoundNameDisplay(currentSoundFileName);
+        updateUI();
+    } catch (e) {
+        console.warn('sound-maker: failed to restore session, starting fresh:', e.message);
+    }
+}
+
+// Initialize with a new sound, then try to restore last session
+newSound();
+restoreSoundSession();
+
+</script>
+</body>
+</html>

@@ -1,0 +1,59 @@
+{
+  "sizeInBytes": 832,
+  "_bgColor": 14,
+  "_gmColor1": 5,
+  "_gmColor2": 7,
+  "_gmColor3": 1,
+  "quads": [
+    {
+      "quadIndex": 0,
+      "spriteName": "new   ",
+      "isMultiColor": true,
+      "numFrames": 6,
+      "totalFrames": 6,
+      "numSprites": 2,
+      "xDouble": false,
+      "yDouble": false,
+      "xPosition": 100,
+      "yPosition": 100,
+      "spriteNum": 1,
+      "_bgColor": 14,
+      "_gmColor1": 5,
+      "_gmColor2": 7,
+      "_gmColor3": 1,
+      "imageData": [
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAgAoAoAA==",
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAgAoAoACqAALrgAA==",
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAgAoAoACqAALrgAqqoAoooAA==",
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAgAoAoACqAALrgAqqoAoooAKCgACqAAA==",
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAgAoAoACqAALrgAqqoAoooIKCgKCqAAA==",
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAgAoAoACqAALrgIqqoooooIKCgKCqAAA=="
+      ]
+    },
+    {
+      "quadIndex": 1,
+      "spriteName": "2    ",
+      "isMultiColor": true,
+      "numFrames": 6,
+      "totalFrames": 6,
+      "numSprites": 2,
+      "xDouble": false,
+      "yDouble": false,
+      "xPosition": 12,
+      "yPosition": 0,
+      "spriteNum": 2,
+      "_bgColor": 14,
+      "_gmColor1": 5,
+      "_gmColor2": 7,
+      "_gmColor3": 1,
+      "imageData": [
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACgoAAggAAA==",
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACgoAAggAA6wACqoAAA==",
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACgoAAggAA6wACqoAKqqAKqqAAA==",
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACgoAAggAA6wACqoAKqqAKqqACgoAAqgAAA==",
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACgoAAggAA6wACqoAKqqAKqqACgoAAqgAAA==",
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACgoAAggAA6wACqoAKqqAKAKACgoAAqgA"
+      ]
+    }
+  ]
+}

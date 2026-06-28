@@ -1,0 +1,4847 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>C64 GameMaker Editor</title>
+<link rel="stylesheet" href="css/gm-ui.css">
+<style>
+/* Page layout */
+#screen {
+    background: var(--c64-gray1);
+    width: 720px;
+    height: 520px;
+    margin: 0 auto;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Main content area */
+#mainArea {
+    display: flex;
+    flex: 1;
+    margin: 10px;
+    gap: 10px;
+    min-height: 0;
+}
+
+/* Left side: status + instruction picker + program */
+#leftPanel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+}
+
+/* Status bar - uses flexbox so message area expands to fill space
+   while name/free info shrinks to fit on the right */
+#statusBar {
+    background: var(--c64-gray3);
+    border: 3px solid var(--c64-black);
+    border-bottom: 6px solid var(--c64-black);
+    border-right: 6px solid var(--c64-black);
+    padding: 5px 10px;
+    color: var(--c64-black);
+    line-height: 1.4;
+    display: flex;
+}
+
+/* Message area expands to fill available space; user-select: text
+   allows selecting error messages for copying */
+#statusMessage {
+    flex: 1;
+    text-align: center;
+    color: var(--c64-blue);
+    user-select: text;
+}
+
+/* Flashing error style - alternates red/lt-blue like original GM */
+#statusMessage.flashing-error {
+    animation: flash-error 0.3s infinite;
+}
+
+@keyframes flash-error {
+    0%, 49% { color: var(--c64-red); }
+    50%, 100% { color: var(--c64-ltblue); }
+}
+
+/* Name and free blocks info stays on the right */
+#statusInfo {
+    text-align: right;
+}
+
+#statusBar .label {
+    color: var(--c64-blue);
+}
+
+#statusBar .value {
+    color: var(--c64-red);
+}
+
+.confirm-option {
+    cursor: pointer;
+}
+
+.confirm-option:hover {
+    color: var(--c64-white);
+}
+
+/* Instruction picker */
+#instructionPicker {
+    background: var(--c64-gray3);
+    border: 3px solid var(--c64-black);
+    border-bottom: 6px solid var(--c64-black);
+    border-right: 6px solid var(--c64-black);
+    height: 5.8em;
+    min-height: 3.2em;
+    max-height: 20em;
+    overflow-y: auto;
+    resize: vertical;
+    outline: none;
+}
+
+#instructionPicker .match-highlight {
+    color: var(--c64-black);
+}
+
+#instructionPicker .instruction-item {
+    padding: 2px 8px;
+    color: var(--c64-blue);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+#instructionPicker .instruction-item:hover {
+    background: var(--c64-gray2);
+}
+
+#instructionPicker .instruction-item.selected {
+    background: var(--c64-blue);
+    color: var(--c64-white);
+}
+
+/* Program display */
+#programArea {
+    flex: 1;
+    background: var(--c64-gray1);
+    overflow-y: auto;
+    min-height: 0;
+}
+
+#programListing {
+    padding: 5px;
+}
+
+.program-line {
+    display: flex;
+    color: var(--c64-lt-green);
+    line-height: 1.4;
+    cursor: pointer;
+}
+
+.program-line .label:hover {
+    background: var(--c64-gray2);
+    cursor: pointer;
+}
+
+/* When the keyboard has just been used (typing, arrow nav, etc.) we
+   suppress mouse-hover highlighting until the user moves the mouse
+   again. Keeps the cursor's "ghost" hover state from competing with
+   keyboard focus for the user's eye. */
+body.kbd-active .program-line .label:hover,
+body.kbd-active .program-line .instruction:hover {
+    background: transparent;
+}
+
+.program-line .label.active {
+    background: var(--c64-gray2);
+    color: var(--c64-white) !important;
+}
+
+.program-line .instruction:hover {
+    background: var(--c64-gray2);
+}
+
+/* Selected line styling - matches original GM behavior:
+   - Instruction text turns white (label keeps its color)
+   - A flashing cursor block appears between label and instruction
+   - No background color change on the line itself */
+.program-line.selected {
+    color: var(--c64-white);
+}
+
+.program-line.selected .instruction {
+    color: var(--c64-white);
+}
+
+/* Find-mode line highlights — other matches are orange (de-emphasised);
+   the currently focused match is yellow (the brightest highlight) so
+   it pops as the user cycles through. Override .selected since find
+   takes priority visually while it's active. */
+.program-line.find-match {
+    background: var(--c64-orange) !important;
+    color: var(--c64-white) !important;
+}
+.program-line.find-match .instruction,
+.program-line.find-match .label {
+    color: var(--c64-white) !important;
+}
+.program-line.find-current {
+    background: var(--c64-yellow) !important;
+    color: var(--c64-black) !important;
+}
+.program-line.find-current .instruction,
+.program-line.find-current .label {
+    color: var(--c64-black) !important;
+}
+
+/* Multi-selected lines (shift-click range) get gray2 background */
+.program-line.multi-selected {
+    background: var(--c64-gray2);
+    color: var(--c64-white);
+}
+
+.program-line.multi-selected .instruction {
+    color: var(--c64-white);
+}
+
+.program-line.multi-selected .label {
+    color: var(--c64-white);
+}
+
+/* Override comment/logic colors when multi-selected */
+.program-line.multi-selected.comment-line,
+.program-line.multi-selected.logic-line {
+    color: var(--c64-white);
+}
+
+/* Override comment/logic colors when selected (instruction only) */
+.program-line.selected.comment-line,
+.program-line.selected.logic-line {
+    color: var(--c64-white);
+}
+
+/* Flashing cursor block between label and instruction.
+   Always takes up space (1ch) to prevent layout shift when selected.
+   Only shows color when the line is selected. */
+.program-line .cursor-block {
+    width: 1ch;
+    height: 1em;
+    background: transparent;
+}
+
+.program-line.selected .cursor-block {
+    animation: cursor-flash 500ms step-end infinite;
+}
+
+/* 250ms on, 250ms off = 500ms cycle */
+@keyframes cursor-flash {
+    0%, 50% { background: var(--c64-lt-blue); }
+    50.01%, 100% { background: transparent; }
+}
+
+.program-line .label {
+    min-width: 55px;
+    width: 55px;
+    flex-shrink: 0;
+    color: var(--c64-lt-green);
+    margin-right: 4px;
+}
+
+.program-line .instruction {
+    flex: 1;
+    white-space: pre;
+}
+
+/* Comment lines are cyan */
+.program-line.comment-line {
+    color: var(--c64-cyan);
+}
+.program-line.comment-line .label {
+    color: var(--c64-cyan);
+}
+
+/* Logic statements (if/otherwise/endif) are yellow */
+.program-line.logic-line {
+    color: var(--c64-yellow);
+}
+.program-line.logic-line .label {
+    color: var(--c64-yellow);
+}
+
+/* Editable fields have three visible states:
+     - off the selected line: blends with surrounding instruction text
+     - on the selected line (idle): blue background, white text — flags
+       which bits of the instruction the user can click to change
+     - currently focused for edit: same blue background, but pulses to
+       lt-blue and back so the user can spot where keyboard input is going
+   Comment and print fields are excluded from the line-selected blanket —
+   their whole text is the editable content, so background-flagging would
+   be redundant. */
+.editable-field {
+    cursor: pointer;
+    user-select: none;
+}
+.program-line.selected .editable-field:not([data-type="comment"]):not([data-type="print"]) {
+    background: var(--c64-blue);
+    color: var(--c64-white) !important;
+}
+.editable-field.active,
+.editable-field.selected,
+.editable-field.arg-editing {
+    background: var(--c64-blue);
+    color: var(--c64-white) !important;
+    /* Same 500ms step-end rhythm as the cursor block — the arg's flash
+       IS the cursor for keyboard input. See @keyframes cursor-flash. */
+    animation: arg-pulse 500ms step-end infinite;
+}
+@keyframes arg-pulse {
+    0%, 50%      { background: var(--c64-lt-blue); }
+    50.01%, 100% { background: var(--c64-blue); }
+}
+
+/* When an arg on the selected line is actively focused, the cursor block
+   "moves" to it (visually: the arg becomes the flashing cursor). Hide
+   the regular cursor block in that case so the user sees one cursor,
+   not two. Same for comment/print text-editing — the input's native
+   caret (styled via caret-color / caret-shape on .string-edit-input)
+   becomes the single cursor while typing. */
+.program-line.selected:has(.editable-field.active) .cursor-block,
+.program-line.selected:has(.editable-field.selected) .cursor-block,
+.program-line.selected:has(.editable-field.arg-editing) .cursor-block,
+.program-line.selected:has(.string-edit-input) .cursor-block {
+    animation: none;
+    background: transparent;
+}
+
+/* Comment and print fields: reserve the full storage width as the click
+   target so an empty line still has something to click. 25ch fits the longest
+   storage length (comments=25, print=21). The :empty rule injects a phantom
+   nbsp via CSS so a truly empty span still has a clickable hit area —
+   pseudo-element content doesn't show up in textContent so the editor logic
+   that reads the actual text is unaffected. */
+.program-line .editable-field[data-type="comment"],
+.program-line .editable-field[data-type="print"] {
+    display: inline-block;
+    min-width: 25ch;
+}
+
+.program-line .editable-field[data-type="comment"]:empty::before,
+.program-line .editable-field[data-type="print"]:empty::before {
+    content: '\00a0';
+}
+
+/* Color search match highlight - shows typed portion in contrasting color */
+.color-search-match {
+    color: var(--c64-white);
+    text-decoration: underline;
+}
+
+/* Asset picker dropdown - shows available files from disk for scene/sound/sprite/song args */
+#assetPicker {
+    display: none;
+    position: absolute;
+    background: var(--c64-gray3);
+    border: 2px solid var(--c64-black);
+    min-width: 120px;
+    max-height: 200px;
+    overflow-y: auto;
+    z-index: 50;
+}
+
+#assetPicker.active {
+    display: block;
+}
+
+#assetPicker .asset-item {
+    padding: 2px 8px;
+    color: var(--c64-blue);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+#assetPicker .asset-item:hover {
+    background: var(--c64-gray2);
+}
+
+#assetPicker .asset-item.selected {
+    background: var(--c64-blue);
+    color: var(--c64-white);
+}
+
+#assetPicker .asset-item .match-highlight {
+    color: var(--c64-black);
+}
+
+#assetPicker .no-files {
+    padding: 4px 8px;
+    color: var(--c64-red);
+    font-style: italic;
+}
+
+/* Container is the positioning anchor for the synthetic block cursor
+   (caret-shape: block isn't reliably honored across browsers, so we
+   render one ourselves). inline-block keeps the input/cursor pair
+   flowing with the surrounding text. */
+.string-edit-container {
+    display: inline-block;
+    position: relative;
+}
+
+.string-edit-input {
+    font-family: inherit;
+    font-size: inherit;
+    background: var(--c64-blue);
+    color: var(--c64-white);
+    border: none;
+    outline: none;
+    padding: 0;
+    margin: 0;
+    min-width: 0;
+    /* Force lowercase display — the JS oninput filter also lowercases the
+       underlying value, but this catches the visual flash before that runs. */
+    text-transform: lowercase;
+    /* Native caret is suppressed — JS positions a block cursor span on
+       top instead (.string-edit-cursor). */
+    caret-color: transparent;
+}
+
+/* Synthetic block cursor for the input — flashes in lt-blue at the same
+   rhythm as the line's cursor-block, positioned by JS at selectionEnd
+   (`left = pos * 1ch` since the C64 font is monospace). pointer-events:
+   none so clicks pass through to the input behind it. */
+.string-edit-cursor {
+    position: absolute;
+    /* The input centers its text vertically within its line-box, so
+       top: 0 lands ~2px above the glyphs. Nudge down to sit on the
+       text baseline like the inline .cursor-block does naturally. */
+    top: 2px;
+    width: 1ch;
+    height: 1em;
+    pointer-events: none;
+    animation: cursor-flash 500ms step-end infinite;
+}
+
+.string-edit-padding {
+    background: var(--c64-blue);
+    color: var(--c64-lt-blue);
+}
+
+/* Button column on right */
+#buttonColumn {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+#buttonColumn button {
+    padding: 5px 8px;
+    min-width: 55px;
+}
+
+/* Game overlay */
+#gameOverlay {
+    display: none;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: var(--c64-black);
+    z-index: 100;
+    justify-content: center;
+    align-items: center;
+}
+
+#gameOverlay.active {
+    display: flex;
+}
+
+#gameContainer {
+    display: flex;
+    gap: 15px;
+}
+
+/* Border wrapper around game canvas - simulates C64's addressable border.
+   The border color can be set per-scene via "scene X border = color" commands.
+   Defaults to black. 50px CSS padding creates the border effect. */
+#gameBorder {
+    padding: 50px;
+    background: rgb(0, 0, 0);  /* Default black, updated by runtime */
+}
+
+#gameCanvas {
+    width: 480px;
+    height: 400px;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    display: block;  /* Remove inline spacing */
+}
+
+#gameSidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    padding: 10px;
+    background: var(--c64-gray1);
+    min-width: 120px;
+}
+
+#gameSidebar button {
+    width: 100%;
+    margin: 0;
+}
+
+#gameSidebar button:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.sidebar-section {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.sidebar-section label {
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.sidebar-label {
+    color: var(--c64-yellow);
+    font-size: 11px;
+}
+
+#inputDisplay, #statsDisplay {
+    font-size: 12px;
+    font-family: monospace;
+}
+
+#opsInput {
+    width: 60px;
+    font-family: inherit;
+    font-size: 12px;
+    padding: 2px 4px;
+}
+
+#gameSidebar .exit-btn {
+    margin-top: auto;
+}
+</style>
+</head>
+<body>
+
+<div id="screen">
+    <div id="mainArea">
+        <div id="leftPanel">
+            <div id="statusBar">
+                <div id="statusMessage"></div>
+                <div id="statusInfo">
+                    <div><span class="label">name-</span><span id="programName" class="value">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span></div>
+                    <div><span class="label">free-</span><span id="freeBlocks" class="value">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span></div>
+                </div>
+            </div>
+            <div id="instructionPicker"></div>
+            <div id="programArea">
+                <div id="programListing"></div>
+            </div>
+        </div>
+
+        <div id="buttonColumn">
+            <button onclick="showMenu()">menu</button>
+            <button onclick="showFilePopup()">file</button>
+            <button onclick="clearProgram()">clr</button>
+            <button onclick="runProgram()">run</button>
+            <button onclick="insertInstruction()">ins</button>
+            <button onclick="deleteInstruction()">del</button>
+            <button onclick="findInstruction()">find</button>
+            <button onclick="enterEditMode()">edit</button>
+            <button id="undoBtn" onclick="undo()" disabled>undo</button>
+            <button id="redoBtn" onclick="redo()" disabled>redo</button>
+        </div>
+    </div>
+
+    <!-- Asset picker dropdown for selecting scenes/sounds/sprites/songs from disk -->
+    <div id="assetPicker"></div>
+
+    <div id="gameOverlay">
+        <div id="gameContainer">
+            <div id="gameBorder">
+                <canvas id="gameCanvas" width="320" height="200"></canvas>
+            </div>
+            <div id="gameSidebar">
+                <div class="sidebar-section">
+                    <button id="pauseBtn" onclick="togglePause()">pause</button>
+                    <button id="stepBtn" onclick="stepFrame()" disabled>step</button>
+                </div>
+                <div class="sidebar-section">
+                    <label><input type="checkbox" id="muteToggle" onchange="toggleMute()"> mute</label>
+                    <label><input type="checkbox" id="skipPausesToggle" onchange="toggleSkipPauses()"> skip pauses</label>
+                    <label><input type="checkbox" id="hitboxToggle" onchange="toggleHitboxes()"> hitboxes</label>
+                </div>
+                <div class="sidebar-section">
+                    <div class="sidebar-label">ops/frame</div>
+                    <input type="number" id="opsInput" value="50" min="1" max="500" onchange="updateOpsPerFrame()">
+                </div>
+                <div class="sidebar-section">
+                    <div class="sidebar-label">input</div>
+                    <div id="inputDisplay">
+                        <div>j1: <span id="j1Display">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span></div>
+                        <div>j2: <span id="j2Display">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span></div>
+                    </div>
+                </div>
+                <div class="sidebar-section">
+                    <div class="sidebar-label">stats</div>
+                    <div id="statsDisplay">
+                        <div>fps: <span id="fpsDisplay">0</span></div>
+                        <div>ops: <span id="opsDisplay">0</span></div>
+                    </div>
+                </div>
+                <button onclick="stopProgram()" class="exit-btn">exit (esc)</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Core libraries -->
+<script src="js/c64lib.js"></script>
+<script src="js/c64Screen.js"></script>
+<script src="js/d64lib.js"></script>
+<script src="js/gmDisk.js"></script>
+<script src="js/gmTools.js"></script>
+<script src="js/gmOpcodes.js"></script>
+<script src="js/gmSprite.js"></script>
+<script src="js/gmScene.js"></script>
+<script src="js/gmSound.js"></script>
+<script src="js/gmMusic.js"></script>
+<script src="js/gmCharset.js"></script>
+<script src="js/gmParser.js"></script>
+<script src="js/gmRuntime.js"></script>
+<script src="js/gmEditor.js"></script>
+<!-- Runtime source text, exposed as window._runtimeSource. Used by the
+     "Download Game" export to inline the runtime into the standalone
+     HTML without depending on fetch() (which file:// blocks). Generated
+     by `node tools/bundle-runtime.js`; the test suite verifies it's
+     current. Inert at editor runtime — just string data sitting in
+     memory. -->
+<script src="js/runtime-source.js"></script>
+
+<script>
+// === STATE ===
+let currentProgramData = null;
+let currentFileData = null;
+let selectedLineIndex = -1;      // Primary selection / anchor for shift-select
+let selectedLines = new Set();   // All selected line indices (for multi-select)
+let selectedInstructionIndex = 0;
+
+// Drag-select state. mousedown on a program line starts a potential drag;
+// once the mouse moves to a different line, dragHappened flips true and
+// the selection extends across the range. The flag suppresses the
+// follow-on click (which would otherwise reset to a single-line select).
+const lineDrag = {
+    active: false,
+    startIndex: -1,
+    dragHappened: false
+};
+
+function onLineDragStart(e, lineIndex) {
+    // Skip drags that begin on truly interactive children (numeric arg
+    // editable-fields, labels) — those have their own mousedown handling.
+    // Comment and print text fields ARE allowed: they take up most of the
+    // line's width, so blocking drag there would leave drag-select unable
+    // to start on most of the visible line. The text-edit click handler
+    // checks lineDrag.dragHappened to distinguish a click from a drag.
+    if (e.target.classList.contains('label')) return;
+    if (e.target.classList.contains('editable-field')) {
+        const type = e.target.dataset.type;
+        if (type !== 'comment' && type !== 'print') return;
+    }
+    // Shift-click is handled by the existing onclick path (range from anchor).
+    if (e.shiftKey) return;
+
+    lineDrag.active = true;
+    lineDrag.startIndex = lineIndex;
+    lineDrag.dragHappened = false;
+}
+
+function onLineDragMove(e) {
+    if (!lineDrag.active) return;
+
+    // Pick the target line by bounds: whichever line's box currently contains
+    // the cursor. So a line enters the selection the moment the cursor crosses
+    // into its bounding box — matches what the user sees, no surprise when
+    // clicking on the top half of a line (the midpoint approach would select
+    // the line above too, since the cursor is still above the start line's
+    // midpoint). Falls back to the first/last line when the cursor is above
+    // or below the entire listing.
+    const lines = document.querySelectorAll('.program-line');
+    if (!lines.length) return;
+    let targetIdx = -1;
+    for (const line of lines) {
+        const rect = line.getBoundingClientRect();
+        if (e.clientY >= rect.top && e.clientY < rect.bottom) {
+            targetIdx = parseInt(line.dataset.index);
+            break;
+        }
+    }
+    if (targetIdx < 0) {
+        // Cursor above the first line → clamp to first; below the last → clamp to last
+        const firstTop = lines[0].getBoundingClientRect().top;
+        targetIdx = parseInt((e.clientY < firstTop ? lines[0] : lines[lines.length - 1]).dataset.index);
+    }
+    if (isNaN(targetIdx)) return;
+    if (targetIdx === lineDrag.startIndex && !lineDrag.dragHappened) return;
+
+    lineDrag.dragHappened = true;
+    const start = Math.min(lineDrag.startIndex, targetIdx);
+    const end   = Math.max(lineDrag.startIndex, targetIdx);
+    selectedLines.clear();
+    for (let i = start; i <= end; i++) selectedLines.add(i);
+    selectedLineIndex = targetIdx;
+    updateLineSelectionUI();
+}
+
+function onLineDragEnd() {
+    if (!lineDrag.active) return;
+    lineDrag.active = false;
+    // dragHappened stays true if a drag occurred — onclick will see it and
+    // skip the single-line select, then reset the flag.
+}
+
+document.addEventListener('mousemove', onLineDragMove);
+document.addEventListener('mouseup', onLineDragEnd);
+
+// Undo/redo stacks
+const undoStack = [];
+const redoStack = [];
+const MAX_UNDO = 50;
+
+// GMDisk instance
+const gmDisk = new GMDisk();
+
+// VM and screen for running programs
+let vm = null;
+let screen = null;
+const charset = new gmCharset();
+let animationFrameToggle = false;
+const FRAME_TIME = 16; // ms (~60fps)
+let maxInstructionsPerFrame = 50;
+
+// FPS tracking
+let frameCount = 0;
+let lastFpsUpdate = 0;
+let currentFps = 0;
+let currentOpsPerFrame = 0;
+
+// Global audio context for sound playback
+let audioContext = null;
+let masterGain = null;
+
+function initAudio() {
+    if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        masterGain = audioContext.createGain();
+        masterGain.gain.value = 0.3;
+        masterGain.connect(audioContext.destination);
+    }
+    if (audioContext.state === 'suspended') {
+        audioContext.resume();
+    }
+}
+
+// Runtime flags
+let showHitboxes = false;
+let pauseEnabled = true;
+let audioMuted = false;
+
+// Input state for VM
+const inputState = {
+    joystick1: { up: false, down: false, left: false, right: false },
+    joystick2: { up: false, down: false, left: false, right: false },
+    button1: false,
+    button2: false
+};
+
+// Clear all input state - called on blur/visibility change to prevent stuck keys
+function clearInputState() {
+    inputState.joystick1.up = false;
+    inputState.joystick1.down = false;
+    inputState.joystick1.left = false;
+    inputState.joystick1.right = false;
+    inputState.joystick2.up = false;
+    inputState.joystick2.down = false;
+    inputState.joystick2.left = false;
+    inputState.joystick2.right = false;
+    inputState.button1 = false;
+    inputState.button2 = false;
+}
+
+// Clear input when window loses focus - prevents stuck keys when Cmd+Tab, etc.
+window.addEventListener('blur', clearInputState);
+
+// Clear input when page visibility changes (tab switch, minimize)
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) clearInputState();
+});
+
+// Keyboard input handling for game - blocks ALL keys from reaching editor when game is running.
+// This prevents editor operations (like Enter inserting instructions) while playing.
+window.addEventListener('keydown', (e) => {
+    if (!vm || !vm.running) return;
+
+    // Block all keyboard events from reaching editor handlers when game is active
+    e.stopImmediatePropagation();
+
+    switch(e.key) {
+        // Joystick 1: Arrow keys + right Meta
+        case 'ArrowUp': inputState.joystick1.up = true; e.preventDefault(); break;
+        case 'ArrowDown': inputState.joystick1.down = true; e.preventDefault(); break;
+        case 'ArrowLeft': inputState.joystick1.left = true; e.preventDefault(); break;
+        case 'ArrowRight': inputState.joystick1.right = true; e.preventDefault(); break;
+        case 'Meta':
+            if (e.location === 2) { inputState.button1 = true; e.preventDefault(); }
+            break;
+        // Joystick 2: ESDF + Space
+        case 'e': case 'E': inputState.joystick2.up = true; e.preventDefault(); break;
+        case 'd': case 'D': inputState.joystick2.down = true; e.preventDefault(); break;
+        case 's': case 'S': inputState.joystick2.left = true; e.preventDefault(); break;
+        case 'f': case 'F': inputState.joystick2.right = true; e.preventDefault(); break;
+        case ' ': inputState.button2 = true; e.preventDefault(); break;
+        // ESC to stop
+        case 'Escape': stopProgram(); e.preventDefault(); break;
+    }
+});
+
+window.addEventListener('keyup', (e) => {
+    if (!vm || !vm.running) return;
+
+    // Block keyup events from reaching editor handlers too
+    e.stopImmediatePropagation();
+
+    switch(e.key) {
+        case 'ArrowUp': inputState.joystick1.up = false; break;
+        case 'ArrowDown': inputState.joystick1.down = false; break;
+        case 'ArrowLeft': inputState.joystick1.left = false; break;
+        case 'ArrowRight': inputState.joystick1.right = false; break;
+        case 'Meta':
+            if (e.location === 2) {
+                inputState.button1 = false;
+                // Also clear joystick 1 directions - macOS often swallows arrow keyup
+                // events while Meta is held, causing stuck directions
+                inputState.joystick1.up = false;
+                inputState.joystick1.down = false;
+                inputState.joystick1.left = false;
+                inputState.joystick1.right = false;
+            }
+            break;
+        case 'e': case 'E': inputState.joystick2.up = false; break;
+        case 'd': case 'D': inputState.joystick2.down = false; break;
+        case 's': case 'S': inputState.joystick2.left = false; break;
+        case 'f': case 'F': inputState.joystick2.right = false; break;
+        case ' ': inputState.button2 = false; break;
+    }
+});
+
+// Load file by name (required by gmParser for scene loading)
+function loadFileByName(fileName) {
+    return gmDisk.loadFile(fileName);
+}
+
+// === INITIALIZATION ===
+
+function initApp() {
+    populateInstructionPicker();
+    setupKeyboardShortcuts();
+    setupEditorKeyboard();
+
+    // Load disk from localStorage
+    gmDisk.autoLoad();
+
+    // Try to load saved program
+    loadSavedProgram();
+
+    updateStatusInfo();
+}
+
+// === INSTRUCTION PICKER ===
+// The instruction picker supports type-to-search (globally, no focus required):
+// - Type letters to search/filter instructions
+// - Arrow up/down to navigate
+// - Enter to insert selected instruction at cursor
+// - Backspace to remove last search character
+// - Search auto-clears after 1.5s of inactivity
+
+let instructionSearchText = '';
+let instructionSearchTimeout = null;
+let instructionOpcodes = []; // Cache of opcodes in menu order
+
+// Arg editing mode: After inserting an instruction with editable args,
+// we enter this mode where:
+// - First arg is highlighted in lt-blue
+// - Type numbers to set value (or letters for variable args)
+// - Arrow up/down to increment/decrement value
+// - Tab/Shift+Tab to switch between args
+// - Enter or Escape to exit and return to type-to-search
+// - Click anywhere outside to exit
+let argEditMode = false;
+let argEditLineIndex = -1;
+let argEditArgNum = 0;   // Which arg slot is being edited: 1 = arg1, 2 = arg2.
+                         // 0 = none active. Matches the DOM's data-arg-num so
+                         // typing, highlighting, dragging, and the click path
+                         // all key off the same identifier. Indices into
+                         // opDef.args[] are (argNum - 1) — see _editableArgNums
+                         // for why we don't index by opDef position directly
+                         // ('unused' entries create a mismatch with the DOM).
+let argEditValue = '';   // Accumulator for digit input (multi-digit numbers)
+
+// Arg types whose display values are word tokens the user can pick by
+// typing a single key (e.g. "a" → "always", "o" → "once", "g" → "green").
+// findEnumValueForKey uses the formatter to compute display strings, so the
+// list is just "which types make sense to type-search" rather than a
+// duplicate of any data structure.
+const ENUM_ARG_TYPES = [
+    'alwaysOnce', 'onOff', 'overUnder', 'joyDir', 'sceneTarget',
+    'colorName', 'hitTarget', 'direction'
+];
+
+// Subset of ENUM_ARG_TYPES whose digit keys also cycle (the formatter
+// embeds meaningful digits, e.g. "gray 1", "scene1", "sprite 3"). Pure-
+// word enums (alwaysOnce / onOff / overUnder / joyDir) have no digits in
+// their displays — digit input there is a no-op. `direction` is special:
+// letters cycle to the cardinal bytes, but digits address the raw 0-255
+// value via the numeric path below.
+const ENUM_DIGIT_CYCLE = ['sceneTarget', 'colorName', 'hitTarget'];
+
+// Single-keystroke enum selection with cycle-on-repeat.
+//
+//   Letter keys match by "display starts with key" (case-insensitive):
+//     'a' on alwaysOnce → "always"
+//     'o' on alwaysOnce → "once"
+//     'u' on joyDir     → "up"
+//
+//   Digit keys match by "display contains the digit": this handles
+//   templates where the digit is embedded in a word (scene1, sprite 5).
+//     '1' on sceneTarget → "scene1"
+//     '5' on hitTarget   → "sprite 5"
+//
+// When the current value is already in the match set, advance to the
+// next match with wrap (so "g g g" cycles green → gray → green for
+// colorName, "o o" cycles on → off for onOff). Otherwise jump to the
+// first match. No buffer, no timeout — every keystroke is final.
+function findEnumValueForKey(argType, key, currentValue, instr) {
+    const range = getFieldRange(argType);
+    const formatter = gmTypeFormatters[argType];
+    if (!formatter) return -1;
+    const k = key.toLowerCase();
+    const isDigit = /[0-9]/.test(k);
+    const mediaStore = currentProgramData?.mediaStore;
+
+    // direction's cardinal labels live at the END of the display ("000  up")
+    // rather than the start, so we match letters by `includes` for it.
+    // Every other enum type's labels start the display, so startsWith
+    // is the right precision (e.g. colorName 'g' picks green / gray N
+    // and not "orange" via the trailing 'g').
+    const letterMatch = argType === 'direction'
+        ? (display) => display.includes(k)
+        : (display) => display.startsWith(k);
+
+    const matches = [];
+    for (let v = range.min; v <= range.max; v++) {
+        const display = (formatter(v, mediaStore, c64ColorNames) || '').toLowerCase();
+        const hit = isDigit ? display.includes(k) : letterMatch(display);
+        if (hit) matches.push(v);
+    }
+    if (matches.length === 0) return -1;
+
+    const currentIdx = matches.indexOf(currentValue);
+    if (currentIdx >= 0) return matches[(currentIdx + 1) % matches.length];
+    return matches[0];
+}
+
+// === ASSET PICKER ===
+// Dropdown for selecting scene/sound/song/sprite assets from disk.
+// Shows all matching files with type-to-search filtering.
+
+// Map arg types to GMDisk file types
+const ASSET_ARG_TYPES = {
+    'sceneName': GMDisk.FILE_TYPES.SCENE,
+    'sound': GMDisk.FILE_TYPES.SOUND,
+    'song': GMDisk.FILE_TYPES.MUSIC,
+    'spriteName': GMDisk.FILE_TYPES.SPRITE
+};
+
+// Asset picker state
+let assetPickerActive = false;
+let assetPickerFiles = [];        // Files from disk
+let assetPickerFiltered = [];     // Filtered by search
+let assetPickerSelectedIndex = 0;
+let assetPickerSearchText = '';
+let assetPickerArgType = null;    // Current arg type being edited
+let assetPickerLineIndex = -1;
+let assetPickerArgIndex = 0;
+let assetPickerField = null;      // The field element that triggered the picker
+
+// Show asset picker dropdown below the given field
+function showAssetPicker(field, argType, lineIndex, argIndex) {
+    const fileType = ASSET_ARG_TYPES[argType];
+    if (!fileType) return;
+
+    // Re-read the disk from the shared pool every time the picker opens —
+    // another editor (sprite-maker, scene-maker, etc.) may have added a
+    // file since the last open, and our in-memory D64 instance would be
+    // stale otherwise.
+    gmDisk.refresh();
+    assetPickerFiles = gmDisk.listFiles(fileType);
+
+    // Show which disk we're reading from in the message area. Uses the
+    // same ellipsis truncation as the d64 popup so very long pool names
+    // collapse to "first 20 … last 10" consistently across both surfaces.
+    if (gmDisk.diskFileName) {
+        showMessage(`from disk: ${GMDisk._truncateDiskName(gmDisk.diskFileName)}`);
+    }
+
+    // No flash on empty disk — the picker itself shows "no files on disk"
+    // and Tab still moves to the next arg. Not an error condition.
+
+    assetPickerActive = true;
+    assetPickerFiltered = [...assetPickerFiles];
+    assetPickerSelectedIndex = 0;
+    assetPickerSearchText = '';
+    assetPickerArgType = argType;
+    assetPickerLineIndex = lineIndex;
+    assetPickerArgIndex = argIndex;
+    assetPickerField = field;
+
+    // Position picker below the field
+    const picker = document.getElementById('assetPicker');
+    const fieldRect = field.getBoundingClientRect();
+    const screenRect = document.getElementById('screen').getBoundingClientRect();
+
+    picker.style.left = (fieldRect.left - screenRect.left) + 'px';
+    picker.style.top = (fieldRect.bottom - screenRect.top + 2) + 'px';
+
+    renderAssetPicker();
+    picker.classList.add('active');
+
+    // Focus handling - we'll use global keyboard handler
+}
+
+// Hide asset picker
+function hideAssetPicker() {
+    if (!assetPickerActive) return;
+
+    assetPickerActive = false;
+    assetPickerField = null;
+    document.getElementById('assetPicker').classList.remove('active');
+    // The "from disk: …" hint we set when opening only makes sense while
+    // the picker is visible.
+    showMessage('');
+}
+
+// Render the asset picker dropdown
+function renderAssetPicker() {
+    const picker = document.getElementById('assetPicker');
+    picker.innerHTML = '';
+
+    // No files on disk at all
+    if (assetPickerFiles.length === 0) {
+        const noFiles = document.createElement('div');
+        noFiles.className = 'no-files';
+        noFiles.textContent = 'no files on disk';
+        picker.appendChild(noFiles);
+        return;
+    }
+
+    // No match for current search
+    if (assetPickerFiltered.length === 0) {
+        const noMatch = document.createElement('div');
+        noMatch.className = 'no-files';
+        noMatch.textContent = 'no match';
+        picker.appendChild(noMatch);
+        return;
+    }
+
+    assetPickerFiltered.forEach((file, index) => {
+        const div = document.createElement('div');
+        div.className = 'asset-item' + (index === assetPickerSelectedIndex ? ' selected' : '');
+
+        // Get display name (strip extension like /PIC, /SND, etc.)
+        const displayName = getAssetDisplayName(file.fileName);
+
+        // Highlight matching text if searching
+        if (assetPickerSearchText) {
+            const matchLen = assetPickerSearchText.length;
+            const nameLower = displayName.toLowerCase();
+            const searchLower = assetPickerSearchText.toLowerCase();
+
+            if (nameLower.startsWith(searchLower)) {
+                const matchSpan = document.createElement('span');
+                matchSpan.className = 'match-highlight';
+                matchSpan.textContent = displayName.substring(0, matchLen);
+                div.appendChild(matchSpan);
+                div.appendChild(document.createTextNode(displayName.substring(matchLen)));
+            } else {
+                div.textContent = displayName;
+            }
+        } else {
+            div.textContent = displayName;
+        }
+
+        div.onclick = () => selectAsset(index);
+        picker.appendChild(div);
+    });
+
+    // Scroll selected into view
+    const selected = picker.querySelector('.asset-item.selected');
+    if (selected) {
+        selected.scrollIntoView({ block: 'nearest' });
+    }
+}
+
+// Get display name from filename (strip /EXT suffix and trim spaces)
+function getAssetDisplayName(fileName) {
+    const slashIndex = fileName.indexOf('/');
+    let name;
+    if (slashIndex > 0) {
+        name = fileName.substring(0, slashIndex);
+    } else {
+        name = fileName;
+    }
+    return name.trim().toLowerCase();
+}
+
+// Filter assets by search text
+function filterAssetPicker() {
+    if (!assetPickerSearchText) {
+        assetPickerFiltered = [...assetPickerFiles];
+    } else {
+        const searchLower = assetPickerSearchText.toLowerCase();
+        assetPickerFiltered = assetPickerFiles.filter(file => {
+            const name = getAssetDisplayName(file.fileName);
+            return name.startsWith(searchLower);
+        });
+    }
+    assetPickerSelectedIndex = 0;
+    renderAssetPicker();
+}
+
+// Select an asset and apply it
+function selectAsset(index) {
+    // No files or invalid index - just close picker without changing value
+    if (assetPickerFiltered.length === 0 || index < 0 || index >= assetPickerFiltered.length) {
+        hideAssetPicker();
+        return;
+    }
+
+    const file = assetPickerFiltered[index];
+    const fileName = file.fileName;
+    const displayName = getAssetDisplayName(fileName);
+
+    // Snapshot for memory-rollback. New asset binary + (for multi-quad) the
+    // auto-inserted marker lines can push us past the 0000-free limit;
+    // pre-computing the cost is awkward (sprite/sound size depends on
+    // frames), so we apply optimistically and roll back on overflow.
+    //   instructions: deep — selectAsset mutates an existing entry's args
+    //   mediaStore:   shallow — we only ever .push, never mutate-in-place
+    const insSnap = JSON.parse(JSON.stringify(currentProgramData.instructions));
+    const msSnap  = currentProgramData.mediaStore
+        ? [...currentProgramData.mediaStore]
+        : null;
+    const undoLenBefore = undoStack.length;
+
+    // Find or add to mediaStore
+    const mediaIndex = findOrAddToMediaStore(fileName, displayName, assetPickerArgType);
+
+    if (mediaIndex < 0) {
+        showFlashingMessage('failed to load asset');
+        hideAssetPicker();
+        return;
+    }
+
+    // Update instruction
+    const instr = currentProgramData.instructions[assetPickerLineIndex];
+    if (instr) {
+        saveUndoState();
+
+        if (assetPickerArgIndex === 0) {
+            instr.arg1 = mediaIndex;
+        } else {
+            instr.arg2 = mediaIndex;
+        }
+        updateInstructionName(instr);
+
+        // For multi-quad sprites, may need to add additional instructions
+        if (assetPickerArgType === 'spriteName') {
+            handleMultiQuadSprite(instr, mediaIndex, assetPickerLineIndex);
+        }
+    }
+
+    // Did all that fit?
+    if (calculateFreeBlocksRaw() < 0) {
+        currentProgramData.instructions = insSnap;
+        if (msSnap) currentProgramData.mediaStore = msSnap;
+        // Discard the undo entry we just saved — it'd otherwise be a
+        // duplicate of the now-restored state and clutter ctrl-Z.
+        while (undoStack.length > undoLenBefore) undoStack.pop();
+        showOutOfMemory();
+        hideAssetPicker();
+        renderProgramListing();
+        return;
+    }
+
+    hideAssetPicker();
+    renderProgramListing();
+}
+
+// Re-parse fresh bytes into an existing mediaStore entry in place. Used when
+// the user re-picks an asset they've already added, to pick up edits made in
+// another editor. For scenes we additionally clear the "missing" warning.
+//
+// Note: changing a multi-quad sprite's quad count via this path can leave the
+// downstream marker entries pointing at the wrong sub-data. We update what we
+// can and log a warning — the user can delete the slot assignments and re-add
+// them to fully re-sync.
+function refreshMediaEntry(entry, entryType, fileData, mediaIndex) {
+    switch (entryType) {
+        case 'scene':
+            entry.scene = new gmScene(fileData);
+            // Clear from missingScenes if it was there
+            if (currentProgramData.missingScenes) {
+                currentProgramData.missingScenes = currentProgramData.missingScenes.filter(
+                    s => s.index !== mediaIndex
+                );
+                if (currentProgramData.missingScenes.length === 0) clearFlashingError();
+            }
+            break;
+        case 'sprite': {
+            const newSprite = new gmSprite(fileData);
+            if (entry.sprite && newSprite.sprite.length !== entry.sprite.sprite.length) {
+                console.warn(`Sprite "${entry.name}" quad count changed (${entry.sprite.sprite.length} → ${newSprite.sprite.length}); marker entries may need re-assignment`);
+            }
+            entry.sprite = newSprite;
+            entry.spriteFileData = fileData;
+            break;
+        }
+        case 'sound':
+            entry.soundFileData = fileData;
+            break;
+        case 'song':
+            entry.songFileData = fileData;
+            break;
+    }
+}
+
+// Find existing mediaStore entry or add new one
+function findOrAddToMediaStore(fileName, displayName, argType) {
+    if (!currentProgramData.mediaStore) {
+        currentProgramData.mediaStore = [null];
+    }
+
+    const mediaStore = currentProgramData.mediaStore;
+    const entryType = argTypeToMediaType(argType);
+
+    // entry.name is always 6-char-padded (parser invariant — see
+    // gmParser.js parseProgramData). Pad displayName to the same canonical
+    // form so the equality check below matches and any new entry we add
+    // preserves the invariant for downstream code.
+    const canonicalName = displayName.padEnd(6, ' ').substring(0, 6);
+
+    // Check if already in mediaStore. If found, reload from disk so any
+    // changes made in another editor (e.g. saving a new sprite version in
+    // sprite-maker) are picked up — the user's intent in re-picking is to
+    // use the current on-disk version. If the disk read fails (file gone),
+    // leave the cached entry alone.
+    for (let i = 1; i < mediaStore.length; i++) {
+        const entry = mediaStore[i];
+        if (entry && entry.type === entryType && entry.name === canonicalName) {
+            const fileData = gmDisk.loadFile(fileName);
+            if (fileData) {
+                try {
+                    refreshMediaEntry(entry, entryType, fileData, i);
+                } catch (e) {
+                    console.error('Failed to refresh media entry from disk:', e);
+                }
+            }
+            return i;
+        }
+    }
+
+    // Load the file and add to mediaStore
+    const fileData = gmDisk.loadFile(fileName);
+    if (!fileData) {
+        return -1;
+    }
+
+    // Create the entry based on type. Use the padded canonical name so
+    // the invariant holds for new entries too.
+    const newEntry = {
+        name: canonicalName,
+        type: entryType,
+        ptr: 0  // Will be set properly when saving
+    };
+
+    // Parse the asset based on type
+    try {
+        switch (entryType) {
+            case 'scene':
+                newEntry.scene = new gmScene(fileData);
+                break;
+            case 'sprite':
+                newEntry.sprite = new gmSprite(fileData);
+                newEntry.spriteFileData = fileData;
+                newEntry.quadIndex = 0;  // Main sprite is always quad 0
+                break;
+            case 'sound':
+                newEntry.soundFileData = fileData;
+                break;
+            case 'song':
+                newEntry.songFileData = fileData;
+                break;
+        }
+    } catch (e) {
+        console.error('Failed to parse asset:', e);
+        return -1;
+    }
+
+    // Add to mediaStore
+    const newIndex = mediaStore.length;
+    mediaStore.push(newEntry);
+
+    return newIndex;
+}
+
+// Convert arg type to mediaStore entry type
+function argTypeToMediaType(argType) {
+    switch (argType) {
+        case 'sceneName': return 'scene';
+        case 'spriteName': return 'sprite';
+        case 'sound': return 'sound';
+        case 'song': return 'song';
+        default: return null;
+    }
+}
+
+// Handle multi-quad sprites - add additional sprite assignment lines
+function handleMultiQuadSprite(instr, mediaIndex, lineIndex) {
+    const entry = currentProgramData.mediaStore[mediaIndex];
+    if (!entry) return;
+
+    const sprite = entry.sprite;
+    const numQuads = (sprite && sprite.sprite) ? sprite.sprite.length : 1;
+
+    const opDef = gmOpcodes[instr.opcode];
+    if (!opDef || !opDef.args) return;
+
+    const slotArgIndex = opDef.args.indexOf('sprite');
+    const nameArgIndex = opDef.args.indexOf('spriteName');
+    if (slotArgIndex === -1 || nameArgIndex === -1) return;
+
+    const baseSlot = slotArgIndex === 0 ? instr.arg1 : instr.arg2;
+
+    if (baseSlot + numQuads > 8) {
+        showFlashingMessage('not enough sprite slots');
+        return;
+    }
+
+    // === MULTI-PART SPRITE MARKER ENTRIES ===
+    //
+    // TWO ENTRY POINTS exist for loading sprites (see CLAUDE.md for full docs):
+    //   1. DISK-LOADED (here): .SPR file already contiguous, just parse and create markers
+    //   2. PRG-LOADED (gmParser.js): Must concatenate from separate entries first
+    //
+    // Both normalize to the same structure - ONE gmSprite, empty markers
+    // (markers are identified by quadIndex > 0):
+    //   mediaStore[mainIdx]: { sprite: gmSprite, quadIndex: 0 }  // Main entry
+    //   mediaStore[subIdx1]: { sprite: null, quadIndex: 1 }      // Empty marker
+    //   mediaStore[subIdx2]: { sprite: null, quadIndex: 2 }      // Empty marker
+    //   mediaStore[subIdx3]: { sprite: null, quadIndex: 3 }      // Empty marker
+    //
+    // We also insert instructions for subsprite slot assignments.
+
+    const instructions = currentProgramData.instructions;
+    const mediaStore = currentProgramData.mediaStore;
+    const baseName = entry.name;
+    const subName = '-' + baseName.substring(0, 5);
+
+    // Find the extent of the existing marker group below this line. The user
+    // re-picking a multi-quad sprite means they want the old assignment GONE,
+    // not pushed down — orphaned -OLDNAME lines are never what they want. We
+    // also consume blank lines (opcode 0) WITHIN the group: in GM a blank
+    // line halts execution, so a blank between markers is always mid-edit
+    // debris that the user has to clean up before the program runs anyway —
+    // tidying it on the swap is friendlier than preserving it.
+    //
+    // Scan stops at the first line that isn't a blank, isn't a continuing
+    // marker (right opcode, next slot, marker entry), or runs off the end.
+    let groupSize = 0;            // total lines in the group (markers + interior blanks)
+    let markerCount = 0;          // number of marker lines found
+    let scanOffset = 0;
+    while (true) {
+        scanOffset++;
+        const checkLine = instructions[lineIndex + scanOffset];
+        if (!checkLine) break;
+        if (checkLine.opcode === 0x00) continue;  // skip blank; don't extend group yet
+        if (checkLine.opcode !== instr.opcode) break;
+        const checkSlot = slotArgIndex === 0 ? checkLine.arg1 : checkLine.arg2;
+        if (checkSlot !== baseSlot + markerCount + 1) break;
+        const checkMediaIdx = slotArgIndex === 0 ? checkLine.arg2 : checkLine.arg1;
+        const checkEntry = mediaStore[checkMediaIdx];
+        if (!checkEntry || (checkEntry.quadIndex || 0) === 0) break;
+        markerCount++;
+        groupSize = scanOffset;   // extend group up to and including this marker
+        if (baseSlot + markerCount >= 8) break;
+    }
+
+    // Wipe the entire existing group (markers + any interior blanks)…
+    if (groupSize > 0) {
+        instructions.splice(lineIndex + 1, groupSize);
+    }
+
+    // …then insert fresh marker assignments for the new sprite, in order,
+    // right below the main line.
+    for (let q = 1; q < numQuads; q++) {
+        let subIndex = findSubSpriteInMediaStore(subName, mediaIndex, q);
+        if (subIndex < 0) {
+            subIndex = mediaStore.length;
+            mediaStore.push({
+                name: subName,
+                type: 'sprite',
+                ptr: 0,
+                sprite: null,
+                spriteFileData: null,
+                quadIndex: q
+            });
+        }
+
+        const newArg1 = slotArgIndex === 0 ? baseSlot + q : subIndex;
+        const newArg2 = slotArgIndex === 0 ? subIndex : baseSlot + q;
+        const newName = formatInstruction(instr.opcode, newArg1, newArg2, mediaStore, c64ColorNames);
+
+        instructions.splice(lineIndex + q, 0, {
+            opcode: instr.opcode,
+            arg1: newArg1,
+            arg2: newArg2,
+            label: 0,
+            instructionName: newName
+        });
+    }
+
+    selectedLineIndex = lineIndex + numQuads;
+    selectedLines.clear();
+    selectedLines.add(selectedLineIndex);
+}
+
+// Find sub-sprite entry in mediaStore
+// Look for a subsprite marker entry at the position the serializer expects:
+// mainIndex + quadIndex. The PRG format requires multi-quad sprite data to live
+// at consecutive pointer-table entries, so the serializer auto-references
+// mediaStore[mainIdx+q] when emitting a main entry — markers MUST sit there.
+//
+// We don't scan the whole mediaStore by name: a far-away entry with a matching
+// name (e.g. leftover marker from a previous version of the sprite whose main
+// got replaced and pushed to the end) would satisfy the name check but break
+// the serializer's adjacency assumption.
+function findSubSpriteInMediaStore(subName, mainIndex, quadIndex) {
+    const candidate = currentProgramData.mediaStore[mainIndex + quadIndex];
+    if (candidate && candidate.type === 'sprite' &&
+        candidate.name === subName && candidate.quadIndex === quadIndex) {
+        return mainIndex + quadIndex;
+    }
+    return -1;
+}
+
+// Handle keyboard for asset picker
+function handleAssetPickerKey(e) {
+    if (!assetPickerActive) return false;
+
+    // Arrow keys - navigate list
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        assetPickerSelectedIndex = Math.min(
+            assetPickerSelectedIndex + 1,
+            assetPickerFiltered.length - 1
+        );
+        renderAssetPicker();
+        return true;
+    }
+
+    if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        assetPickerSelectedIndex = Math.max(assetPickerSelectedIndex - 1, 0);
+        renderAssetPicker();
+        return true;
+    }
+
+    // Enter - select current and stay in arg edit mode
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        selectAsset(assetPickerSelectedIndex);
+        // After selection, exit arg edit mode
+        if (argEditMode) {
+            exitArgEditMode();
+        }
+        return true;
+    }
+
+    // Tab - select current and move to next arg
+    if (e.key === 'Tab') {
+        e.preventDefault();
+        selectAsset(assetPickerSelectedIndex);
+        // After selection, move to next/prev editable arg slot if in arg edit mode
+        if (argEditMode) {
+            const instr = currentProgramData.instructions[argEditLineIndex];
+            const opDef = gmOpcodes[instr.opcode];
+            const editableNums = _editableArgNums(opDef);
+            if (editableNums.length > 1) {
+                const cur = editableNums.indexOf(argEditArgNum);
+                const next = (cur + (e.shiftKey ? -1 : 1) + editableNums.length) % editableNums.length;
+                argEditArgNum = editableNums[next];
+                argEditValue = '';
+                renderProgramListing();
+                highlightCurrentArg();
+            } else {
+                exitArgEditMode();
+            }
+        }
+        return true;
+    }
+
+    // Escape - close picker and exit arg edit mode
+    if (e.key === 'Escape') {
+        e.preventDefault();
+        hideAssetPicker();
+        if (argEditMode) {
+            exitArgEditMode();
+        }
+        return true;
+    }
+
+    // Backspace - remove search character
+    if (e.key === 'Backspace') {
+        e.preventDefault();
+        if (assetPickerSearchText.length > 0) {
+            assetPickerSearchText = assetPickerSearchText.slice(0, -1);
+            filterAssetPicker();
+        }
+        return true;
+    }
+
+    // Letter keys - type to search
+    if (e.key.length === 1 && /[a-zA-Z0-9]/.test(e.key) && !e.ctrlKey && !e.metaKey) {
+        assetPickerSearchText += e.key.toLowerCase();
+        filterAssetPicker();
+        return true;
+    }
+
+    return false;
+}
+
+function populateInstructionPicker() {
+    const picker = document.getElementById('instructionPicker');
+    picker.innerHTML = '';
+
+    // Get opcodes in GameMaker menu order
+    instructionOpcodes = [];
+    for (const opcode of gmInstructionSortOrder) {
+        const def = gmOpcodes[opcode];
+        if (def && def.name) {
+            instructionOpcodes.push({
+                opcode: opcode,
+                name: def.name
+            });
+        }
+    }
+
+    renderInstructionList();
+}
+
+function renderInstructionList() {
+    const picker = document.getElementById('instructionPicker');
+    picker.innerHTML = '';
+
+    instructionOpcodes.forEach((op, index) => {
+        const div = document.createElement('div');
+        div.className = 'instruction-item' + (index === selectedInstructionIndex ? ' selected' : '');
+        div.dataset.opcode = op.opcode;
+        div.dataset.index = index;
+
+        // Highlight matching text if searching
+        if (instructionSearchText && op.name.toLowerCase().startsWith(instructionSearchText.toLowerCase())) {
+            const matchLen = instructionSearchText.length;
+            const matchSpan = document.createElement('span');
+            matchSpan.className = 'match-highlight';
+            matchSpan.textContent = op.name.substring(0, matchLen);
+            div.appendChild(matchSpan);
+            div.appendChild(document.createTextNode(op.name.substring(matchLen)));
+        } else {
+            div.textContent = op.name;
+        }
+
+        div.onclick = () => {
+            clearInstructionSearch();
+            selectInstruction(index);
+            placeInstructionAtCursor(op.opcode);
+            // placeInstructionAtCursor already enters arg edit mode
+        };
+        picker.appendChild(div);
+    });
+}
+
+// Global keyboard handler for editor (type-to-search and arg editing)
+function setupEditorKeyboard() {
+    window.addEventListener('keydown', onEditorKeyDown);
+    window.addEventListener('click', onEditorClick);
+}
+
+// Toggle body.kbd-active so hover styles can disable themselves while
+// the keyboard is the focus. One-shot mousemove listener clears the
+// flag — we don't want a busy listener fighting every pointer event.
+function suppressHoverUntilMouseMove() {
+    if (document.body.classList.contains('kbd-active')) return;
+    document.body.classList.add('kbd-active');
+    const restore = () => {
+        document.body.classList.remove('kbd-active');
+        document.removeEventListener('mousemove', restore);
+    };
+    document.addEventListener('mousemove', restore);
+}
+
+function onEditorClick(e) {
+    // Close asset picker on click outside
+    if (assetPickerActive &&
+        !e.target.closest('#assetPicker') &&
+        !e.target.classList.contains('editable-field')) {
+        hideAssetPicker();
+    }
+
+    // Exit arg edit mode on click (unless clicking an editable field or instruction picker)
+    if (argEditMode &&
+        !e.target.classList.contains('editable-field') &&
+        !e.target.classList.contains('instruction-item') &&
+        !e.target.closest('#instructionPicker') &&
+        !e.target.closest('#assetPicker')) {
+        exitArgEditMode();
+    }
+}
+
+function onEditorKeyDown(e) {
+    // Ignore if game is running (or paused but overlay visible) or editing a text field.
+    // Primary blocking is via stopImmediatePropagation in game handlers, but this
+    // provides a secondary check in case event order differs across browsers.
+    if (vm && vm.running) return;
+    if (document.getElementById('gameOverlay').classList.contains('active')) return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if (document.querySelector('.string-edit-input')) return; // Text edit mode
+
+    // Any editor keystroke means the user's eye is on keyboard focus,
+    // not where the mouse happens to be parked. Suppress hover until the
+    // mouse actually moves (one-shot listener restores it).
+    suppressHoverUntilMouseMove();
+
+    // Cmd+C / Ctrl+C - copy selected lines or all lines to clipboard
+    if ((e.metaKey || e.ctrlKey) && e.key === 'c') {
+        e.preventDefault();
+        copyProgramListing();
+        return;
+    }
+
+    // Asset picker takes priority when active
+    if (assetPickerActive) {
+        if (handleAssetPickerKey(e)) return;
+    }
+
+    // Handle keyboard input for selected numeric field
+    if (selectedField && handleSelectedFieldKey(e)) {
+        return;
+    }
+
+    if (argEditMode) {
+        handleArgEditKey(e);
+    } else {
+        handleSearchKey(e);
+    }
+}
+
+// Handle keyboard input when a numeric field is selected
+function handleSelectedFieldKey(e) {
+    const type = selectedField.dataset.type;
+
+    // Escape or Enter clears selection
+    if (e.key === 'Escape' || e.key === 'Enter') {
+        e.preventDefault();
+        clearFieldSelection();
+        return true;
+    }
+
+    // Tab — move selection to the next editable field. Within a multi-arg
+    // line that's arg1 → arg2 (Shift+Tab reverses); at line boundaries it
+    // hops to the first/last field of the next/prev arg-bearing line.
+    if (e.key === 'Tab') {
+        e.preventDefault();
+        const direction = e.shiftKey ? -1 : 1;
+        const currentLine = parseInt(selectedField.dataset.lineIndex);
+        const allLines = document.querySelectorAll('.program-line');
+        const currentLineEl = allLines[currentLine];
+        const fieldsOnLine = currentLineEl
+            ? Array.from(currentLineEl.querySelectorAll('.editable-field'))
+            : [];
+        const currentIdx = fieldsOnLine.indexOf(selectedField);
+        const nextIdx = currentIdx + direction;
+
+        let nextField = null;
+        if (nextIdx >= 0 && nextIdx < fieldsOnLine.length) {
+            // Stay on this line
+            nextField = fieldsOnLine[nextIdx];
+        } else {
+            // Hop to next/prev arg-bearing line
+            const newLineIndex = _findNextArgEditableLine(currentLine, direction);
+            if (newLineIndex !== -1) {
+                const newLineEl = allLines[newLineIndex];
+                const fieldsOnNewLine = newLineEl
+                    ? Array.from(newLineEl.querySelectorAll('.editable-field'))
+                    : [];
+                if (fieldsOnNewLine.length > 0) {
+                    nextField = direction > 0
+                        ? fieldsOnNewLine[0]
+                        : fieldsOnNewLine[fieldsOnNewLine.length - 1];
+                    // Move the cursor block / line selection to follow
+                    selectedLineIndex = newLineIndex;
+                    selectedLines.clear();
+                    selectedLines.add(newLineIndex);
+                    updateLineSelectionUI();
+                }
+            }
+        }
+
+        if (nextField) {
+            clearFieldSelection();
+            nextField.classList.add('selected');
+            selectedField = nextField;
+            fieldInputBuffer = '';
+        }
+        return true;
+    }
+
+    // Number keys (0-9) - type to set value
+    if (e.key >= '0' && e.key <= '9') {
+        e.preventDefault();
+
+        const lineIndex = parseInt(selectedField.dataset.lineIndex);
+        const argNum = parseInt(selectedField.dataset.argNum);
+        const displayOffset = parseInt(selectedField.dataset.offset) || 0;
+        const instr = currentProgramData.instructions[lineIndex];
+        const range = getFieldRange(type);
+
+        // For list-mode fields (assets), don't allow typing
+        if (range.list) {
+            return true;
+        }
+
+        // Save undo state on first keypress
+        if (fieldInputBuffer === '') {
+            saveUndoState();
+        }
+
+        // Append digit to buffer
+        fieldInputBuffer += e.key;
+
+        // Convert the typed display value to storage. Several types display
+        // a value offset from the raw storage (e.g. `sprite` formatter does
+        // +1 so storage 0 displays "1"); typing "1" should write storage 0,
+        // not storage 1. _typedToStorage handles all such cases by asking the
+        // formatter what the display looks like for the min storage value.
+        let typed = parseInt(fieldInputBuffer, 10);
+        const maxTyped = _maxTypedDisplay(type, displayOffset, instr, range);
+        if (typed > maxTyped) {
+            fieldInputBuffer = e.key;
+            typed = parseInt(e.key, 10);
+        }
+        let newValue = _typedToStorage(type, displayOffset, instr, typed, range);
+        newValue = Math.max(range.min, Math.min(range.max, newValue));
+
+        // Update instruction
+        if (argNum === 1) {
+            instr.arg1 = newValue;
+        } else {
+            instr.arg2 = newValue;
+        }
+
+        // Update display
+        selectedField.textContent = formatFieldValue(type, newValue + displayOffset, instr);
+        updateInstructionName(instr);
+        saveCurrentProgram();
+
+        return true;
+    }
+
+    // Backspace - remove last digit
+    if (e.key === 'Backspace') {
+        e.preventDefault();
+
+        if (fieldInputBuffer.length > 0) {
+            const lineIndex = parseInt(selectedField.dataset.lineIndex);
+            const argNum = parseInt(selectedField.dataset.argNum);
+            const displayOffset = parseInt(selectedField.dataset.offset) || 0;
+            const instr = currentProgramData.instructions[lineIndex];
+            const range = getFieldRange(type);
+
+            if (range.list) return true;
+
+            fieldInputBuffer = fieldInputBuffer.slice(0, -1);
+
+            let newValue;
+            if (fieldInputBuffer.length > 0) {
+                const typed = parseInt(fieldInputBuffer, 10);
+                newValue = _typedToStorage(type, displayOffset, instr, typed, range);
+            } else {
+                newValue = range.min;
+            }
+            newValue = Math.max(range.min, Math.min(range.max, newValue));
+
+            if (argNum === 1) {
+                instr.arg1 = newValue;
+            } else {
+                instr.arg2 = newValue;
+            }
+
+            selectedField.textContent = formatFieldValue(type, newValue + displayOffset, instr);
+            updateInstructionName(instr);
+            saveCurrentProgram();
+        }
+
+        return true;
+    }
+
+    // Arrow keys - increment/decrement
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        e.preventDefault();
+
+        const lineIndex = parseInt(selectedField.dataset.lineIndex);
+        const argNum = parseInt(selectedField.dataset.argNum);
+        const displayOffset = parseInt(selectedField.dataset.offset) || 0;
+        const instr = currentProgramData.instructions[lineIndex];
+
+        saveUndoState();
+
+        const currentValue = argNum === 1 ? instr.arg1 : instr.arg2;
+        const delta = e.key === 'ArrowUp' ? 1 : -1;
+        const newValue = _nextFieldValue(type, currentValue, delta);
+
+        if (argNum === 1) {
+            instr.arg1 = newValue;
+        } else {
+            instr.arg2 = newValue;
+        }
+
+        fieldInputBuffer = String(newValue);
+        selectedField.textContent = formatFieldValue(type, newValue + displayOffset, instr);
+        updateInstructionName(instr);
+        saveCurrentProgram();
+
+        return true;
+    }
+
+    return false;
+}
+
+function handleSearchKey(e) {
+    // Enter - insert the picker's highlighted instruction. Works whether
+    // the user typed a search or just navigated the picker with arrows —
+    // the highlighted line is always insertable while the picker has
+    // focus (which it does whenever no field/asset-picker/arg-edit is
+    // taking input).
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        const op = instructionOpcodes[selectedInstructionIndex];
+        if (op) {
+            clearInstructionSearch();
+            placeInstructionAtCursor(op.opcode);
+        }
+        return;
+    }
+
+    // Escape - clear search
+    if (e.key === 'Escape') {
+        clearInstructionSearch();
+        renderInstructionList();
+        return;
+    }
+
+    // Backspace - remove last character from search
+    if (e.key === 'Backspace') {
+        e.preventDefault();
+        if (instructionSearchText.length > 0) {
+            instructionSearchText = instructionSearchText.slice(0, -1);
+            findMatchingInstruction();
+        }
+        return;
+    }
+
+    // Arrow keys - navigate instruction list
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        selectInstruction(Math.min(selectedInstructionIndex + 1, instructionOpcodes.length - 1));
+        scrollSelectedInstructionIntoView();
+        return;
+    }
+    if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        selectInstruction(Math.max(selectedInstructionIndex - 1, 0));
+        scrollSelectedInstructionIntoView();
+        return;
+    }
+
+    // Letter keys - add to search. "/" included so users can type
+    // names like "/ comment".
+    if (e.key.length === 1 && /[a-zA-Z \/]/.test(e.key) && !e.ctrlKey && !e.metaKey) {
+        instructionSearchText += e.key;
+        findMatchingInstruction();
+
+        // Clear search after timeout
+        if (instructionSearchTimeout) clearTimeout(instructionSearchTimeout);
+        instructionSearchTimeout = setTimeout(clearInstructionSearch, 1500);
+    }
+}
+
+// Walk the instruction list in `direction` (±1) and return the first index
+// past `currentLine` whose instruction has at least one numeric/arg field
+// (comments and prints have string args which the arg-edit UI can't drive,
+// so they're skipped — those open via click on the text field instead).
+// Returns -1 if no such line exists in that direction.
+// Returns the sorted list of arg slot numbers (1 or 2) that have
+// editable fields for this opcode. An entry of 'unused' in opDef.args
+// has no template placeholder and therefore no editable field, so we
+// filter it out here. Arg slots align positionally with arg1 / arg2
+// in the bytecode, so the value is 1-based.
+function _editableArgNums(opDef) {
+    if (!opDef || !opDef.args) return [];
+    const nums = [];
+    for (let i = 0; i < opDef.args.length; i++) {
+        if (opDef.args[i] !== 'unused') nums.push(i + 1);
+    }
+    return nums;
+}
+
+function _findNextArgEditableLine(currentLine, direction) {
+    const instructions = currentProgramData.instructions;
+    let i = currentLine + direction;
+    while (i >= 0 && i < instructions.length) {
+        const instr = instructions[i];
+        // Skip comment (0x2B) and print (0x3B) — they're text fields, not arg fields
+        if (instr.opcode !== 0x2B && instr.opcode !== 0x3B) {
+            const opDef = gmOpcodes[instr.opcode];
+            if (_editableArgNums(opDef).length > 0) return i;
+        }
+        i += direction;
+    }
+    return -1;
+}
+
+function handleArgEditKey(e) {
+    const instr = currentProgramData.instructions[argEditLineIndex];
+    if (!instr) {
+        exitArgEditMode();
+        return;
+    }
+
+    const opDef = gmOpcodes[instr.opcode];
+    const editableNums = _editableArgNums(opDef);
+
+    // Tab — advance to the next editable field. Within a multi-arg line that
+    // means the next editable arg slot; at the end of the line we hop to the
+    // first arg of the next instruction line that has args (Shift+Tab reverses).
+    // Comments and prints are skipped — they use a different text-input UI;
+    // click to edit those directly.
+    if (e.key === 'Tab') {
+        e.preventDefault();
+        const direction = e.shiftKey ? -1 : 1;
+        const curPos = editableNums.indexOf(argEditArgNum);
+        const nextPos = curPos + direction;
+
+        if (nextPos >= 0 && nextPos < editableNums.length) {
+            argEditArgNum = editableNums[nextPos];
+        } else {
+            const newLineIndex = _findNextArgEditableLine(argEditLineIndex, direction);
+            if (newLineIndex === -1) {
+                // No next editable line — treat Tab as Enter so the user
+                // ends up on a blank line ready to insert the next
+                // instruction (instead of being stuck on the current arg).
+                exitArgEditMode();
+                return;
+            }
+
+            const newInstr = currentProgramData.instructions[newLineIndex];
+            const newEditableNums = _editableArgNums(gmOpcodes[newInstr.opcode]);
+
+            argEditLineIndex = newLineIndex;
+            argEditArgNum = direction > 0
+                ? newEditableNums[0]
+                : newEditableNums[newEditableNums.length - 1];
+
+            // Move the cursor block + line selection along with the focused field
+            selectedLineIndex = newLineIndex;
+            selectedLines.clear();
+            selectedLines.add(newLineIndex);
+        }
+
+        argEditValue = '';
+        renderProgramListing();
+        highlightCurrentArg();
+        return;
+    }
+
+    // Arrow up/down - increment/decrement value
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        const delta = e.key === 'ArrowUp' ? 1 : -1;
+        const argType = opDef.args[argEditArgNum - 1];
+        const currentVal = argEditArgNum === 1 ? instr.arg1 : instr.arg2;
+        const newVal = _nextFieldValue(argType, currentVal, delta);
+
+        if (argEditArgNum === 1) instr.arg1 = newVal;
+        else                     instr.arg2 = newVal;
+
+        argEditValue = '';
+        updateInstructionName(instr);
+        renderProgramListing();
+        highlightCurrentArg();
+        return;
+    }
+
+    // Enter or Escape - exit arg edit mode
+    if (e.key === 'Enter' || e.key === 'Escape') {
+        e.preventDefault();
+        exitArgEditMode();
+        return;
+    }
+
+    // Single-character typing. Dispatched type-first so each arg type
+    // owns its accepted input modes and explicitly ignores everything
+    // else — keeps wrong-mode keys (e.g. digits on a `var` field) from
+    // falling through to a branch that happens to accept them.
+    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
+        const argType = opDef.args[argEditArgNum - 1];
+        const isAlpha = /[a-zA-Z]/.test(e.key);
+        const isDigit = /[0-9]/.test(e.key);
+
+        // Enum types accept letters via cycle. Digits cycle only for the
+        // subset whose displays contain meaningful digits (ENUM_DIGIT_CYCLE);
+        // for direction, digit keys fall through to the numeric path below
+        // so the user can type the raw 0-255 byte value directly.
+        if (ENUM_ARG_TYPES.includes(argType)) {
+            const cycleThis = isAlpha || (isDigit && ENUM_DIGIT_CYCLE.includes(argType));
+            if (cycleThis) {
+                const currentValue = argEditArgNum === 1 ? instr.arg1 : instr.arg2;
+                const newValue = findEnumValueForKey(argType, e.key, currentValue, instr);
+                if (newValue >= 0) {
+                    if (argEditArgNum === 1) instr.arg1 = newValue;
+                    else                     instr.arg2 = newValue;
+                    // Reset the digit accumulator — without this, a
+                    // subsequent numeric keystroke would append to a
+                    // stale buffer (e.g. typing "r" then "1" on direction
+                    // would interpret "1" as "<old buffer>1").
+                    argEditValue = '';
+                    updateInstructionName(instr);
+                    renderProgramListing();
+                    highlightCurrentArg();
+                }
+                return;
+            }
+            // Letters on pure-word enum or digit on alwaysOnce/onOff/etc.
+            // → no useful input mode, ignore.
+            if (isAlpha) return;
+            // Digit + direction falls through to the numeric branch below.
+            if (argType !== 'direction') return;
+        }
+
+        // Variables accept LETTERS only (a-z → 1-26). Digits would
+        // otherwise leak into the numeric branch below and write the
+        // raw 1-26 storage value, which displays as a different letter
+        // — confusing class of bug. Explicit return makes the
+        // "letters only" rule load-bearing.
+        if (argType === 'var') {
+            if (isAlpha) {
+                const varVal = e.key.toLowerCase().charCodeAt(0) - 96;
+                if (varVal >= 1 && varVal <= 26) {
+                    if (argEditArgNum === 1) instr.arg1 = varVal;
+                    else                     instr.arg2 = varVal;
+                    argEditValue = '';   // see enum branch comment
+                    updateInstructionName(instr);
+                    renderProgramListing();
+                    highlightCurrentArg();
+                }
+            }
+            return;
+        }
+
+        // Numeric types accept DIGITS only. Goes through the shared
+        // _typedToStorage / _maxTypedDisplay helpers (also used by
+        // handleSelectedFieldKey) so both arg-entry paths agree on how
+        // typed digits map to stored values for every field type.
+        if (isDigit) {
+            const range = getFieldRange(argType);
+            if (range.list) return; // Asset/list fields don't take typed values
+
+            const tentative = argEditValue + e.key;
+            const maxTyped = _maxTypedDisplay(argType, 0, instr, range);
+            argEditValue = (parseInt(tentative, 10) > maxTyped) ? e.key : tentative;
+
+            const typed = parseInt(argEditValue, 10);
+            let newValue = _typedToStorage(argType, 0, instr, typed, range);
+            newValue = Math.max(range.min, Math.min(range.max, newValue));
+            if (argEditArgNum === 1) instr.arg1 = newValue;
+            else                     instr.arg2 = newValue;
+            updateInstructionName(instr);
+            renderProgramListing();
+            highlightCurrentArg();
+            return;
+        }
+    }
+
+    // Backspace - remove last character from search/value
+    if (e.key === 'Backspace') {
+        e.preventDefault();
+        if (argEditValue.length > 0) {
+            argEditValue = argEditValue.slice(0, -1);
+            // Re-render to update the highlight display
+            renderProgramListing();
+            highlightCurrentArg();
+        }
+        return;
+    }
+}
+
+// === VALUE CONVERSION SYSTEM ===
+// GM stores values internally (bytecode) differently than displayed:
+// - Formatters (in gmOpcodes.js gmTypeFormatters) convert internal → display
+// - Ranges (getFieldRange) define valid internal values
+// - _typedToStorage / _maxTypedDisplay derive the typed↔storage offset
+//   per-type by ASKING the formatter what the min/max displays look like.
+//   No per-type list to keep in sync — adding a new offset/scaled type
+//   means writing its formatter and that's it.
+//
+// Example: scene type
+// - Internal: 0, 1 (stored in bytecode)
+// - Display: "1", "2" (shown to user via formatter `val + 1`)
+// - User types "2" → _typedToStorage returns 1 (formatter min "1" → offset 1)
+//
+// All three input paths (drag-edit mouseup → handleSelectedFieldKey,
+// arg-edit Tab-walk → handleArgEditKey, post-insert arg-edit) go through
+// _typedToStorage so digit input behaves identically across them.
+
+function enterArgEditMode(lineIndex) {
+    const instr = currentProgramData.instructions[lineIndex];
+    if (!instr) return;
+
+    const opDef = gmOpcodes[instr.opcode];
+    const editableNums = _editableArgNums(opDef);
+    if (editableNums.length === 0) return;
+
+    argEditMode = true;
+    argEditLineIndex = lineIndex;
+    // Start on the first editable arg slot — skips 'unused' so e.g.
+    // "jump to label l001" (args=['unused','label']) lands on arg2.
+    argEditArgNum = editableNums[0];
+    argEditValue = '';
+
+    highlightCurrentArg();
+}
+
+function exitArgEditMode() {
+    // If the user is still parked on the line they were editing (i.e.
+    // didn't click somewhere else mid-edit, which would have moved
+    // selectedLineIndex), advance the cursor one line. Matches the
+    // user-expectation that "I'm done editing → cursor moves forward."
+    // Click-elsewhere cases hit this with selectedLineIndex already
+    // changed, so the advance is skipped — the click wins.
+    const wasOnEditLine = (selectedLineIndex === argEditLineIndex && argEditLineIndex >= 0);
+    const exitedFrom = argEditLineIndex;
+
+    argEditMode = false;
+    argEditLineIndex = -1;
+    argEditArgNum = 0;
+    argEditValue = '';
+
+    if (wasOnEditLine && currentProgramData?.instructions) {
+        selectedLineIndex = Math.min(exitedFrom + 1, currentProgramData.instructions.length);
+        selectedLines.clear();
+        selectedLines.add(selectedLineIndex);
+    }
+    renderProgramListing();
+}
+
+function highlightCurrentArg() {
+    // Remove existing highlight
+    document.querySelectorAll('.editable-field.arg-editing').forEach(el => {
+        el.classList.remove('arg-editing');
+    });
+
+    // Find by (lineIndex, argNum). The span's data-arg-num is the source
+    // of truth for which storage slot it edits — same identifier
+    // dragging and the click path already use, so all three operations
+    // resolve to the same DOM element by construction.
+    const programLines = document.querySelectorAll('.program-line');
+    const line = programLines[argEditLineIndex];
+    if (line) {
+        const field = line.querySelector(`.editable-field[data-arg-num="${argEditArgNum}"]`);
+        if (field) {
+            field.classList.add('arg-editing');
+
+            const instr = currentProgramData.instructions[argEditLineIndex];
+            const opDef = gmOpcodes[instr.opcode];
+            const argType = opDef && opDef.args ? opDef.args[argEditArgNum - 1] : null;
+
+            // For asset types, open the asset picker
+            if (argType && ASSET_ARG_TYPES[argType]) {
+                // Use setTimeout to ensure DOM is ready. showAssetPicker
+                // expects argIndex (0-based opDef.args index), not argNum.
+                setTimeout(() => {
+                    showAssetPicker(field, argType, argEditLineIndex, argEditArgNum - 1);
+                }, 0);
+            }
+        }
+    }
+}
+
+function findMatchingInstruction() {
+    const searchLower = instructionSearchText.toLowerCase();
+    for (let i = 0; i < instructionOpcodes.length; i++) {
+        if (instructionOpcodes[i].name.toLowerCase().startsWith(searchLower)) {
+            selectInstruction(i);
+            scrollSelectedInstructionIntoView();
+            renderInstructionList();
+            return;
+        }
+    }
+    // No match - just re-render to show current search
+    renderInstructionList();
+}
+
+function clearInstructionSearch() {
+    instructionSearchText = '';
+    if (instructionSearchTimeout) {
+        clearTimeout(instructionSearchTimeout);
+        instructionSearchTimeout = null;
+    }
+    renderInstructionList();
+}
+
+function scrollSelectedInstructionIntoView() {
+    const picker = document.getElementById('instructionPicker');
+    const selected = picker.querySelector('.instruction-item.selected');
+    if (selected) {
+        selected.scrollIntoView({ block: 'nearest' });
+    }
+}
+
+// Place instruction at cursor position.
+// - On blank line (end): adds new instruction, cursor moves to next blank line
+// - On existing instruction: replaces it (preserving label), cursor moves to next line
+// After placing, auto-enters text edit mode (for comments/print) or arg edit mode
+// (for instructions with editable args) for efficient keyboard-driven editing.
+function placeInstructionAtCursor(opcode) {
+    if (!currentProgramData) {
+        currentProgramData = {
+            instructions: [],
+            mediaStore: [null]
+        };
+    }
+
+    const instructions = currentProgramData.instructions;
+
+    // If no line selected, default to end (blank line)
+    if (selectedLineIndex < 0) {
+        selectedLineIndex = instructions.length;
+    }
+
+    const cost = getInstructionCost(opcode);
+    const isBlankLine = selectedLineIndex >= instructions.length;
+
+    // Calculate net cost (new cost minus old cost if replacing)
+    let netCost = cost;
+    if (!isBlankLine) {
+        const oldCost = getInstructionCost(instructions[selectedLineIndex].opcode);
+        netCost = cost - oldCost;
+    }
+
+    // Check for out of memory
+    if (netCost > 0 && calculateFreeBlocks() < netCost) {
+        showOutOfMemory();
+        return;
+    }
+
+    // Save undo state
+    saveUndoState();
+
+    // Create new instruction with default args
+    const opDef = gmOpcodes[opcode];
+    const newInstr = {
+        opcode: opcode,
+        arg1: opDef && opDef.args && opDef.args[0] ? getDefaultArg(opDef.args[0]) : 0,
+        arg2: opDef && opDef.args && opDef.args[1] ? getDefaultArg(opDef.args[1]) : 0,
+        label: 0,
+        instructionName: ''
+    };
+
+    // Generate instruction name
+    newInstr.instructionName = formatInstruction(
+        newInstr.opcode,
+        newInstr.arg1,
+        newInstr.arg2,
+        currentProgramData.mediaStore,
+        c64ColorNames
+    );
+
+    // A new comment should start blank — the generic string formatter would
+    // otherwise fill it with placeholder underscores (intentional for print
+    // statements, not for comments).
+    if (newInstr.opcode === 0x2B) {
+        newInstr.instructionName = '/ ';
+    }
+
+    const insertedIndex = isBlankLine ? instructions.length : selectedLineIndex;
+
+    if (isBlankLine) {
+        instructions.push(newInstr);
+    } else {
+        // Replace existing instruction (preserve label)
+        const existingLabel = instructions[selectedLineIndex].label;
+        newInstr.label = existingLabel;
+        instructions[selectedLineIndex] = newInstr;
+    }
+
+    // Cursor stays on the inserted line while the user finishes editing
+    // its args or text — advancing immediately makes the cursor block
+    // visually compete with the field being edited. Advancement happens
+    // on exit: exitArgEditMode for arg fields, saveEdit for comment/print.
+    // For no-args instructions there's nothing to edit, so advance now.
+    const hasArgs = opDef && opDef.args && opDef.args.length > 0;
+    const isTextEdit = opcode === 0x2B || opcode === 0x3B;
+    if (!hasArgs && !isTextEdit) {
+        selectedLineIndex = insertedIndex + 1;
+    } else {
+        selectedLineIndex = insertedIndex;
+    }
+    selectedLines.clear();
+    selectedLines.add(selectedLineIndex);
+
+    renderProgramListing();
+    scrollToSelectedLine();
+
+    // Auto-enter text edit mode for comments and print statements
+    if (isTextEdit) {
+        const programLines = document.querySelectorAll('.program-line');
+        const insertedLine = programLines[insertedIndex];
+        if (insertedLine) {
+            const editableField = insertedLine.querySelector('.editable-field');
+            if (editableField) editableField.click();
+        }
+    } else if (hasArgs) {
+        enterArgEditMode(insertedIndex);
+    }
+}
+
+// Get default value for an argument type. For any type whose getArgRange
+// has min > 0, an explicit case is required here — otherwise the default
+// is below the legal range and the inserted line displays a value the
+// user can't even drag to (since drag clamps to [min, max]). Each case
+// below mirrors its getArgRange's min.
+function getDefaultArg(argType) {
+    switch (argType) {
+        case 'var': return 1;        // 1-26 (a-z)
+        case 'label': return 1;      // labels are 1-255
+        case 'seconds': return 1;    // 0.1s — zero-duration pause is nonsense
+        case 'color23': return 1;    // 1=colr2, 2=colr3 (no colr1 in shared)
+        case 'rndRange': return 1;   // "rnd 0..0" would always return 0
+        case 'sprite': return 0;
+        case 'color':
+        case 'colorName': return 0;
+        case 'num': return 0;
+        default: return 0;
+    }
+}
+
+// Scroll program area to keep selected line visible
+function scrollToSelectedLine() {
+    const programArea = document.getElementById('programArea');
+    const selectedEl = programArea.querySelector('.program-line.selected');
+    if (selectedEl) {
+        selectedEl.scrollIntoView({ block: 'nearest' });
+    }
+}
+
+function selectInstruction(index) {
+    selectedInstructionIndex = index;
+    // Update selection visually without full re-render
+    document.querySelectorAll('#instructionPicker .instruction-item').forEach((el, i) => {
+        el.classList.toggle('selected', i === index);
+    });
+}
+
+// Get memory cost for an instruction opcode
+function getInstructionCost(opcode) {
+    if (opcode === 0x2B) return 7;  // Comment: 28 bytes = 7 units
+    if (opcode === 0x3B) return 6;  // Print: 24 bytes = 6 units
+    return 1;                        // Normal: 4 bytes = 1 unit
+}
+
+
+// === PROGRAM DISPLAY ===
+
+// Editing state
+let activeField = null;  // Currently active editable field (during drag)
+let selectedField = null;  // Currently selected field (for keyboard input)
+let fieldInputBuffer = '';  // Buffer for typed digits
+let dragStartY = 0;      // Y position when drag started
+let dragStartValue = 0;  // Value when drag started
+
+function renderProgramListing() {
+    // Persist the edited program to localStorage (debounced) so unsaved work
+    // survives navigating to another editor and back.
+    _scheduleSessionSave();
+
+    const listing = document.getElementById('programListing');
+    listing.innerHTML = '';
+
+    if (!currentProgramData || !currentProgramData.instructions) {
+        return;
+    }
+
+    const instructions = currentProgramData.instructions;
+    let indentLevel = 0;
+
+    for (let i = 0; i < instructions.length; i++) {
+        const instr = instructions[i];
+        const div = document.createElement('div');
+        div.className = 'program-line';
+        div.dataset.index = i;
+
+        // Adjust indent for endif/otherwise before rendering
+        if (instr.opcode === 0x55 || instr.opcode === 0x54) {
+            indentLevel = Math.max(0, indentLevel - 1);
+        }
+
+        // Add class for line type and selection state
+        if (i === selectedLineIndex) {
+            div.classList.add('selected');
+        } else if (selectedLines.has(i)) {
+            div.classList.add('multi-selected');
+        }
+        if (instr.opcode === 0x2B) {
+            // Comment
+            div.classList.add('comment-line');
+        } else if (isIfOpcode(instr.opcode) || instr.opcode === 0x54 || instr.opcode === 0x55) {
+            // Logic statement (if/otherwise/endif)
+            div.classList.add('logic-line');
+        }
+
+        // Label column (editable)
+        const labelSpan = document.createElement('span');
+        labelSpan.className = 'label';
+        labelSpan.dataset.lineIndex = i;
+        if (instr.label > 0) {
+            labelSpan.textContent = 'l' + instr.label.toString().padStart(3, '0');
+        }
+        labelSpan.addEventListener('mousedown', onLabelMouseDown);
+        div.appendChild(labelSpan);
+
+        // Cursor block (between label and instruction)
+        const cursorBlock = document.createElement('span');
+        cursorBlock.className = 'cursor-block';
+        div.appendChild(cursorBlock);
+
+        // Instruction column with indent and editable fields
+        const instrSpan = document.createElement('span');
+        instrSpan.className = 'instruction';
+        const indent = '  '.repeat(indentLevel);
+        instrSpan.appendChild(document.createTextNode(indent));
+
+        // Render instruction with editable fields
+        renderEditableInstruction(instrSpan, instr, i);
+        div.appendChild(instrSpan);
+
+        div.onclick = (e) => {
+            // Only select line if not clicking an editable field. Drag-select
+            // (mousedown on the line div) also handles selection, so we skip
+            // the click if a drag just happened.
+            if (e.target.classList.contains('editable-field')) return;
+            if (lineDrag.dragHappened) {
+                lineDrag.dragHappened = false;
+                return;
+            }
+            selectLine(i, e.shiftKey);
+        };
+        div.addEventListener('mousedown', (e) => onLineDragStart(e, i));
+        listing.appendChild(div);
+
+        // Increase indent after if/otherwise
+        if (isIfOpcode(instr.opcode) || instr.opcode === 0x54) {
+            indentLevel++;
+        }
+    }
+
+    // Add blank line at end for adding new instructions
+    const blankIndex = instructions.length;
+    const blankDiv = document.createElement('div');
+    blankDiv.className = 'program-line blank-line';
+    blankDiv.dataset.index = blankIndex;
+
+    if (blankIndex === selectedLineIndex) {
+        blankDiv.classList.add('selected');
+    } else if (selectedLines.has(blankIndex)) {
+        blankDiv.classList.add('multi-selected');
+    }
+
+    // Empty label (same order as regular lines: label, cursor, instruction)
+    const blankLabel = document.createElement('span');
+    blankLabel.className = 'label';
+    blankDiv.appendChild(blankLabel);
+
+    // Cursor block
+    const blankCursor = document.createElement('span');
+    blankCursor.className = 'cursor-block';
+    blankDiv.appendChild(blankCursor);
+
+    // Empty instruction
+    const blankInstr = document.createElement('span');
+    blankInstr.className = 'instruction';
+    blankInstr.innerHTML = '&nbsp;'; // Non-breaking space for clickable area
+    blankDiv.appendChild(blankInstr);
+
+    blankDiv.onclick = (e) => selectLine(blankIndex, e.shiftKey);
+    listing.appendChild(blankDiv);
+
+    // Update free blocks display
+    updateFreeBlocks();
+}
+
+// Render instruction text with editable spans for each field
+function renderEditableInstruction(container, instr, lineIndex) {
+    const opDef = gmOpcodes[instr.opcode];
+
+    // Comments and print statements - editable text field
+    if (instr.opcode === 0x2B || instr.opcode === 0x3B) {
+        const isComment = instr.opcode === 0x2B;
+        const prefix = isComment ? '/ ' : 'print ';
+        let text = instr.instructionName.startsWith(prefix)
+            ? instr.instructionName.substring(prefix.length)
+            : instr.instructionName;
+
+        // Comments are space-padded, so trim trailing spaces for display
+        // Print statements use 0x3B padding which shows as underscores - keep them
+        if (isComment) {
+            text = text.trimEnd();
+        }
+
+        container.appendChild(document.createTextNode(prefix));
+
+        const span = document.createElement('span');
+        span.className = 'editable-field';
+        span.dataset.lineIndex = lineIndex;
+        span.dataset.type = isComment ? 'comment' : 'print';
+        span.textContent = text;
+        span.addEventListener('click', onStringFieldClick);
+        container.appendChild(span);
+        return;
+    }
+
+    // If no template or no args, just show plain text
+    if (!opDef || !opDef.template || !opDef.args || opDef.args.length === 0) {
+        container.appendChild(document.createTextNode(instr.instructionName));
+        return;
+    }
+
+    const template = opDef.template;
+    // Match {type:argNum} or {type:argNum+offset} patterns
+    const regex = /\{([^:}]+):(\d)(\+\d+)?\}/g;
+    let lastIndex = 0;
+    let match;
+    // Templates can reference the same arg twice (e.g. `set {var:1} = {var:1}
+    // + {num:2}`). Only the FIRST occurrence becomes an editable field —
+    // subsequent occurrences render as plain text, kept in sync because the
+    // whole line re-renders on every edit. This way Tab navigation /
+    // highlightCurrentArg index naturally into the editable spans, with
+    // count == opDef.args.length, no per-template fiddling.
+    const seenArgs = new Set();
+
+    while ((match = regex.exec(template)) !== null) {
+        // Add literal text before this match
+        if (match.index > lastIndex) {
+            container.appendChild(document.createTextNode(template.substring(lastIndex, match.index)));
+        }
+
+        const type = match[1];
+        const argNum = parseInt(match[2]);
+        const displayOffset = match[3] ? parseInt(match[3]) : 0;  // e.g., +1 for 1-indexed display
+        const value = argNum === 1 ? instr.arg1 : instr.arg2;
+        const displayText = formatFieldValue(type, value + displayOffset, instr);
+
+        if (seenArgs.has(argNum)) {
+            // Mirror of a previous occurrence — plain text, no interaction.
+            container.appendChild(document.createTextNode(displayText));
+            lastIndex = match.index + match[0].length;
+            continue;
+        }
+        seenArgs.add(argNum);
+
+        // Create editable span
+        const span = document.createElement('span');
+        span.className = 'editable-field';
+        span.dataset.lineIndex = lineIndex;
+        span.dataset.argNum = argNum;
+        span.dataset.type = type;
+        span.dataset.offset = displayOffset;
+        span.textContent = displayText;
+
+        if (type === 'colorName') {
+            // Use GMTools.draggableField for colour fields — gives us a
+            // dropdown of all 16 C64 colours with swatches, plus drag/type-
+            // search/arrow-key navigation. Replaces the cycle-on-drag handler
+            // that other field types still use.
+            attachColorDraggable(span, instr, argNum);
+        } else {
+            span.addEventListener('mousedown', onFieldMouseDown);
+        }
+
+        container.appendChild(span);
+        lastIndex = match.index + match[0].length;
+    }
+
+    // Add remaining literal text
+    if (lastIndex < template.length) {
+        container.appendChild(document.createTextNode(template.substring(lastIndex)));
+    }
+}
+
+// Attach the shared draggable widget to a colorName field. Drag scrubs through
+// colours, single-click opens a dropdown with C64-coloured swatches + names,
+// typing letters search-filters the dropdown.
+function attachColorDraggable(span, instr, argNum) {
+    GMTools.draggableField.attach(span, {
+        type: 'enum',
+        values: Array.from({ length: 16 }, (_, i) => i),
+        getValue: () => argNum === 1 ? instr.arg1 : instr.arg2,
+        setValue: (v) => {
+            saveUndoState();
+            if (argNum === 1) instr.arg1 = v;
+            else instr.arg2 = v;
+            span.textContent = formatFieldValue('colorName', v, instr);
+            updateInstructionName(instr);
+            saveCurrentProgram();
+        },
+        // Used for typed-search matching ("re" → red)
+        formatValue: (v) => c64ColorNames[v] || '',
+        // Dropdown item: swatch chip + colour name
+        renderItem: (v) => {
+            const wrap = document.createElement('span');
+            wrap.style.display = 'inline-flex';
+            wrap.style.alignItems = 'center';
+            wrap.style.gap = '6px';
+            const swatch = document.createElement('span');
+            const rgb = c64Palette[v];
+            swatch.style.cssText = `display:inline-block;width:14px;height:14px;` +
+                `background:rgb(${rgb[0]},${rgb[1]},${rgb[2]});border:1px solid var(--c64-black);`;
+            const label = document.createElement('span');
+            label.textContent = c64ColorNames[v];
+            wrap.appendChild(swatch);
+            wrap.appendChild(label);
+            return wrap;
+        }
+    });
+}
+
+// Format a field value for display
+function formatFieldValue(type, value, instr) {
+    const formatter = gmTypeFormatters[type];
+    if (formatter) {
+        return formatter(value, currentProgramData ? currentProgramData.mediaStore : null, c64ColorNames);
+    }
+    return String(value);
+}
+
+// When the user types a number into an editable field, they're typing the
+// DISPLAYED value, not the raw storage value. Several formatters add an
+// offset (e.g. `sprite` shows storage 0 as "1"); typing 1 should then write
+// storage 0. We derive the offset by asking the formatter what storage
+// range.min looks like — if the formatter returns "1" for storage 0, the
+// per-keystroke conversion is `storage = typed - 1`. Non-numeric formatters
+// (e.g. colorName → "black") leave typed values unchanged so the existing
+// behavior carries forward.
+//
+// Pulls a single number out of the formatter's output by stripping
+// non-digit characters and parsing what's left. Concatenating works for:
+//   - pure-digit displays:      "001"   → 1
+//   - leading-word displays:    "sprite 1" → 1
+//   - decimal displays:         "00.1"  → 1     (seconds: 0.1s = storage 1)
+//                               "25.5"  → 255   (seconds: 25.5s = storage 255)
+//   - dual-number displays:     "100  141°" → 100141 (direction's raw+degrees)
+// The dual-number case ends up with a generous max-typed cap (whatever the
+// concat of the max-value display is), which is fine — the actual range
+// clamp downstream catches the real overflow.
+function _extractDisplayNumber(str) {
+    const digits = String(str).replace(/\D/g, '');
+    return digits === '' ? NaN : parseInt(digits, 10);
+}
+
+function _typedToStorage(type, displayOffset, instr, typed, range) {
+    const baseStr = formatFieldValue(type, range.min + displayOffset, instr);
+    const baseDisplay = _extractDisplayNumber(baseStr);
+    if (isNaN(baseDisplay)) return typed;
+    return typed - (baseDisplay - range.min);
+}
+
+// The largest display number typing should accept before resetting the
+// buffer. Same per-type derivation as _typedToStorage, with one
+// type-specific override: `direction` caps at range.max because its
+// display has two unrelated digit groups ("byte  degrees°") whose
+// concatenation gives a huge nonsense max — e.g. formatter(255) =
+// "255  357°" → 255357. We want typing past 255 to reset, not to grow
+// to six digits before tripping the cap.
+function _maxTypedDisplay(type, displayOffset, instr, range) {
+    if (type === 'direction') return range.max;
+    const maxStr = formatFieldValue(type, range.max + displayOffset, instr);
+    const maxDisplay = _extractDisplayNumber(maxStr);
+    return isNaN(maxDisplay) ? range.max : maxDisplay;
+}
+
+// Increment/decrement a field value by `delta` (+1 or -1). Used by both
+// arg-edit paths (handleArgEditKey + handleSelectedFieldKey arrow keys)
+// so they agree on edge behaviour. Clamps at the endpoints for every
+// type — wraparound feels disorienting for both narrow enum lists and
+// wide numeric ranges, so we stick with the unsurprising clamp.
+function _nextFieldValue(type, currentVal, delta) {
+    const range = getFieldRange(type);
+    if (range.list) {
+        const list = range.list;
+        const start = list.indexOf(currentVal);
+        const safeStart = start === -1 ? 0 : start;
+        return list[Math.max(0, Math.min(list.length - 1, safeStart + delta))];
+    }
+    return Math.max(range.min, Math.min(range.max, currentVal + delta));
+}
+
+// Get the range of valid INTERNAL values for a field type
+function getFieldRange(type) {
+    // Data page types return list of valid indices
+    if (type === 'spriteName' || type === 'sceneName' || type === 'sound' || type === 'song') {
+        return getDataPageRange(type);
+    }
+
+    switch (type) {
+        case 'var': return { min: 1, max: 26 };
+        case 'num': return { min: 0, max: 255 };
+        case 'label': return { min: 1, max: 255 };
+        case 'sprite': return { min: 0, max: 7 };
+        case 'hitTarget': return { min: 0, max: 9 };
+        case 'scene': return { min: 0, max: 1 };  // Internal 0-1, displays as 1-2
+        case 'sceneTarget': return { min: 0, max: 2 };  // 0=scene1, 1=scene2, 2=both
+        case 'score': return { min: 0, max: 1 };  // Internal 0-1, displays as 1-2
+        case 'color':
+        case 'colorName': return { min: 0, max: 15 };
+        case 'colorSlot': return { min: 0, max: 2 };  // Internal 0-2, displays as 1-3
+        case 'plotColor': return { min: 0, max: 3 };  // Plot color: 0=bg, 1-3=scene colors
+        case 'sceneColorSlot': return { min: 0, max: 3 };
+        case 'color23': return { min: 1, max: 2 };
+        case 'joystick': return { min: 0, max: 1 };
+        case 'joyDir': return { min: 0, max: 4 };
+        case 'button': return { min: 0, max: 1 };
+        case 'channel': return { min: 0, max: 2 };
+        case 'onOff': return { min: 0, max: 1 };
+        case 'alwaysOnce': return { min: 0, max: 1 };
+        case 'overUnder': return { min: 0, max: 1 };
+        case 'direction': return { min: 0, max: 255 };
+        case 'animSpeed': return { min: 0, max: 32 };
+        case 'row': return { min: 0, max: 24 };
+        case 'col': return { min: 0, max: 19 };
+        case 'volume': return { min: 0, max: 15 };
+        // seconds: storage × 0.1 = displayed seconds. Min storage is 1
+        // (display "00.1") — a zero-duration pause is nonsense in GM.
+        case 'seconds': return { min: 1, max: 255 };
+        case 'scoreValue': return { min: 0, max: 100 };
+        // scoreComp displays as internal × 1000; capping the internal
+        // max at 100 keeps the displayed cap at 100000 (the practical
+        // max for "if scoreN > XXXXXX" comparisons).
+        case 'scoreComp': return { min: 0, max: 100 };
+        case 'rndRange': return { min: 1, max: 255 };
+        default: return { min: 0, max: 255 };
+    }
+}
+
+// Get list of valid data page indices for a type
+function getDataPageRange(type) {
+    const typeMap = {
+        'spriteName': 'sprite',
+        'sceneName': 'scene',
+        'sound': 'sound',
+        'song': 'song'
+    };
+    const entryType = typeMap[type];
+
+    const validIndices = [];
+    if (currentProgramData && currentProgramData.mediaStore) {
+        for (let i = 1; i < currentProgramData.mediaStore.length; i++) {
+            const entry = currentProgramData.mediaStore[i];
+            if (entry && entry.type === entryType) {
+                validIndices.push(i);
+            }
+        }
+    }
+
+    // Return as list mode (not min/max)
+    return { list: validIndices.length > 0 ? validIndices : [0] };
+}
+
+// Allowed characters in comment / print fields = the GM character set
+// minus the underscore (which is reserved as the print-padding character).
+// Source of truth: encodeChar() in c64lib.js. No '@' — the GM charset
+// doesn't have one.
+function filterGmInput(s) {
+    return s.toLowerCase().replace(/[^a-z0-9 \/+\-=.'?\[\]<>]/g, '');
+}
+
+// Click on string field (comment/print) - show text input
+function onStringFieldClick(e) {
+    // If a drag-select happened on this comment/print field, the click event
+    // still fires on mouseup — don't open the text editor; let the drag's
+    // selection stand. Reset the flag so the next click works normally.
+    if (lineDrag.dragHappened) {
+        lineDrag.dragHappened = false;
+        return;
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const span = e.target;
+    const lineIndex = parseInt(span.dataset.lineIndex);
+    const instr = currentProgramData.instructions[lineIndex];
+    const fieldType = span.dataset.type;  // 'comment' or 'print'
+    const isComment = fieldType === 'comment';
+    const maxLen = isComment ? 25 : 21;  // Comments: 25, Print: 21
+
+    // Move the line selection to this line — clicking a text field should
+    // behave like clicking the line itself, so the cursor block moves here
+    // and the previously-selected line's blue editable-field highlight clears.
+    // updateLineSelectionUI only toggles classes; it doesn't rebuild the DOM,
+    // so the span we're about to replace is still valid below.
+    selectLine(lineIndex);
+
+    // Save state for undo
+    saveUndoState();
+
+    // Get actual text (comments already trimmed, print has underscore padding)
+    const fullText = span.textContent;
+    const actualText = isComment ? fullText : fullText.replace(/_+$/, '');
+
+    // Create input field
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = filterGmInput(actualText);
+    input.maxLength = maxLen;
+    input.className = 'string-edit-input';
+
+    // Force the value through the GM-charset filter on every keystroke.
+    // The C64 GameMaker character set has no uppercase distinction and a
+    // restricted symbol set — typing anything outside it would write a byte
+    // the runtime can't render. Lowercase-only + filter to allowed chars.
+    input.addEventListener('input', () => {
+        const filtered = filterGmInput(input.value);
+        if (input.value !== filtered) {
+            const pos = input.selectionStart;
+            input.value = filtered;
+            // Best-effort restore caret position (off by 1 if a stripped char
+            // was at/before the caret, but smoother than jumping to the end)
+            input.setSelectionRange(pos - 1 >= 0 ? pos - 1 : 0, pos - 1 >= 0 ? pos - 1 : 0);
+        }
+    });
+
+    // Both comment and print get a container so the synthetic block
+    // cursor has a positioned ancestor to anchor to.
+    const container = document.createElement('span');
+    container.className = 'string-edit-container';
+
+    const cursor = document.createElement('span');
+    cursor.className = 'string-edit-cursor';
+
+    // Reposition the synthetic cursor to wherever the input's caret is.
+    // 1ch = width of one char in the monospace C64 font, so left =
+    // selectionEnd * 1ch puts the block right on the next type position.
+    const updateCursor = () => {
+        const pos = input.selectionEnd ?? 0;
+        cursor.style.left = pos + 'ch';
+    };
+
+    if (isComment) {
+        input.style.width = maxLen + 'ch';
+        container.appendChild(input);
+        container.appendChild(cursor);
+        span.parentNode.replaceChild(container, span);
+    } else {
+        // Print: show underscore padding in realtime.
+        const paddingSpan = document.createElement('span');
+        paddingSpan.className = 'string-edit-padding';
+
+        const updatePadding = () => {
+            const textLen = input.value.length;
+            const padLen = Math.max(0, maxLen - textLen);
+            paddingSpan.textContent = '_'.repeat(padLen);
+            input.style.width = textLen === 0 ? '1px' : textLen + 'ch';
+        };
+        updatePadding();
+
+        container.appendChild(input);
+        container.appendChild(paddingSpan);
+        container.appendChild(cursor);
+        span.parentNode.replaceChild(container, span);
+
+        input.addEventListener('input', updatePadding);
+    }
+
+    // Caret can move via typing, arrows, clicks, or focus — listen for
+    // all of them. (selectionchange on document would catch them all
+    // too but doesn't reliably fire for <input> across browsers.)
+    ['input', 'keyup', 'mouseup', 'focus'].forEach(evt => {
+        input.addEventListener(evt, updateCursor);
+    });
+    // Held arrow keys repeat keydown without ever firing keyup until
+    // release — so without this the synthetic cursor sits still while
+    // the real caret races across. We can't just read selectionEnd in
+    // the keydown handler: the browser updates the selection *after*
+    // the handler returns. requestAnimationFrame defers the read to
+    // the next frame, by which point the new caret position is live.
+    input.addEventListener('keydown', () => requestAnimationFrame(updateCursor));
+
+    input.focus();
+    input.select();
+
+    // Handle save on blur or Enter
+    const saveEdit = () => {
+        const prefix = isComment ? '/ ' : 'print ';
+        if (isComment) {
+            // Comments: space-padded (but we just store trimmed for display)
+            instr.instructionName = prefix + input.value;
+        } else {
+            // Print: underscore-padded for display
+            const paddedText = input.value + '_'.repeat(maxLen - input.value.length);
+            instr.instructionName = prefix + paddedText;
+        }
+        // Mirror exitArgEditMode's cursor-advance: if the user is still
+        // parked on the line they just edited, advance to the next line.
+        // Click-elsewhere paths already moved selectedLineIndex, so the
+        // guard prevents fighting that.
+        if (currentProgramData?.instructions) {
+            const editedLine = currentProgramData.instructions.indexOf(instr);
+            if (editedLine >= 0 && editedLine === selectedLineIndex) {
+                selectedLineIndex = Math.min(editedLine + 1, currentProgramData.instructions.length);
+                selectedLines.clear();
+                selectedLines.add(selectedLineIndex);
+            }
+        }
+        renderProgramListing();
+    };
+
+    // Commit the edit on any click outside the input. Without this, handlers
+    // like onFieldMouseDown / onLabelMouseDown preventDefault on mousedown,
+    // which keeps focus on the input and prevents the natural blur — so the
+    // edit silently lingers behind the new selection. Capture phase runs
+    // before those handlers; removeEventListener fires from the blur handler.
+    const onOutsideMouseDown = (e) => {
+        if (!input.contains(e.target)) input.blur();
+    };
+    document.addEventListener('mousedown', onOutsideMouseDown, true);
+
+    input.addEventListener('blur', () => {
+        document.removeEventListener('mousedown', onOutsideMouseDown, true);
+        saveEdit();
+    });
+    input.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            input.blur();
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            renderProgramListing();
+        }
+    });
+}
+
+// === LABEL EDITING ===
+// Labels can be edited by clicking and dragging:
+// - Click existing label: drag to move it to another line (keeps its number)
+// - Click empty label area: creates new label with first available number
+// - Drag over existing label: your label hides "behind" the stationary one
+// - Release over existing label: your dragged label is deleted
+// - Drag left outside program area: label is deleted
+// - Labels are numbered 1-255, displayed as "l001", "l002", etc.
+
+// Get first available label number (1-255)
+function getFirstAvailableLabel() {
+    const usedLabels = new Set();
+    if (currentProgramData && currentProgramData.instructions) {
+        for (const instr of currentProgramData.instructions) {
+            if (instr.label > 0) {
+                usedLabels.add(instr.label);
+            }
+        }
+    }
+    for (let i = 1; i <= 255; i++) {
+        if (!usedLabels.has(i)) return i;
+    }
+    return 0; // No labels available
+}
+
+// Label drag state - we snapshot all labels at drag start so we can
+// restore them during drag preview without losing the original state
+let labelDragSourceIndex = -1;
+let labelDragCurrentIndex = -1;
+let labelDragValue = 0;
+let labelDragOriginalLabels = null; // Snapshot of labels before drag (source set to 0)
+
+// Mouse down on label - start editing
+function onLabelMouseDown(e) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const span = e.target;
+    const lineIndex = parseInt(span.dataset.lineIndex);
+    const instr = currentProgramData.instructions[lineIndex];
+
+    // Save state for undo
+    saveUndoState();
+
+    // If no label, create one with first available number
+    if (instr.label === 0) {
+        const newLabel = getFirstAvailableLabel();
+        if (newLabel === 0) {
+            showMessage('No labels available');
+            return;
+        }
+        instr.label = newLabel;
+    }
+
+    labelDragSourceIndex = lineIndex;
+    labelDragCurrentIndex = lineIndex;
+    labelDragValue = instr.label;
+
+    // Snapshot all labels before dragging, but clear the source position
+    // so restoring doesn't put the label back there
+    labelDragOriginalLabels = currentProgramData.instructions.map(i => i.label);
+    labelDragOriginalLabels[lineIndex] = 0;
+
+    // Remove from source immediately
+    instr.label = 0;
+
+    renderProgramListing();
+    highlightLabelAt(lineIndex);
+
+    document.addEventListener('mousemove', onLabelMouseMove);
+    document.addEventListener('mouseup', onLabelMouseUp);
+}
+
+// Highlight the label span at a given index
+function highlightLabelAt(index) {
+    const labels = document.querySelectorAll('.program-line .label');
+    if (labels[index]) {
+        labels[index].classList.add('active');
+        labels[index].textContent = 'l' + labelDragValue.toString().padStart(3, '0');
+    }
+}
+
+// Mouse move while dragging label
+function onLabelMouseMove(e) {
+    if (labelDragSourceIndex === -1) return;
+
+    const instructions = currentProgramData.instructions;
+    const programArea = document.getElementById('programArea');
+    const programRect = programArea.getBoundingClientRect();
+
+    // Check if dragged outside to the left (delete zone)
+    if (e.clientX < programRect.left) {
+        // Clear any current placement
+        if (labelDragCurrentIndex !== -1) {
+            instructions[labelDragCurrentIndex].label = labelDragOriginalLabels[labelDragCurrentIndex];
+        }
+        labelDragCurrentIndex = -1;
+        renderProgramListing();
+        return;
+    }
+
+    // Find which line we're over
+    const programLines = document.querySelectorAll('.program-line');
+    let targetIndex = -1;
+
+    for (let i = 0; i < programLines.length; i++) {
+        const rect = programLines[i].getBoundingClientRect();
+        if (e.clientY >= rect.top && e.clientY < rect.bottom) {
+            targetIndex = i;
+            break;
+        }
+    }
+
+    if (targetIndex === -1) return;
+    if (targetIndex === labelDragCurrentIndex) return;
+
+    // Restore previous position's original label
+    if (labelDragCurrentIndex !== -1) {
+        instructions[labelDragCurrentIndex].label = labelDragOriginalLabels[labelDragCurrentIndex];
+    }
+
+    // Check if target has an existing label (from original snapshot)
+    const targetHasLabel = labelDragOriginalLabels[targetIndex] > 0;
+
+    if (targetHasLabel) {
+        // Don't place our label here - the existing label stays visible
+        labelDragCurrentIndex = targetIndex;
+        renderProgramListing();
+        // Don't highlight - the existing label shows
+    } else {
+        // Place our label here
+        instructions[targetIndex].label = labelDragValue;
+        labelDragCurrentIndex = targetIndex;
+        renderProgramListing();
+        highlightLabelAt(targetIndex);
+    }
+}
+
+// Mouse up - finish label editing
+function onLabelMouseUp(e) {
+    if (labelDragSourceIndex === -1) return;
+
+    const instructions = currentProgramData.instructions;
+    const programArea = document.getElementById('programArea');
+    const programRect = programArea.getBoundingClientRect();
+
+    // Check if released outside to the left (delete)
+    const deleteLabel = e.clientX < programRect.left;
+
+    // Check if released over an existing label (also delete)
+    const overExistingLabel = labelDragCurrentIndex !== -1 &&
+        labelDragOriginalLabels[labelDragCurrentIndex] > 0;
+
+    if (deleteLabel || overExistingLabel) {
+        // Restore all original labels (source is already 0 in snapshot)
+        for (let i = 0; i < instructions.length; i++) {
+            instructions[i].label = labelDragOriginalLabels[i];
+        }
+    } else if (labelDragCurrentIndex !== -1) {
+        // Place the label at the current position
+        instructions[labelDragCurrentIndex].label = labelDragValue;
+    }
+
+    labelDragSourceIndex = -1;
+    labelDragCurrentIndex = -1;
+    labelDragOriginalLabels = null;
+
+    document.removeEventListener('mousemove', onLabelMouseMove);
+    document.removeEventListener('mouseup', onLabelMouseUp);
+
+    renderProgramListing();
+    saveCurrentProgram();
+}
+
+// Mouse down on editable field - start drag or show asset picker
+function onFieldMouseDown(e) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    let span = e.target;
+    const type = span.dataset.type;
+    const lineIndex = parseInt(span.dataset.lineIndex);
+    const argNum = parseInt(span.dataset.argNum);
+
+    // Clicking an arg also moves the cursor / selection to its line —
+    // without this, the user can edit args on line N while the cursor
+    // sits on some unrelated line, which is confusing. Re-render and
+    // re-find the span because the DOM was rebuilt.
+    if (lineIndex !== selectedLineIndex) {
+        selectedLineIndex = lineIndex;
+        selectedLines.clear();
+        selectedLines.add(lineIndex);
+        renderProgramListing();
+        const lines = document.querySelectorAll('.program-line');
+        const refound = lines[lineIndex]?.querySelector(
+            `.editable-field[data-arg-num="${argNum}"]`
+        );
+        if (!refound) return;
+        span = refound;
+    }
+
+    // For asset types, show the asset picker instead of drag editing
+    if (ASSET_ARG_TYPES[type]) {
+        clearFieldSelection();
+        showAssetPicker(span, type, lineIndex, argNum - 1);  // argNum is 1 or 2, convert to 0 or 1
+        return;
+    }
+
+    // Clear any previous selection
+    clearFieldSelection();
+
+    // Save state for undo before making changes
+    saveUndoState();
+
+    activeField = span;
+    span.classList.add('active');
+
+    const instr = currentProgramData.instructions[lineIndex];
+
+    dragStartY = e.clientY;
+    dragStartValue = argNum === 1 ? instr.arg1 : instr.arg2;
+
+    document.addEventListener('mousemove', onFieldMouseMove);
+    document.addEventListener('mouseup', onFieldMouseUp);
+}
+
+// Mouse move while dragging - cycle values
+function onFieldMouseMove(e) {
+    if (!activeField) return;
+
+    const span = activeField;
+    const type = span.dataset.type;
+    const lineIndex = parseInt(span.dataset.lineIndex);
+    const argNum = parseInt(span.dataset.argNum);
+    const displayOffset = parseInt(span.dataset.offset) || 0;
+    const instr = currentProgramData.instructions[lineIndex];
+
+    const range = getFieldRange(type);
+    let newValue;
+
+    if (range.list) {
+        // List mode (for data page types)
+        const list = range.list;
+        const startIndex = list.indexOf(dragStartValue);
+        const startIdx = startIndex >= 0 ? startIndex : 0;
+
+        const deltaY = dragStartY - e.clientY;
+        const sensitivity = Math.max(8, Math.floor(200 / list.length));
+        const deltaIndex = Math.floor(deltaY / sensitivity);
+
+        // Clamp to valid range
+        const newIndex = Math.max(0, Math.min(list.length - 1, startIdx + deltaIndex));
+        newValue = list[newIndex];
+    } else {
+        // Min/max mode
+        const totalValues = range.max - range.min + 1;
+
+        // Calculate value change based on vertical drag
+        // Drag up = increase, drag down = decrease
+        const deltaY = dragStartY - e.clientY;
+        const sensitivity = Math.max(1, Math.floor(200 / totalValues));
+        const deltaValue = Math.floor(deltaY / sensitivity);
+
+        // Clamp to valid range
+        newValue = Math.max(range.min, Math.min(range.max, dragStartValue + deltaValue));
+    }
+
+    // Update instruction
+    if (argNum === 1) {
+        instr.arg1 = newValue;
+    } else {
+        instr.arg2 = newValue;
+    }
+
+    // Update display (add offset for display, same as formatInstruction)
+    span.textContent = formatFieldValue(type, newValue + displayOffset, instr);
+
+    // Update instructionName
+    updateInstructionName(instr);
+}
+
+// Mouse up - finish drag, keep field selected for keyboard input
+function onFieldMouseUp(e) {
+    if (!activeField) return;
+
+    // Transition from active (dragging) to selected (keyboard input)
+    activeField.classList.remove('active');
+    activeField.classList.add('selected');
+    selectedField = activeField;
+    fieldInputBuffer = '';  // Clear input buffer for fresh typing
+    activeField = null;
+
+    document.removeEventListener('mousemove', onFieldMouseMove);
+    document.removeEventListener('mouseup', onFieldMouseUp);
+
+    // Save changes
+    saveCurrentProgram();
+}
+
+// Clear field selection
+function clearFieldSelection() {
+    if (selectedField) {
+        selectedField.classList.remove('selected');
+        selectedField = null;
+    }
+    fieldInputBuffer = '';
+}
+
+// Copy program listing to clipboard
+function copyProgramListing() {
+    if (!currentProgramData) return;
+
+    const instructions = currentProgramData.instructions;
+    let lines = [];
+
+    // If lines are selected, copy only those; otherwise copy all
+    if (selectedLines.size > 0) {
+        const sortedIndices = Array.from(selectedLines).sort((a, b) => a - b);
+        for (const i of sortedIndices) {
+            if (i < instructions.length) {
+                const instr = instructions[i];
+                const label = instr.label > 0 ? `${instr.label}: ` : '   ';
+                lines.push(`${label}${instr.instructionName}`);
+            }
+        }
+    } else {
+        // Copy all lines
+        for (let i = 0; i < instructions.length; i++) {
+            const instr = instructions[i];
+            const label = instr.label > 0 ? `${instr.label}: ` : '   ';
+            lines.push(`${label}${instr.instructionName}`);
+        }
+    }
+
+    const text = lines.join('\n');
+    navigator.clipboard.writeText(text).then(() => {
+        console.log(`Copied ${lines.length} lines to clipboard`);
+    }).catch(err => {
+        console.error('Failed to copy:', err);
+    });
+}
+
+// Update instruction's instructionName after arg change
+function updateInstructionName(instr) {
+    instr.instructionName = formatInstruction(
+        instr.opcode,
+        instr.arg1,
+        instr.arg2,
+        currentProgramData ? currentProgramData.mediaStore : null,
+        c64ColorNames
+    );
+}
+
+// Save current program to localStorage (called after edits)
+function saveCurrentProgram() {
+    saveCurrentProgramState();
+}
+
+function isIfOpcode(opcode) {
+    return (opcode >= 0x13 && opcode <= 0x1B) ||
+           opcode === 0x4A || opcode === 0x4B || opcode === 0x4C;
+}
+
+function selectLine(index, shiftKey = false) {
+    // Picking a line is treated as a "found it, now I want to edit"
+    // gesture — drop out of find mode so the highlights and search input
+    // get out of the way.
+    if (findMode.active) exitFindMode();
+
+    // Clear any selected numeric field
+    clearFieldSelection();
+
+    if (shiftKey && selectedLineIndex >= 0) {
+        // Shift-click: select range from anchor to clicked line
+        const start = Math.min(selectedLineIndex, index);
+        const end = Math.max(selectedLineIndex, index);
+        selectedLines.clear();
+        for (let i = start; i <= end; i++) {
+            selectedLines.add(i);
+        }
+        // Keep selectedLineIndex as anchor (don't change it)
+    } else {
+        // Normal click: single selection
+        selectedLineIndex = index;
+        selectedLines.clear();
+        selectedLines.add(index);
+    }
+    updateLineSelectionUI();
+}
+
+function updateLineSelectionUI() {
+    // Every line in a multi-line selection gets the gray .multi-selected
+    // background — including the primary — so the visible range always
+    // matches what's in the buffer (previously the primary line was styled
+    // differently from the rest, causing the cursor's current line to look
+    // "selected" while neighbours looked "highlighted"). Single-line selection
+    // keeps its original look: just .selected on the one line, no gray bg.
+    const isMulti = selectedLines.size > 1;
+    document.querySelectorAll('.program-line').forEach((el, i) => {
+        const inSel = selectedLines.has(i);
+        const isPrimary = i === selectedLineIndex;
+        el.classList.toggle('selected', isPrimary);
+        el.classList.toggle('multi-selected', inSel && isMulti);
+    });
+}
+
+// === FILE HANDLING ===
+
+function showFilePopup() {
+    gmDisk.showPopup({
+        fileType: GMDisk.FILE_TYPES.PROGRAM,
+        showSave: true,
+        suggestedSaveName: () => {
+            const n = document.getElementById('programName').textContent.trim();
+            return n || '';
+        },
+        onSave: saveToDisk,
+        onSelect: (fileName, fileData) => {
+            // Load first, then save the new state
+            loadProgramData(fileName, fileData);
+            saveProgram(fileName, fileData);
+            updateStatusInfo();
+        },
+        customButtons: [
+            { label: 'Download Game', onClick: () => exportStandaloneGame() }
+        ]
+    });
+}
+
+// Save current program to D64 disk
+// Serializes all instructions and data (sprites, sounds, songs, strings) to PRG format
+// Called by gmDisk's built-in save row. The popup already handles filename
+// input, validation, existence check, and the overwrite prompt \u2014 we just
+// serialize the current program and write it.
+function saveToDisk(fullFileName) {
+    if (!currentProgramData || !currentProgramData.instructions ||
+        currentProgramData.instructions.length === 0) {
+        gmDisk.showInfoMessage('No program to save');
+        return false;
+    }
+
+    try {
+        // Pass the original file data so we can preserve the pre-header
+        // (memory layout info gmParser doesn't model)
+        const prgBytes = serializeProgram(currentProgramData, currentFileData);
+        if (gmDisk.saveFile(fullFileName, prgBytes)) {
+            const baseName = fullFileName.replace(/\/PRG$/i, '').trim().toLowerCase();
+            document.getElementById('programName').textContent = baseName.padEnd(6, '\u00A0');
+            return true;
+        } else {
+            gmDisk.showInfoMessage('Failed to save. Disk may be full.');
+            return false;
+        }
+    } catch (e) {
+        console.error('Save failed:', e);
+        gmDisk.showInfoMessage('Save error: ' + e.message);
+        return false;
+    }
+}
+
+// ==================== STANDALONE GAME EXPORT ====================
+// Builds a single self-contained HTML file that plays the current program
+// in any browser, without the editor chrome. Embeds:
+//   - The serialized PRG bytes (the program currently being edited)
+//   - The current disk's D64 bytes (so the runtime's parser can resolve
+//     scenes by name at boot \u2014 same loadFileByName indirection the editor
+//     uses)
+//   - All runtime JS files inlined (c64lib through gmRuntime; everything
+//     editor-side like gmEditor / gmDisk is omitted)
+//   - A minimal boot script that wires up input + a tiny "Controls" UI
+async function exportStandaloneGame() {
+    if (!currentProgramData?.instructions?.length) {
+        gmDisk.showInfoMessage('No program to export');
+        return;
+    }
+    if (!gmDisk.disk) {
+        gmDisk.showInfoMessage('No disk loaded');
+        return;
+    }
+
+    let prgBytes, d64Bytes;
+    try {
+        prgBytes = serializeProgram(currentProgramData, currentFileData);
+        d64Bytes = gmDisk.disk.getData();
+    } catch (e) {
+        console.error('export: serialize failed', e);
+        gmDisk.showInfoMessage('Export error: ' + e.message);
+        return;
+    }
+
+    const prgName = (document.getElementById('programName').textContent || 'game').trim() || 'game';
+
+    // Runtime JS comes from window._runtimeSource, populated by
+    // js/runtime-source.js (generated by tools/bundle-runtime.js). Using
+    // this static bundle instead of fetching at click-time means the
+    // export works on file:// too — fetch is blocked there in every
+    // modern browser, but <script src> loads fine.
+    const sourceMap = window._runtimeSource;
+    if (!sourceMap) {
+        gmDisk.showInfoMessage('Export needs the runtime bundle (run `node tools/bundle-runtime.js` and reload)', { duration: 8000 });
+        return;
+    }
+    const inlinedJs = Object.entries(sourceMap)
+        .map(([path, src]) => `// === ${path} ===\n${src}`)
+        .join('\n\n');
+
+    const html = _buildStandaloneHtml({
+        title: prgName,
+        prgB64: _bytesToBase64(prgBytes),
+        d64B64: _bytesToBase64(d64Bytes),
+        runtimeJs: inlinedJs
+    });
+
+    // Trigger download via blob URL
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${prgName}.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    gmDisk.closePopup();
+}
+
+function _bytesToBase64(bytes) {
+    // Process in chunks so we don't blow the call stack on large arrays.
+    const CHUNK = 0x8000;
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+    }
+    return btoa(binary);
+}
+
+function _buildStandaloneHtml({ title, prgB64, d64B64, runtimeJs }) {
+    // Boot script: decode embedded bytes, parse program, create VM, run
+    // the same kind of frame loop the editor uses. Keyboard maps + reset
+    // live in the Controls popup. Settings persist in the player's
+    // localStorage so they only have to configure once per game.
+    const bootJs = `
+(function () {
+    const SETTINGS_KEY = 'gmc64-standalone-controls';
+    const DEFAULTS = { joy1: 'cursors', joy2: 'wasd' };
+
+    function loadSettings() {
+        try {
+            return { ...DEFAULTS, ...(JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}) };
+        } catch (e) { return { ...DEFAULTS }; }
+    }
+    function saveSettings(s) {
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+    }
+
+    // Each preset maps DOM key (event.key) \u2192 joystick action.
+    // The right cmd / right ctrl variations cover Mac vs PC keyboards
+    // without needing a separate preset.
+    const PRESETS = {
+        cursors: {
+            'ArrowUp': 'up', 'ArrowDown': 'down',
+            'ArrowLeft': 'left', 'ArrowRight': 'right',
+            'Meta': 'fire', 'Control': 'fire', 'Enter': 'fire'
+        },
+        wasd: {
+            w: 'up', W: 'up', s: 'down', S: 'down',
+            a: 'left', A: 'left', d: 'right', D: 'right',
+            ' ': 'fire'
+        },
+        none: {}
+    };
+
+    let settings = loadSettings();
+
+    // Runtime expects this global (see gmRuntime.js doc block).
+    window.inputState = {
+        joystick1: { up: false, down: false, left: false, right: false, fire: false },
+        joystick2: { up: false, down: false, left: false, right: false, fire: false }
+    };
+    // Helper the parser expects (matches editor.html).
+    window.decode16bit = (a, b) => a + (b << 8);
+
+    // Audio context \u2014 created eagerly, gets resumed on first user gesture
+    // (browsers require a gesture before sound plays).
+    try {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (Ctx) {
+            window.audioContext = new Ctx();
+            window.masterGain = audioContext.createGain();
+            window.masterGain.connect(audioContext.destination);
+            const resume = () => {
+                if (audioContext.state === 'suspended') audioContext.resume();
+            };
+            document.addEventListener('keydown', resume, { once: true });
+            document.addEventListener('click', resume, { once: true });
+        }
+    } catch (e) {
+        console.warn('audio init failed', e);
+    }
+
+    // Decode embedded data
+    function b64ToBytes(b64) {
+        const bin = atob(b64);
+        const out = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+        return out;
+    }
+    const prgBytes = b64ToBytes(EMBEDDED_PRG);
+    const d64Bytes = b64ToBytes(EMBEDDED_D64);
+
+    // gmParser uses this global to resolve referenced scenes etc. from
+    // the disk. We give it a tiny shim over the embedded D64.
+    const disk = new D64(d64Bytes);
+    window.loadFileByName = (name) => {
+        try { return disk.readFile(name); } catch (e) { return null; }
+    };
+
+    window.charset = new gmCharset();
+
+    const programData = parseProgramData(prgBytes);
+    const ast = buildAST(programData);
+
+    const screen = new c64Screen('gameCanvas');
+    // Defaults intentionally match the editor's Run mode (pauses honored,
+    // no hitbox overlay, audio on). vm.start owns the loop and renders
+    // at ~60fps × 50 ops/frame — same as the editor's sidebar default.
+    const vm = new gmVM(screen);
+    window.vm = vm;
+    vm.loadProgram(ast, prgBytes);
+    vm.start({ opsPerFrame: 50, frameMs: 16 });
+
+    // === Input handlers ===
+    function setKey(e, value) {
+        let consumed = false;
+        const j1 = PRESETS[settings.joy1] || {};
+        const j2 = PRESETS[settings.joy2] || {};
+        if (j1[e.key] !== undefined) {
+            inputState.joystick1[j1[e.key]] = value;
+            consumed = true;
+        }
+        if (j2[e.key] !== undefined) {
+            inputState.joystick2[j2[e.key]] = value;
+            consumed = true;
+        }
+        if (consumed) e.preventDefault();
+    }
+    document.addEventListener('keydown', e => setKey(e, true));
+    document.addEventListener('keyup', e => setKey(e, false));
+
+    // === Pause toggle ===
+    const pauseLink = document.getElementById('pauseLink');
+    pauseLink.addEventListener('click', e => {
+        e.preventDefault();
+        if (vm.paused) {
+            vm.resume();
+            pauseLink.textContent = 'Pause';
+        } else {
+            vm.pause();
+            pauseLink.textContent = 'Resume';
+        }
+    });
+
+    // === Controls popup ===
+    const popup = document.getElementById('controlsPopup');
+    const j1Sel = document.getElementById('joy1Sel');
+    const j2Sel = document.getElementById('joy2Sel');
+    j1Sel.value = settings.joy1;
+    j2Sel.value = settings.joy2;
+    j1Sel.addEventListener('change', () => { settings.joy1 = j1Sel.value; saveSettings(settings); });
+    j2Sel.addEventListener('change', () => { settings.joy2 = j2Sel.value; saveSettings(settings); });
+    document.getElementById('ctrlOpen').addEventListener('click', e => {
+        e.preventDefault();
+        popup.classList.add('open');
+    });
+    document.getElementById('closeBtn').addEventListener('click', () => popup.classList.remove('open'));
+    document.getElementById('resetBtn').addEventListener('click', () => location.reload());
+    popup.addEventListener('click', e => {
+        if (e.target === popup) popup.classList.remove('open');
+    });
+})();
+`;
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>${_escapeHtml(title)}</title>
+<style>
+    html, body {
+        margin: 0; padding: 0; height: 100%;
+        background: #000; color: #ccc;
+        font-family: ui-monospace, monospace; font-size: 13px;
+    }
+    body {
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        min-height: 100vh;
+        -webkit-user-select: none; user-select: none;
+    }
+    /* 6:5 display aspect mirrors the editor's 480x400 canvas (the C64
+       had tall pixels — square-pixel 320x200 is 16:10 and looks wrong).
+       Sizes to whichever of width/height is the binding constraint so
+       the canvas always fits the window with a generous black margin.
+       85vh / 90vw leaves room for the strip below without overflowing. */
+    #gameCanvas {
+        image-rendering: pixelated; image-rendering: crisp-edges;
+        aspect-ratio: 6 / 5;
+        height: min(85vh, calc(90vw * 5 / 6));
+        max-width: 90vw;
+        background: #000;
+    }
+    /* Stub the runtime checks for #gameOverlay (editor uses it for the
+       pause overlay; we don't, but the runtime reads its .active class). */
+    #gameOverlay { display: none; }
+    .strip {
+        margin-top: 12px; font-size: 12px;
+        display: flex; gap: 16px;
+    }
+    .strip a {
+        color: #fff; text-decoration: none;
+        padding: 2px 6px;
+        border-bottom: 1px dotted #888;
+        cursor: pointer;
+    }
+    .strip a:hover { border-bottom-color: #fff; }
+    #controlsPopup {
+        position: fixed; inset: 0;
+        background: rgba(0,0,0,0.75);
+        display: none; align-items: center; justify-content: center;
+    }
+    #controlsPopup.open { display: flex; }
+    #controlsPopup .inner {
+        background: #c0c0c0; color: #000;
+        padding: 16px 20px; min-width: 320px;
+        border: 3px solid #000;
+    }
+    #controlsPopup h2 {
+        margin: 0 0 12px; font-size: 14px;
+    }
+    #controlsPopup label {
+        display: flex; justify-content: space-between; align-items: center;
+        margin: 8px 0; gap: 12px;
+    }
+    #controlsPopup select {
+        font: inherit; padding: 2px 4px;
+    }
+    #controlsPopup .actions {
+        display: flex; justify-content: flex-end; gap: 8px;
+        margin-top: 16px;
+    }
+    #controlsPopup button {
+        font: inherit; padding: 4px 12px;
+        cursor: pointer;
+    }
+</style>
+</head>
+<body>
+<canvas id="gameCanvas" width="320" height="200"></canvas>
+<div class="strip">
+    <a id="pauseLink">Pause</a>
+    <a id="ctrlOpen">Controls</a>
+</div>
+<div id="gameOverlay"></div>
+<div id="controlsPopup">
+    <div class="inner">
+        <h2>Controls</h2>
+        <label>Joystick 1
+            <select id="joy1Sel">
+                <option value="cursors">Cursors + Right-Cmd</option>
+                <option value="wasd">W/A/S/D + Space</option>
+                <option value="none">None</option>
+            </select>
+        </label>
+        <label>Joystick 2
+            <select id="joy2Sel">
+                <option value="cursors">Cursors + Right-Cmd</option>
+                <option value="wasd">W/A/S/D + Space</option>
+                <option value="none">None</option>
+            </select>
+        </label>
+        <div class="actions">
+            <button id="resetBtn">Reset Game</button>
+            <button id="closeBtn">Close</button>
+        </div>
+    </div>
+</div>
+
+<script>
+const EMBEDDED_PRG = ${JSON.stringify(prgB64)};
+const EMBEDDED_D64 = ${JSON.stringify(d64B64)};
+<\/script>
+
+<script>
+${runtimeJs}
+<\/script>
+
+<script>
+${bootJs}
+<\/script>
+</body>
+</html>
+`;
+}
+
+function _escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+}
+
+function loadProgramData(fileName, fileData) {
+    currentFileData = fileData;
+
+    try {
+        currentProgramData = parseProgramData(fileData);
+        document.getElementById('programName').textContent = fileName.substring(0, 6).toLowerCase().padEnd(6, '\u00A0');
+        renderProgramListing();
+        selectedLineIndex = -1;
+        selectedLines.clear();
+
+        // Check for missing scenes and show flashing error
+        if (currentProgramData.missingScenes && currentProgramData.missingScenes.length > 0) {
+            const lines = ['file not found'];
+            for (const scene of currentProgramData.missingScenes) {
+                lines.push(`scene: ${scene.name}`);
+            }
+            showFlashingError(lines);
+        } else {
+            showMessage('');
+        }
+    } catch (e) {
+        showMessage('Error: ' + e.message);
+        console.error(e);
+    }
+}
+
+// Save program state when loading from disk (keeps original binary for reference)
+function saveProgram(fileName, fileData) {
+    localStorage.setItem('gm_savedProgram', JSON.stringify({
+        fileName: fileName,
+        fileData: Array.from(fileData)
+    }));
+    // Also save the current edited state
+    saveCurrentProgramState();
+}
+
+// Save the current edited program state (instructions + mediaStore)
+function saveCurrentProgramState() {
+    if (!currentProgramData) {
+        localStorage.removeItem('gm_editedProgram');
+        return;
+    }
+
+    // Serialize instructions (just the essential fields)
+    const instructions = currentProgramData.instructions.map(instr => {
+        const serialized = {
+            opcode: instr.opcode,
+            arg1: instr.arg1,
+            arg2: instr.arg2,
+            label: instr.label,
+            stringData: instr.stringData || null
+        };
+        // Comments (0x2B) and print strings (0x3B) store text in instructionName
+        // (not in mediaStore like assets) - must preserve it
+        if (instr.opcode === 0x2B || instr.opcode === 0x3B) {
+            serialized.instructionName = instr.instructionName;
+        }
+        // Print strings also need printBytes for runtime execution
+        if (instr.opcode === 0x3B && instr.printBytes) {
+            serialized.printBytes = instr.printBytes;
+        }
+        return serialized;
+    });
+
+    // Serialize mediaStore (name, type, and raw bytes)
+    const mediaStore = [];
+    if (currentProgramData.mediaStore) {
+        for (let i = 0; i < currentProgramData.mediaStore.length; i++) {
+            const entry = currentProgramData.mediaStore[i];
+            if (!entry) {
+                mediaStore.push(null);
+                continue;
+            }
+            const serialized = {
+                name: entry.name,
+                type: entry.type,
+                quadIndex: entry.quadIndex || 0
+            };
+            // Save raw file data for each type
+            if (entry.spriteFileData) {
+                serialized.spriteFileData = Array.from(entry.spriteFileData);
+            }
+            if (entry.soundFileData) {
+                serialized.soundFileData = Array.from(entry.soundFileData);
+            }
+            if (entry.songFileData) {
+                serialized.songFileData = Array.from(entry.songFileData);
+            }
+            // entry.name is always 6-char-padded (parser invariant), so the
+            // disk filename "just works" — no re-padding needed. Upper-case
+            // is still wanted in case some other code mutated the name.
+            if (entry.type === 'scene') {
+                serialized.sceneFileName = entry.name.toUpperCase() + '/PIC';
+            }
+            mediaStore.push(serialized);
+        }
+    }
+
+    const programName = document.getElementById('programName').textContent.trim();
+
+    localStorage.setItem('gm_editedProgram', JSON.stringify({
+        programName: programName,
+        instructions: instructions,
+        mediaStore: mediaStore,
+        selectedLineIndex: selectedLineIndex
+    }));
+}
+
+// Debounced session save — called after every render so unsaved edits persist
+// across navigations. Uses GMTools.session's debouncer for consistency with the
+// other editors, even though the underlying storage key (gm_editedProgram) and
+// format predate the shared module.
+const _scheduleSessionSave = (() => {
+    let timer = null;
+    return () => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => saveCurrentProgramState(), 500);
+    };
+})();
+
+// Load the saved edited program state
+function loadSavedProgram() {
+    // First try to load edited state
+    const edited = localStorage.getItem('gm_editedProgram');
+    if (edited) {
+        try {
+            const data = JSON.parse(edited);
+            restoreEditedProgram(data);
+            // Verify the restore worked (check for valid data)
+            if (currentProgramData && currentProgramData.instructions) {
+                return true;
+            }
+        } catch (e) {
+            console.error('Failed to restore edited program:', e);
+        }
+        // If restore failed, clear corrupted data and try original
+        console.log('Clearing corrupted edited program state');
+        localStorage.removeItem('gm_editedProgram');
+    }
+
+    // Fall back to original file data
+    const saved = localStorage.getItem('gm_savedProgram');
+    if (saved) {
+        try {
+            const data = JSON.parse(saved);
+            const fileData = new Uint8Array(data.fileData);
+            loadProgramData(data.fileName, fileData);
+            return true;
+        } catch (e) {
+            console.error('Failed to restore saved program:', e);
+            localStorage.removeItem('gm_savedProgram');
+        }
+    }
+    return false;
+}
+
+// Restore program from edited state
+function restoreEditedProgram(data) {
+    // Rebuild mediaStore with parsed objects
+    // Support both old "dataPage" key and new "mediaStore" key for backwards compatibility
+    const sourceData = data.mediaStore || data.dataPage;
+    const mediaStore = [null];  // Index 0 is always null
+    if (sourceData) {
+        for (let i = 1; i < sourceData.length; i++) {
+            const entry = sourceData[i];
+            if (!entry) {
+                mediaStore.push(null);
+                continue;
+            }
+
+            const restored = {
+                name: entry.name,
+                type: entry.type,
+                ptr: 0,
+                quadIndex: entry.quadIndex || 0
+            };
+
+            // Restore parsed objects from raw data
+            try {
+                if (entry.spriteFileData) {
+                    const fileData = new Uint8Array(entry.spriteFileData);
+                    restored.spriteFileData = fileData;
+                    restored.sprite = new gmSprite(fileData);
+                }
+                if (entry.soundFileData) {
+                    restored.soundFileData = new Uint8Array(entry.soundFileData);
+                }
+                if (entry.songFileData) {
+                    restored.songFileData = new Uint8Array(entry.songFileData);
+                }
+                if (entry.type === 'scene' && entry.sceneFileName) {
+                    // Try to load scene from disk
+                    const sceneData = gmDisk.loadFile(entry.sceneFileName);
+                    if (sceneData) {
+                        restored.scene = new gmScene(sceneData);
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to restore asset:', entry.name, e);
+            }
+
+            mediaStore.push(restored);
+        }
+    }
+
+    // Rebuild instructions with instructionName
+    const instructions = data.instructions.map(instr => {
+        const restored = {
+            opcode: instr.opcode,
+            arg1: instr.arg1,
+            arg2: instr.arg2,
+            label: instr.label,
+            stringData: instr.stringData || null,
+            instructionName: ''
+        };
+        // Comments (0x2B) and print strings (0x3B) have text stored in instructionName
+        // - don't regenerate with formatInstruction or the text is lost
+        if ((instr.opcode === 0x2B || instr.opcode === 0x3B) && instr.instructionName) {
+            restored.instructionName = instr.instructionName;
+        } else {
+            restored.instructionName = formatInstruction(
+                restored.opcode, restored.arg1, restored.arg2,
+                mediaStore, c64ColorNames
+            );
+        }
+        // Restore printBytes for print strings (needed by runtime)
+        if (instr.opcode === 0x3B && instr.printBytes) {
+            restored.printBytes = instr.printBytes;
+        }
+        return restored;
+    });
+
+    // Set program state
+    currentProgramData = {
+        instructions: instructions,
+        mediaStore: mediaStore
+    };
+    currentFileData = null;  // No original file data for edited programs
+
+    // Update UI
+    const programName = data.programName || '\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0';
+    document.getElementById('programName').textContent = programName;
+    selectedLineIndex = data.selectedLineIndex >= 0 ? data.selectedLineIndex : -1;
+    selectedLines.clear();
+    if (selectedLineIndex >= 0) selectedLines.add(selectedLineIndex);
+    renderProgramListing();
+}
+
+// === STATUS ===
+
+// === FREE BLOCKS CALCULATION ===
+//
+// === KNOWN ANCHOR POINTS ===
+//   blank program: 3553 free
+//   GMC64I and ALIENS both match real-hardware free-block counts exactly
+//   with the serialize-and-measure approach. (An earlier instruction-
+//   counting implementation was off by +162 on a complex program; that
+//   discrepancy was a bug in the counter, not a real-hardware divergence.)
+//
+// === IMPLEMENTATION NOTES ===
+//
+// We could either (a) walk the AST + mediaStore and arithmetic-sum every
+// piece's byte size, or (b) serialise the current state and read the
+// length out of the file header. We do (b) — it's the same logic the
+// serialiser already implements, so there's only one place where "how
+// big does this end up?" knowledge lives. Cost is ~0.1ms per call on a
+// 14KB program; only fires on edit, never on render.
+//
+// The `(fileData[515] - 6) * 256` adjustment is empirical — the high
+// byte of the encoded program length is offset by 1536 bytes (six full
+// high-byte units) from the actual instruction-area length. Origin is
+// unknown but the answer is correct against real-GM anchors. Same goes
+// for GM_MAX_FREE = 3553: the program area is 15237 raw bytes (3809
+// units), so 256 units of fixed overhead live somewhere we don't need
+// to model individually.
+const GM_MAX_FREE = 3553;  // Free blocks when program area is empty
+const GM_OFFSET = 0x3D90;  // 15760 - used in data area calculation
+const PROGRAM_START = 523; // Where program instructions begin in file
+
+// Returns SIGNED free-blocks count (negative on overflow). Used by the
+// try-then-revert insertion paths (asset picker, paste) to detect when
+// a proposed change would push the program past GM's 0000-free limit.
+// The clamped public form below floors at 0 because the UI counter
+// can't usefully show negative values.
+function calculateFreeBlocksRaw() {
+    if (!currentProgramData) return GM_MAX_FREE;
+
+    // Serialise the live in-memory program to bytes and decode the file
+    // header for the byte count. Works in every state — fresh load,
+    // session restore, mid-edit — because we always operate on
+    // currentProgramData, not on a stashed file snapshot.
+    let fileData;
+    try {
+        fileData = serializeProgram(currentProgramData, currentFileData);
+    } catch (e) {
+        // Malformed in-memory state. Fall back to the on-disk bytes if
+        // we have them; otherwise punt to "empty".
+        if (!currentFileData || currentFileData.length <= 520) return GM_MAX_FREE;
+        fileData = currentFileData;
+    }
+
+    const programEnd = 514 + (fileData[514] + ((fileData[515] - 6) * 256));
+    const dataEnd = GM_OFFSET - (fileData[516] + (fileData[517] * 256));
+    const programSize = programEnd - PROGRAM_START;
+    const usedUnits = Math.floor((programSize + dataEnd) / 4);
+    return GM_MAX_FREE - usedUnits;
+}
+
+function calculateFreeBlocks() {
+    return Math.max(0, calculateFreeBlocksRaw());
+}
+
+function updateFreeBlocks() {
+    const freeBlocks = calculateFreeBlocks();
+    document.getElementById('freeBlocks').textContent = freeBlocks.toString().padStart(6, '\u00A0');
+}
+
+function updateStatusInfo() {
+    updateFreeBlocks();
+}
+
+function showMessage(msg) {
+    const el = document.getElementById('statusMessage');
+    el.textContent = msg;
+    el.classList.remove('flashing-error');
+}
+
+function showFlashingError(lines) {
+    const el = document.getElementById('statusMessage');
+    el.innerHTML = lines.join('<br>');
+    el.classList.add('flashing-error');
+}
+
+function clearFlashingError() {
+    const el = document.getElementById('statusMessage');
+    el.innerHTML = '';
+    el.classList.remove('flashing-error');
+}
+
+// Flashing message for errors like "out of memory" - alternates between
+// lt-blue and red every 150ms, auto-clears after 2 seconds
+let flashInterval = null;
+
+function showFlashingMessage(msg) {
+    const statusMessage = document.getElementById('statusMessage');
+    statusMessage.textContent = msg;
+
+    // Clear any existing flash
+    if (flashInterval) {
+        clearInterval(flashInterval);
+    }
+
+    // Alternate between blue and red
+    let isRed = true;
+    statusMessage.style.color = 'var(--c64-red)';
+
+    flashInterval = setInterval(() => {
+        isRed = !isRed;
+        statusMessage.style.color = isRed ? 'var(--c64-red)' : 'var(--c64-lt-blue)';
+    }, 150);
+
+    // Stop flashing after ~2 seconds and clear message
+    setTimeout(() => {
+        if (flashInterval) {
+            clearInterval(flashInterval);
+            flashInterval = null;
+        }
+        statusMessage.style.color = '';
+        statusMessage.textContent = '';
+    }, 2000);
+}
+
+function showOutOfMemory() {
+    showFlashingMessage('out of memory');
+}
+
+// === UNDO/REDO ===
+
+function saveUndoState() {
+    if (!currentProgramData || !currentProgramData.instructions) return;
+    undoStack.push(JSON.stringify(currentProgramData.instructions));
+    if (undoStack.length > MAX_UNDO) undoStack.shift();
+    redoStack.length = 0;  // Clear redo on new change
+    updateUndoRedoButtons();
+}
+
+function undo() {
+    if (undoStack.length === 0) return;
+    redoStack.push(JSON.stringify(currentProgramData.instructions));
+    currentProgramData.instructions = JSON.parse(undoStack.pop());
+    renderProgramListing();
+    updateUndoRedoButtons();
+    saveCurrentProgram();
+}
+
+function redo() {
+    if (redoStack.length === 0) return;
+    undoStack.push(JSON.stringify(currentProgramData.instructions));
+    currentProgramData.instructions = JSON.parse(redoStack.pop());
+    renderProgramListing();
+    updateUndoRedoButtons();
+    saveCurrentProgram();
+}
+
+function updateUndoRedoButtons() {
+    document.getElementById('undoBtn').disabled = undoStack.length === 0;
+    document.getElementById('redoBtn').disabled = redoStack.length === 0;
+}
+
+// === BUTTONS ===
+
+function showMenu() {
+    GMTools.quitMenu.show();
+}
+
+function clearProgram() {
+    showConfirmDialog('clear program area?', () => {
+        // Clear the program
+        if (currentProgramData) {
+            saveUndoState();
+        }
+        currentProgramData = {
+            instructions: [],
+            mediaStore: [null] // Keep null at index 0
+        };
+        currentFileData = null;
+        // Clear localStorage to avoid corrupted state on reload
+        localStorage.removeItem('gm_editedProgram');
+        localStorage.removeItem('gm_savedProgram');
+        document.getElementById('programName').textContent = '\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0';
+        selectedLineIndex = 0; // Cursor on first (blank) line
+        selectedLines.clear();
+        selectedLines.add(0);
+        renderProgramListing();
+        showMessage('');
+    });
+}
+
+function showConfirmDialog(message, onYes) {
+    const statusMessage = document.getElementById('statusMessage');
+    statusMessage.style.textAlign = 'center';
+
+    // Create confirmation UI with bracketed text options
+    statusMessage.innerHTML = `
+        <div>${message}</div>
+        <div><span id="confirmYes" class="confirm-option">[yes]</span>&nbsp;&nbsp;&nbsp;&nbsp;<span id="confirmNo" class="confirm-option">[no]</span></div>
+    `;
+
+    const cleanup = () => {
+        statusMessage.innerHTML = '';
+        statusMessage.textContent = '';
+        statusMessage.style.textAlign = '';
+    };
+
+    document.getElementById('confirmYes').onclick = () => {
+        cleanup();
+        onYes();
+    };
+
+    document.getElementById('confirmNo').onclick = () => {
+        cleanup();
+        showMessage('');
+    };
+}
+
+function runProgram() {
+    if (!currentProgramData) {
+        showMessage('No program loaded');
+        return;
+    }
+
+    // Initialize audio on user interaction (browser requirement)
+    initAudio();
+
+    // Initialize screen and VM if needed
+    if (!screen) {
+        screen = new c64Screen("gameCanvas");
+    }
+
+    if (!vm) {
+        vm = new gmVM(screen);
+    }
+
+    // Build AST and start program
+    try {
+        const ast = buildAST(currentProgramData);
+        // Push current sidebar state into the VM. After this point the
+        // sidebar handlers (toggleMute/...) talk to vm.config directly —
+        // the module-level lets above are just UI-state mirrors.
+        vm.loadProgram(ast, currentFileData, {
+            pauseEnabled,
+            showHitboxes,
+            audioMuted
+        });
+
+        // Show game overlay and reset sidebar state
+        document.getElementById('gameOverlay').classList.add('active');
+        document.getElementById('gameBorder').style.background = 'rgb(0, 0, 0)';  // Reset border to black
+        document.getElementById('pauseBtn').textContent = 'pause';
+        document.getElementById('stepBtn').disabled = true;
+        document.getElementById('muteToggle').checked = audioMuted;
+        document.getElementById('skipPausesToggle').checked = !pauseEnabled;
+        document.getElementById('hitboxToggle').checked = showHitboxes;
+        document.getElementById('opsInput').value = maxInstructionsPerFrame;
+        document.getElementById('fpsDisplay').textContent = '0';
+        document.getElementById('opsDisplay').textContent = '0';
+        frameCount = 0;
+        lastFpsUpdate = Date.now();
+
+        // VM owns its loop now. onFrame keeps the sidebar dashboard alive.
+        vm.start({
+            opsPerFrame: maxInstructionsPerFrame,
+            frameMs: FRAME_TIME,
+            onFrame: onVmFrame
+        });
+        showMessage('Running...');
+
+    } catch (e) {
+        showMessage('Error: ' + e.message);
+        console.error(e);
+    }
+}
+
+// Called by vm._loopTick after each render. We update the FPS / ops
+// dashboard, the C64-border color, and the input indicator — anything
+// the VM itself doesn't know about.
+function onVmFrame({ opsExecuted }) {
+    currentOpsPerFrame = opsExecuted;
+    frameCount++;
+    const now = Date.now();
+    if (now - lastFpsUpdate >= 1000) {
+        currentFps = frameCount;
+        frameCount = 0;
+        lastFpsUpdate = now;
+        document.getElementById('fpsDisplay').textContent = currentFps;
+    }
+    document.getElementById('opsDisplay').textContent = currentOpsPerFrame;
+    updateBorderColor();
+    updateInputDisplay();
+}
+
+function stopProgram() {
+    if (vm) vm.stop();
+    document.getElementById('gameOverlay').classList.remove('active');
+    document.getElementById('pauseBtn').textContent = 'pause';
+    document.getElementById('stepBtn').disabled = true;
+    showMessage('Stopped');
+}
+
+function togglePause() {
+    if (!vm) return;
+    const pauseBtn = document.getElementById('pauseBtn');
+    const stepBtn = document.getElementById('stepBtn');
+    if (vm.paused) {
+        vm.resume();
+        pauseBtn.textContent = 'pause';
+        stepBtn.disabled = true;
+    } else {
+        vm.pause();
+        pauseBtn.textContent = 'resume';
+        stepBtn.disabled = false;
+    }
+}
+
+function stepFrame() {
+    if (!vm || !vm.paused) return;
+    // Execute one frame worth of instructions
+    for (let i = 0; i < maxInstructionsPerFrame && vm.running; i++) {
+        vm.step();
+    }
+    animationFrameToggle = !animationFrameToggle;
+    vm.render(animationFrameToggle);
+    updateBorderColor();
+    updateInputDisplay();
+}
+
+function toggleMute() {
+    audioMuted = document.getElementById('muteToggle').checked;
+    if (vm) vm.setConfig({ audioMuted });
+}
+
+function toggleSkipPauses() {
+    pauseEnabled = !document.getElementById('skipPausesToggle').checked;
+    if (vm) vm.setConfig({ pauseEnabled });
+}
+
+function toggleHitboxes() {
+    showHitboxes = document.getElementById('hitboxToggle').checked;
+    if (vm) vm.setConfig({ showHitboxes });
+}
+
+function updateOpsPerFrame() {
+    const val = parseInt(document.getElementById('opsInput').value, 10);
+    if (!isNaN(val) && val > 0) {
+        maxInstructionsPerFrame = val;
+        if (vm) vm.setLoopParams({ opsPerFrame: val });
+    } else {
+        document.getElementById('opsInput').value = maxInstructionsPerFrame;
+    }
+}
+
+// Update game border color based on active scene's border setting.
+// The C64 has an addressable border around the drawable screen area.
+// In GM, this can be set per-scene via "scene X border = color" commands.
+function updateBorderColor() {
+    if (!vm) return;
+    const activeScene = vm.scenes[vm.activeScene];
+    const borderColor = activeScene ? activeScene.borderColor : 0;
+    const rgba = c64Palette[borderColor] || c64Palette[0];
+    document.getElementById('gameBorder').style.background =
+        `rgb(${rgba[0]}, ${rgba[1]}, ${rgba[2]})`;
+}
+
+function updateInputDisplay() {
+    const j1 = document.getElementById('j1Display');
+    const j2 = document.getElementById('j2Display');
+
+    let j1str = '';
+    j1str += inputState.joystick1.up ? '↑' : '\u00A0';
+    j1str += inputState.joystick1.down ? '↓' : '\u00A0';
+    j1str += inputState.joystick1.left ? '←' : '\u00A0';
+    j1str += inputState.joystick1.right ? '→' : '\u00A0';
+    j1str += inputState.button1 ? 'B' : '\u00A0';
+    j1.textContent = j1str;
+
+    let j2str = '';
+    j2str += inputState.joystick2.up ? '↑' : '\u00A0';
+    j2str += inputState.joystick2.down ? '↓' : '\u00A0';
+    j2str += inputState.joystick2.left ? '←' : '\u00A0';
+    j2str += inputState.joystick2.right ? '→' : '\u00A0';
+    j2str += inputState.button2 ? 'B' : '\u00A0';
+    j2.textContent = j2str;
+}
+
+// INS button: Insert a blank line at cursor position.
+// Blank lines (opcode 0x00) do nothing when executed but take up memory.
+// In original GM, blank lines actually stop execution.
+function insertInstruction() {
+    if (!currentProgramData) {
+        currentProgramData = {
+            instructions: [],
+            mediaStore: [null]
+        };
+    }
+
+    // Check for out of memory (blank line costs 1 unit)
+    if (calculateFreeBlocks() < 1) {
+        showOutOfMemory();
+        return;
+    }
+
+    // Save undo state
+    saveUndoState();
+
+    const instructions = currentProgramData.instructions;
+
+    // Default to end if no selection
+    if (selectedLineIndex < 0) {
+        selectedLineIndex = instructions.length;
+    }
+
+    // Create blank instruction (opcode 0x00)
+    const blankInstr = {
+        opcode: 0x00,
+        arg1: 0,
+        arg2: 0,
+        label: 0,
+        instructionName: ''
+    };
+
+    // Insert at cursor position, pushing everything down
+    if (selectedLineIndex >= instructions.length) {
+        instructions.push(blankInstr);
+    } else {
+        instructions.splice(selectedLineIndex, 0, blankInstr);
+    }
+
+    // Cursor stays on the inserted blank line, reset to single selection
+    selectedLines.clear();
+    selectedLines.add(selectedLineIndex);
+
+    renderProgramListing();
+    scrollToSelectedLine();
+}
+
+// DEL button: Delete selected instruction(s)
+function deleteInstruction() {
+    if (!currentProgramData || !currentProgramData.instructions) return;
+
+    const instructions = currentProgramData.instructions;
+
+    // Get indices to delete (filter out blank line at end)
+    const toDelete = [...selectedLines]
+        .filter(i => i >= 0 && i < instructions.length)
+        .sort((a, b) => b - a);  // Sort descending to delete from end first
+
+    if (toDelete.length === 0) return;
+
+    // Save undo state
+    saveUndoState();
+
+    // Delete lines from end to start to maintain correct indices
+    for (const idx of toDelete) {
+        instructions.splice(idx, 1);
+    }
+
+    // Move cursor to first deleted position, clamped to valid range
+    const firstDeleted = Math.min(...toDelete);
+    selectedLineIndex = Math.min(firstDeleted, instructions.length);
+    selectedLines.clear();
+    selectedLines.add(selectedLineIndex);
+
+    renderProgramListing();
+}
+
+// ==================== FIND ====================
+// Live-typing find: status-message area shows a search input, the listing
+// gets a highlight on every matching line (yellow), and the currently-
+// focused match is brighter (orange). The find input is built once when
+// the mode is entered so typing doesn't lose focus; only the count display
+// updates as the search changes.
+//
+// What's searched: the line's displayed text, made up of its label
+// (e.g. "l001") plus the formatted instruction name. That covers
+// commands, comments, prints, labels, asset names, and any numeric
+// value that appears in the rendered string.
+const findMode = {
+    active: false,
+    query: '',
+    matches: [],         // indices into currentProgramData.instructions
+    currentIndex: 0
+};
+
+function findInstruction() {
+    if (findMode.active) {
+        exitFindMode();
+    } else {
+        enterFindMode();
+    }
+}
+
+function enterFindMode() {
+    findMode.active = true;
+    findMode.query = '';
+    findMode.matches = [];
+    findMode.currentIndex = 0;
+
+    const el = document.getElementById('statusMessage');
+    el.classList.remove('flashing-error');
+    el.innerHTML =
+        '<span style="color: var(--c64-yellow)">find </span>' +
+        '<input id="findInput" type="text" autocomplete="off" maxlength="40" ' +
+        'style="background: var(--c64-blue); color: var(--c64-white); border: none; ' +
+        'font: inherit; padding: 0 4px; width: 14ch; outline: none;">' +
+        '<span id="findCount" style="color: var(--c64-yellow); margin-left: 8px"></span>' +
+        '<span class="gm-yes-no" style="margin-left: 8px" onclick="findStep(-1)">&lt;</span>' +
+        '<span class="gm-yes-no" style="margin-left: 4px" onclick="findStep(1)">&gt;</span>' +
+        '<span class="gm-yes-no" style="margin-left: 8px" onclick="exitFindMode()">esc</span>';
+
+    const input = document.getElementById('findInput');
+    input.focus();
+    input.addEventListener('input', () => {
+        findMode.query = input.value;
+        updateFindResults();
+    });
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === 'Tab') {
+            // Tab inside the find input cycles matches instead of moving
+            // focus elsewhere — keeps the user's hands on the keyboard.
+            e.preventDefault();
+            findStep(e.shiftKey ? -1 : 1);
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            exitFindMode();
+        }
+    });
+}
+
+function exitFindMode() {
+    findMode.active = false;
+    findMode.query = '';
+    findMode.matches = [];
+    clearFindHighlights();
+    showMessage('');
+}
+
+// Re-run the search against currentProgramData and refresh highlights/count.
+function updateFindResults() {
+    findMode.matches = [];
+    if (currentProgramData && currentProgramData.instructions && findMode.query) {
+        const q = findMode.query.toLowerCase();
+        const instrs = currentProgramData.instructions;
+        for (let i = 0; i < instrs.length; i++) {
+            const instr = instrs[i];
+            const label = instr.label > 0 ? 'l' + instr.label.toString().padStart(3, '0') : '';
+            const text = (label + ' ' + (instr.instructionName || '')).toLowerCase();
+            if (text.includes(q)) findMode.matches.push(i);
+        }
+    }
+    // Keep the focused index inside bounds when the result set shrinks.
+    if (findMode.currentIndex >= findMode.matches.length) findMode.currentIndex = 0;
+
+    renderFindHighlights();
+    if (findMode.matches.length > 0) scrollToCurrentMatch();
+    updateFindCount();
+}
+
+function renderFindHighlights() {
+    const lines = document.querySelectorAll('.program-line');
+    lines.forEach(line => line.classList.remove('find-match', 'find-current'));
+    findMode.matches.forEach((lineIdx, i) => {
+        const line = document.querySelector(`.program-line[data-index="${lineIdx}"]`);
+        if (!line) return;
+        line.classList.add('find-match');
+        if (i === findMode.currentIndex) line.classList.add('find-current');
+    });
+}
+
+function clearFindHighlights() {
+    document.querySelectorAll('.program-line.find-match, .program-line.find-current').forEach(line => {
+        line.classList.remove('find-match', 'find-current');
+    });
+}
+
+function scrollToCurrentMatch() {
+    const lineIdx = findMode.matches[findMode.currentIndex];
+    if (lineIdx === undefined) return;
+    const line = document.querySelector(`.program-line[data-index="${lineIdx}"]`);
+    if (line) line.scrollIntoView({ block: 'center', behavior: 'auto' });
+}
+
+function updateFindCount() {
+    const el = document.getElementById('findCount');
+    if (!el) return;
+    if (!findMode.query) {
+        el.textContent = '';
+    } else if (findMode.matches.length === 0) {
+        el.textContent = '0/0';
+    } else {
+        el.textContent = `${findMode.currentIndex + 1}/${findMode.matches.length}`;
+    }
+}
+
+function findStep(direction) {
+    if (findMode.matches.length === 0) return;
+    findMode.currentIndex =
+        (findMode.currentIndex + direction + findMode.matches.length) % findMode.matches.length;
+    renderFindHighlights();
+    scrollToCurrentMatch();
+    updateFindCount();
+}
+
+// ==================== EDIT (clipboard) ====================
+// In-memory clipboard for cut/copy/paste of instruction lines. The buffer
+// holds plain JS copies of the relevant instruction fields — no deep DOM
+// or shared references. Paste re-clones so a single buffer can be pasted
+// multiple times.
+let clipboard = [];
+
+// "edit" submenu state — when active the right-side button column swaps
+// to a stripped-down set (ok/cut/copy/paste at the bottom, rest blank).
+const editMode = { active: false };
+
+// Snapshot of the normal button column, captured the first time edit
+// mode is entered so it can be restored on exit.
+let _normalButtonsSnapshot = null;
+
+function _captureNormalButtons() {
+    if (_normalButtonsSnapshot) return;
+    _normalButtonsSnapshot = [];
+    document.querySelectorAll('#buttonColumn button').forEach(btn => {
+        _normalButtonsSnapshot.push({
+            html: btn.innerHTML,
+            onclick: btn.onclick,
+            disabled: btn.disabled,
+            color: btn.style.color,
+            id: btn.id
+        });
+    });
+}
+
+function enterEditMode() {
+    if (editMode.active) return;
+    _captureNormalButtons();
+    editMode.active = true;
+
+    // Layout: blanks on top, ok/cut/copy/paste at the bottom (in that order
+    // top-to-bottom). The number of blanks adapts to however many buttons
+    // are in the column — bottom four are always the actions.
+    const buttons = document.querySelectorAll('#buttonColumn button');
+    const actions = [
+        { text: 'ok',    fn: exitEditMode },
+        { text: 'cut',   fn: cutSelection },
+        { text: 'copy',  fn: copySelection },
+        { text: 'paste', fn: pasteSelection }
+    ];
+    const blanks = buttons.length - actions.length;
+
+    buttons.forEach((btn, i) => {
+        if (i < blanks) {
+            btn.innerHTML = '&nbsp;';
+            btn.disabled = true;
+            btn.onclick = null;
+            btn.style.color = '';
+        } else {
+            const a = actions[i - blanks];
+            btn.textContent = a.text;
+            btn.disabled = false;
+            btn.onclick = a.fn;
+            btn.style.color = 'var(--c64-red)';
+        }
+    });
+}
+
+function exitEditMode() {
+    if (!editMode.active) return;
+    editMode.active = false;
+    const buttons = document.querySelectorAll('#buttonColumn button');
+    buttons.forEach((btn, i) => {
+        const orig = _normalButtonsSnapshot[i];
+        if (!orig) return;
+        btn.innerHTML = orig.html;
+        btn.onclick = orig.onclick;
+        btn.disabled = orig.disabled;
+        btn.style.color = orig.color;
+    });
+}
+
+// Snapshot the currently-selected lines (multi or single) into clipboard.
+// Returns true if anything was captured.
+function _selectedIndices() {
+    const instrs = currentProgramData && currentProgramData.instructions;
+    if (!instrs) return [];
+    const indices = selectedLines.size > 0
+        ? [...selectedLines]
+        : (selectedLineIndex >= 0 && selectedLineIndex < instrs.length ? [selectedLineIndex] : []);
+    return indices
+        .filter(i => i >= 0 && i < instrs.length)
+        .sort((a, b) => a - b);
+}
+
+function _cloneInstruction(instr) {
+    // Plain-data clone of the fields that matter for round-tripping. We
+    // deliberately drop runtime-only properties (e.g. .parent pointers
+    // attached by buildAST) — paste will rebuild any AST structure.
+    const copy = {
+        opcode: instr.opcode,
+        arg1: instr.arg1,
+        arg2: instr.arg2,
+        label: instr.label || 0,
+        instructionName: instr.instructionName || ''
+    };
+    if (instr.printBytes) copy.printBytes = Array.from(instr.printBytes);
+    if (instr.stringData) copy.stringData = instr.stringData;
+    return copy;
+}
+
+function copySelection() {
+    const indices = _selectedIndices();
+    if (indices.length === 0) return;
+    const instrs = currentProgramData.instructions;
+    clipboard = indices.map(i => _cloneInstruction(instrs[i]));
+    showMessage(`copied ${clipboard.length} line${clipboard.length === 1 ? '' : 's'}`);
+}
+
+function cutSelection() {
+    if (_selectedIndices().length === 0) return;
+    copySelection();
+    deleteInstruction();   // already operates on selectedLines / selectedLineIndex
+}
+
+function pasteSelection() {
+    if (clipboard.length === 0) return;
+    if (!currentProgramData || !currentProgramData.instructions) return;
+
+    // Pre-check: the sum of clipboard line costs must fit in current free.
+    // Paste doesn't touch mediaStore (clipboard is just instructions), so
+    // we don't need the snapshot/revert dance the asset picker uses.
+    const pasteCost = clipboard.reduce(
+        (sum, instr) => sum + getInstructionCost(instr.opcode), 0);
+    if (pasteCost > calculateFreeBlocks()) {
+        showOutOfMemory();
+        return;
+    }
+
+    saveUndoState();
+    const instrs = currentProgramData.instructions;
+    // Insert at the cursor (or at the end if cursor is past the listing).
+    const insertAt = (selectedLineIndex >= 0 && selectedLineIndex <= instrs.length)
+        ? selectedLineIndex
+        : instrs.length;
+
+    // Re-clone so subsequent edits don't mutate the buffered originals.
+    const fresh = clipboard.map(_cloneInstruction);
+    // Labels would duplicate across paste — strip them so the pasted block
+    // is unlabelled (user can re-add labels as needed; auto-renumbering
+    // would be surprising).
+    fresh.forEach(i => { i.label = 0; });
+
+    instrs.splice(insertAt, 0, ...fresh);
+
+    // Move the cursor + selection to cover the freshly-pasted range so the
+    // user can immediately delete or recopy if they want.
+    selectedLines.clear();
+    for (let k = 0; k < fresh.length; k++) selectedLines.add(insertAt + k);
+    selectedLineIndex = insertAt;
+
+    renderProgramListing();
+    showMessage(`pasted ${fresh.length} line${fresh.length === 1 ? '' : 's'}`);
+}
+
+// === KEYBOARD ===
+
+function setupKeyboardShortcuts() {
+    // Undo/Redo shortcuts (only when not in game mode)
+    window.addEventListener('keydown', (e) => {
+        if (vm && vm.running) return;  // Game input handled at top level
+
+        if (e.key === 'z' && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
+            e.preventDefault();
+            undo();
+        } else if ((e.key === 'z' && (e.ctrlKey || e.metaKey) && e.shiftKey) ||
+                   (e.key === 'y' && (e.ctrlKey || e.metaKey))) {
+            e.preventDefault();
+            redo();
+        } else if (e.key === 'f' && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
+            // Cmd-F / Ctrl-F opens find — same muscle memory as the browser
+            // native find, which we override since the program listing is the
+            // thing the user is searching, not the page.
+            e.preventDefault();
+            if (!findMode.active) enterFindMode();
+            else document.getElementById('findInput')?.focus();
+        } else if (e.key === 'g' && (e.ctrlKey || e.metaKey)) {
+            // Cmd-G / Ctrl-G = find next (Shift = previous). Browser-standard;
+            // works even when the user has clicked away from the find input.
+            // No-op if find isn't active.
+            e.preventDefault();
+            if (findMode.active) findStep(e.shiftKey ? -1 : 1);
+        } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey &&
+                   (e.key === 'c' || e.key === 'x' || e.key === 'v')) {
+            // Standard cut/copy/paste — skip when the user is typing in a real
+            // input (find field, comment edit) so we don't hijack normal text
+            // editing semantics.
+            const ae = document.activeElement;
+            if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
+            e.preventDefault();
+            if      (e.key === 'c') copySelection();
+            else if (e.key === 'x') cutSelection();
+            else                    pasteSelection();
+        } else if (e.key === 'Delete') {
+            // Forward-delete: remove selected lines. Not Backspace — that's
+            // claimed by digit-field editing.
+            const ae = document.activeElement;
+            if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
+            e.preventDefault();
+            deleteInstruction();
+        }
+    });
+}
+
+// Initialize on load
+window.addEventListener('DOMContentLoaded', initApp);
+</script>
+
+</body>
+</html>

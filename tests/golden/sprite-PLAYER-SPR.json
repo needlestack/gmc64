@@ -1,0 +1,36 @@
+{
+  "sizeInBytes": 544,
+  "_bgColor": 13,
+  "_gmColor1": 6,
+  "_gmColor2": 0,
+  "_gmColor3": 9,
+  "quads": [
+    {
+      "quadIndex": 0,
+      "spriteName": "new   ",
+      "isMultiColor": true,
+      "numFrames": 8,
+      "totalFrames": 8,
+      "numSprites": 1,
+      "xDouble": false,
+      "yDouble": false,
+      "xPosition": 100,
+      "yPosition": 100,
+      "spriteNum": 1,
+      "_bgColor": 13,
+      "_gmColor1": 6,
+      "_gmColor2": 0,
+      "_gmColor3": 9,
+      "imageData": [
+        "AAFAAAfAAAfwAAPAAAoAAD4AAPrAA+vDDCg8DKgADKQAAFUAAFUAAMfAA8DwvwAwoAA8IAAOAAAIAAAAAAAAAA==",
+        "AAAAAAFAAAfAAAfwAAPAAAoAAA4AAD4AADsAAPvAALjAALQwAB0AABUAABfAAD/AAvzAC8DACADAAADAAACgAA==",
+        "AAAAAAFAAAfAAAfwAAPAAAoAAC4AAC4AAC4AAC8AACsAABfAABUwABUAABfAAD/AAD/AAPoAAMIAA8AAAqAAAA==",
+        "AAFAAAfAAAfwAAPAAAoAAC4AAC8AAOsAAOvAA+o8ANYAABUwAFXwAFfwAHAwAPAwAPAoA8AgDwAAKAAACgAAAA==",
+        "AAFAAAfAAAfwAAPAAAoAADoAAOvAA+vDDCg8DKgADKQAAFUAAFUAAMfAA8DwvwAwoAA8IAAOAAAIAAAAAAAAAA==",
+        "AAAAAAFAAAfAAAfwAAPAAAoAAA4AAC4AAC8AAKvAAKjwAJQAABUAABUAABfAAD/AAvzAC8DACADAAADAAACgAA==",
+        "AAAAAAFAAAfAAAfwAAPAAAoAAC4AAC4AAD4AADoAADoAAB8AABUAABUAABfAAD/AAD/AAPoAAMIAA8AAAqAAAA==",
+        "AAFAAAfAAAfwAAPAAAoAAC4AAD4AAPoAAOrAA+o8ANYAADUwAFXwAFfwAHAwAPAwAPAoA8AgDwAAKAAACgAA"
+      ]
+    }
+  ]
+}

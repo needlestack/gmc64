@@ -1,0 +1,4217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>C64 GameMaker Sprite Editor</title>
+<link rel="stylesheet" href="css/gm-ui.css">
+<style>
+/* Page-specific styles */
+#screen {
+    background: dimgray;
+    width: 720px;
+    height: 520px;
+    margin: 0 auto;
+    position: relative;
+}
+
+/* Fat bits editor - 12x21 multicolor grid */
+/* Large, fills left side below message area */
+#fatbits {
+    background: limegreen;
+    border: 3px solid black;
+    border-bottom: 6px solid black;
+    border-right: 6px solid black;
+    position: absolute;
+    top: 70px;
+    left: 10px;
+    bottom: 10px;
+    border-collapse: collapse;
+}
+#fatbits td {
+    /* Multicolor: 2 screen px wide × 1 tall, at 1.5x display = 3:2 visible ratio */
+    /* Hi-res: 1 screen px wide × 1 tall, at 1.5x display = 3:4 visible ratio */
+    /* Using 30x20 for multicolor, 15x20 for hi-res (both whole numbers) */
+    width: 30px;
+    height: 20px;
+    border-bottom: 1px solid rgba(0,0,0,0.2);
+    border-right: 1px solid rgba(0,0,0,0.2);
+}
+
+/* Background color block - visual aid for sprite positioning */
+#previewBg {
+    position: absolute;
+    top: 290px;
+    right: 10px;
+    bottom: 10px;
+    width: 250px;
+    border: 3px solid black;
+    background: #59A849; /* Default green, updated dynamically */
+}
+
+/* Full c64Screen canvas overlay - 320x200 native, scaled to 480x400 */
+/* Positioned to show sprites at actual screen coordinates */
+#preview {
+    position: absolute;
+    /* Position so the screen's right edge aligns with the background block's right edge */
+    /* and bottom edge aligns with background block's bottom */
+    bottom: 10px;
+    right: 10px;
+    width: 480px;
+    height: 400px;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    pointer-events: none; /* Allow clicks to pass through to elements below */
+}
+
+#controls {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 250px;
+}
+
+/* Buttons are a 2-column CSS grid (not a table) so btn5 can have its
+   tall mega-frame layout while btn6 (spr=1) stays normal height beside it.
+   align-items: start prevents cell-stretch-to-match. */
+#buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    width: 100%;
+    align-items: start;
+}
+.button {
+    background: silver;
+    border: 3px solid black;
+    border-bottom: 6px solid black;
+    border-right: 6px solid black;
+    text-align: center;
+    padding: 5px 10px;
+    cursor: pointer;
+    color: #0000AA;
+    box-sizing: border-box;
+}
+.button:hover {
+    background: #ccc;
+}
+.button.disabled {
+    background: #888;
+    color: #446;
+    cursor: not-allowed;
+}
+.button.active {
+    background: #8f8;
+}
+.button.cmd-mode {
+    color: #AA0000;
+}
+
+/* Mega frame/quad button: NN label on top, < and > arrows attached below,
+   all visually inside one button frame with a 3px black divider line
+   between the label and the arrows. The arrows row uses negative
+   horizontal margins so its top border runs the full width of the
+   button's inner area. Shared between the fr= button (always shown)
+   and the spr= button (only when there's more than one quad). */
+#frameArrowsRow, #quadArrowsRow {
+    display: flex;
+    border-top: 3px solid black;
+    margin: 5px -10px -5px -10px;
+}
+.frame-arrow {
+    flex: 1;
+    padding: 3px 0;
+    text-align: center;
+    cursor: pointer;
+    color: #0000AA;
+}
+.frame-arrow:first-child {
+    border-right: 3px solid black;
+}
+.frame-arrow:hover {
+    background: #aaa;
+}
+
+#palette {
+    border-spacing: 0px;
+    border-collapse: collapse;
+    width: 100%;
+    margin-top: 10px;
+}
+#palette td {
+    padding: 3px 5px;
+    cursor: pointer;
+    color: #ffff00;
+}
+#palette tr:hover {
+    background: #444;
+}
+
+.colorSelected {
+    background-color: #0000AA !important;
+}
+
+
+
+/* Disk popup handled by GMDisk (injects its own styles) */
+
+/* Color picker styles from gm-ui.css */
+
+/* Frame/quad selectors */
+.selector {
+    position: relative;
+    display: inline-block;
+}
+
+.selector-dropdown {
+    display: none;
+    position: absolute;
+    background: silver;
+    border: 3px solid black;
+    border-bottom: 6px solid black;
+    border-right: 6px solid black;
+    z-index: 100;
+    max-height: 240px;
+    overflow-y: auto;
+}
+
+.selector-dropdown.open {
+    display: block;
+}
+
+.selector-option {
+    padding: 2px 15px;
+    line-height: 20px;   /* row = 2 + 20 + 2 = 24px */
+    cursor: pointer;
+    color: #0000AA;
+    white-space: nowrap;  /* "sprite 1" etc. shouldn't soft-wrap */
+}
+.selector-option:hover {
+    background: #ccc;
+}
+.selector-option.selected {
+    background: #0000AA;
+    color: #fff;
+}
+.selector-option.add-new {
+    color: #888;
+    font-style: italic;
+}
+
+/* Setup panel - styled box that appears below setup/ok row */
+#setupPanel {
+    display: none;
+    background: silver;
+    border: 3px solid black;
+    border-bottom: 6px solid black;
+    border-right: 6px solid black;
+    padding: 4px 0;
+    margin-top: 4px;
+}
+
+#setupPanel.open {
+    display: block;
+}
+
+#setupPanel table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+#setupPanel td {
+    padding: 2px 6px;
+    cursor: pointer;
+}
+
+#setupPanel td:first-child {
+    color: #800;
+    text-align: right;
+    padding-right: 10px;
+}
+
+#setupPanel td:last-child {
+    color: #0000AA;
+}
+
+#setupPanel tr:hover {
+    background: #ccc;
+}
+#setupPanel tr:active {
+    background: #aaa;
+}
+
+/* Message area - two lines above fatbits */
+#messageArea {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    width: 450px;
+    height: 60px;
+    color: #ffff00;
+    line-height: 1.8;
+    text-align: center;
+}
+
+/* Anima mode clickable values - white on blue like GM */
+#messageArea .anima-value {
+    background: #0000AA;
+    color: #fff;
+    cursor: pointer;
+    padding: 0 4px;
+}
+#messageArea .anima-value:hover,
+#messageArea .anima-value.is-interacting {
+    background: #4444CC;
+}
+
+/* Anima dropdown */
+.anima-dropdown {
+    display: none;
+    position: absolute;
+    background: #888;
+    border: 2px solid black;
+    z-index: 100;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.anima-dropdown.open {
+    display: block;
+}
+
+.anima-dropdown-option {
+    padding: 3px 10px;
+    cursor: pointer;
+    color: #000;
+}
+.anima-dropdown-option:hover {
+    background: #aaa;
+}
+.anima-dropdown-option.selected {
+    background: #0000AA;
+    color: #fff;
+}
+
+</style>
+</head>
+<body>
+
+<!-- Disk popup handled by GMDisk -->
+
+<!-- Color picker created dynamically by GMTools -->
+
+<div id="screen">
+
+<!-- Message area above fatbits -->
+<div id="messageArea"></div>
+
+<!-- Anima dropdown (shared for from/to/speed selection) -->
+<div class="anima-dropdown" id="animaDropdown"></div>
+
+<div id="controls">
+
+<div id="buttons">
+    <div class="button" id="btn1" onclick="btn1Click()">setup</div>
+    <!-- "menu" text is overwritten by LABEL_MENU on initApp; placeholder
+         here only so static page views render the right button. -->
+    <div class="button" id="btn2" onclick="btn2Click()">menu</div>
+    <div class="button" id="btn3" onclick="btn3Click()">cmd</div>
+    <div class="button" id="btn4" onclick="btn4Click()">file</div>
+    <div class="button" id="btn5" onclick="btn5Click()"><span id="frameLabel">fr=01</span><div id="frameArrowsRow"><div class="frame-arrow" onclick="event.stopPropagation(); stepFrame(-1)">&lt;</div><div class="frame-arrow" onclick="event.stopPropagation(); stepFrame(1)">&gt;</div></div></div>
+    <div class="button" id="btn6" onclick="btn6Click()" onmouseenter="highlightCurrentQuad(true)" onmouseleave="highlightCurrentQuad(false)"><span id="quadLabel" onclick="event.stopPropagation(); showQuadSelector(event)">spr=1</span><div id="quadArrowsRow" style="display:none"><div class="frame-arrow" onclick="event.stopPropagation(); stepQuad(-1)">&lt;</div><div class="frame-arrow" onclick="event.stopPropagation(); stepQuad(1)">&gt;</div></div></div>
+    <!-- btn7/btn8: extra cmd-submenu row. Hidden by default; shown only when
+         cmd mode is active. btn7 is intentionally blank to keep the grid
+         shape (the right-hand cell holds the actual "swap" button). -->
+    <div class="button" id="btn7" style="display:none">&nbsp;</div>
+    <div class="button" id="btn8" onclick="btn8Click()" style="display:none">swap</div>
+</div>
+
+<!-- Frame selector dropdown -->
+<div class="selector-dropdown" id="frameDropdown"></div>
+
+<!-- Quad selector dropdown -->
+<div class="selector-dropdown" id="quadDropdown"></div>
+
+<!-- Setup panel - styled box that appears below setup/quit row when open -->
+<div id="setupPanel">
+    <table>
+        <tr onclick="toggleColorMode()">
+            <td>color</td>
+            <td id="setupColorValue">mult</td>
+        </tr>
+        <tr onclick="toggleVMag()">
+            <td>v mag</td>
+            <td id="setupVMagValue">off</td>
+        </tr>
+        <tr onclick="toggleHMag()">
+            <td>h mag</td>
+            <td id="setupHMagValue">off</td>
+        </tr>
+        <tr onclick="cycleSpritesCount()">
+            <td>sprites</td>
+            <td id="setupSpritesValue">1</td>
+        </tr>
+    </table>
+</div>
+
+<!-- Palette rows: swatch on the LEFT, name on the RIGHT. Click semantics:
+       row (including the swatch) → select that slot as the drawing colour;
+       name cell → open the colour picker for that slot.
+     Swap-slot is now reached via the "swap" button in the cmd submenu (lets
+     the user pick BOTH from and to instead of being scoped to the clicked
+     row). The previous swatch-on-right layout is in git history. -->
+<table id="palette">
+<tr id="color1" onclick="selectColor(1)"><td>1</td><td id="color1Swatch" style="font-size:16px;">&#9608;&#9608;&#9608;</td><td id="color1Name" class="color-name">---</td></tr>
+<tr id="color2" onclick="selectColor(2)"><td>2</td><td id="color2Swatch" style="font-size:16px;">&#9608;&#9608;&#9608;</td><td id="color2Name" class="color-name">---</td></tr>
+<tr id="color3" onclick="selectColor(3)"><td>3</td><td id="color3Swatch" style="font-size:16px;">&#9608;&#9608;&#9608;</td><td id="color3Name" class="color-name">---</td></tr>
+<tr id="color0" onclick="selectColor(0)"><td>b</td><td id="color0Swatch" style="font-size:16px;">&#9608;&#9608;&#9608;</td><td id="color0Name" class="color-name">---</td></tr>
+</table>
+
+</div>
+
+<table id="fatbits"></table>
+
+<div id="previewBg"></div>
+<canvas id="preview"></canvas>
+
+</div>
+
+<script src="js/d64lib.js"></script>
+<script src="js/gmDisk.js"></script>
+<script src="js/c64lib.js"></script>
+<script src="js/gmTools.js"></script>
+<script src="js/c64Screen.js"></script>
+<script src="js/gmSprite.js"></script>
+<script src="js/gif.js"></script>
+<script src="js/gifWorkerBlob.js"></script>
+<script>
+// ============================================================================
+// SPRITE EDITOR - Create and edit C64 GameMaker sprites
+// ============================================================================
+//
+// This editor closely mimics the original GameMaker sprite editor UI while
+// adding modern conveniences (keyboard shortcuts, GIF export, etc).
+//
+// === LAYOUT (matches GM screenshot layout1.png/layout2.png) ===
+// - Fat bits grid (left): 12×21 pixel editor for multicolor, 24×21 for hi-res
+// - Button panel (top right): setup, quit, cmd, file, fr=N, spr=N
+// - Color palette (right): 4 color slots with C64 color picker
+// - Preview area (bottom right): full sprite preview at screen position
+//
+// === KEY CONCEPTS ===
+//
+// COORDINATE SYSTEMS:
+// - GM coordinates: X in fat pixels (0-159), Y in pixels (0-199)
+// - Both multicolor and hi-res sprites use fat pixel X coords internally
+// - gmSprite normalizes positions at load time (divides file X by 2)
+// - serializeSprite converts back (multiplies X by 2) for GM compatibility
+//
+// FRAME MANAGEMENT:
+// - numFrames: animation frame count (what GM loops through)
+// - totalFrames: actual frames in file (may include hidden frames beyond animation)
+// - Hidden frames: GM strips trailing blank frames on save, but preserves
+//   non-blank frames beyond numFrames (useful for scratch work)
+// - Bytes 20-21 in file header encode totalFrames via: (dataSize - 32) / 64
+//
+// MODES:
+// - Normal: draw pixels, select colors, navigate frames/quads
+// - CMD mode: access secondary functions (flip, shift, clear, copy, anima, posn)
+// - Animation mode: preview animation with adjustable range and speed
+// - Positioning mode: move sprite on screen with arrow keys
+// - Setup panel: change sprite name, mode (multi/hi-res), doubling, quad count
+//
+// FILE FORMAT:
+// - Sprites saved in GM .SPR format (see gmSprite.js for byte-level docs)
+// - Round-trip compatible: load in editor, save, load in real GameMaker
+//
+// === UI POLISH ===
+// - Frame dropdown: click opens, click again advances, arrow keys navigate
+// - Disk popup: load/save from D64 images with keyboard navigation
+// - Color picker: click swatch to change C64 color (0-15)
+// - GIF export: create animated GIF of current sprite
+
+// Use c64ColorNames from c64lib.js (access by index, e.g., c64ColorNames[0] = "black")
+
+// Helper to convert c64Palette entry to CSS color string
+function paletteToCSS(colorIndex) {
+    const rgba = c64Palette[colorIndex];
+    if (!rgba) return '#000';
+    return `rgb(${rgba[0]}, ${rgba[1]}, ${rgba[2]})`;
+}
+
+// State
+let currentSprite = null;
+let currentFrame = 0;
+let currentQuad = 0;
+let selectedColorSlot = 1; // Which color slot is selected for drawing (0=bg, 1, 2, 3)
+let currentSpriteFileName = null;
+
+// Default palette for newly-created sprites (C64 palette indices 0-15).
+// The sprite itself is the single source of truth for its current palette —
+// the editor reads it via currentSprite.getColor()/getPalette() and writes
+// it via setColor()/setPalette(). This constant is only used when creating
+// a fresh sprite (newSprite) or as a fallback before currentSprite exists
+// (the preview area renders once during initApp before newSprite() runs).
+const DEFAULT_SPRITE_COLORS = [5, 1, 6, 0]; // green bg, white, blue, black
+
+// btn2's base-mode label, restored after exiting any submode that overrode
+// it (cmd / file menu / setup panel). Single source of truth — change once,
+// applied at HTML render time via initApp and at every restore site.
+const LABEL_MENU = 'menu';
+
+// Pixel data for current quad (12x21 array of color indices 0-3)
+let pixelData = [];
+
+// GM sprites have 31 reachable frame slots. Any can be navigated to or used
+// as a copy source/destination at any time, even if blank. On save we trim
+// trailing-empty slots (but keep middle blanks and any covered by anima range).
+const MAX_FRAMES = 31;
+
+// Mapping between GM color-slot numbers (UI labels 0/1/2/3) and the raw
+// C64 hardware pixel values stored in pixelData (multicolor: 00/01/10/11).
+// Slot 1 ("Color 1") = hw 10 = pixel value 2 (gmColor1, the unique sprite color)
+// Slot 2 ("Color 2") = hw 01 = pixel value 1 (gmColor2, shared)
+// Slot 3 ("Color 3") = hw 11 = pixel value 3 (gmColor3, shared)
+// The mapping is its own inverse (1↔2 swap; 0 and 3 fixed), so the same
+// array converts in both directions.
+const SLOT_PIXEL_MAP = [0, 2, 1, 3];
+
+// CMD mode state
+let cmdMode = false;
+
+// Flip mode state
+let flipMode = {
+    active: false
+};
+
+// Shift mode state
+let shiftMode = {
+    active: false
+};
+
+// Copy mode state
+let copyMode = {
+    active: false,
+    fromFrame: 1,  // 1-based
+    toFrame: 1,    // 1-based
+    selectedField: null  // 'from' or 'to'
+};
+
+// Color-swap mode state. fromSlot is the slot whose ellipsis the user
+// clicked; toSlot is what they pick to swap with. The swap reassigns both
+// the slot's colour AND the pixels using that slot, so the sprite looks
+// identical after the swap — only the slot labels change.
+let swapMode = {
+    active: false,
+    fromSlot: 0,
+    toSlot: 0
+};
+
+// Animation mode state.
+//
+// The animation END is the sprite's numFrames itself: every time the user
+// changes the "to" field we write through to currentSprite.setNumFrames().
+// We don't duplicate it on animaMode any more — the sprite is the source of
+// truth, so a session restore can never silently disagree with the saved
+// bytes (which is what gave us the "01 to 01" bug after reload).
+//
+// fromFrame is purely transient anima-session state: it ALWAYS resets to
+// 1 every time enterAnimaMode runs. The .SPR file format has no slot for
+// it, and real GM doesn't persist it either — partial-range playback is a
+// quick-look feature, not something the user should have to clear back to
+// 1 by hand after every reload.
+let animaMode = {
+    active: false,
+    fromFrame: 1,      // 1-based; reset to 1 on every enterAnimaMode
+    speed: 28,         // 1-31
+    currentFrame: 0,   // 0-based for internal use
+    animationId: null, // requestAnimationFrame ID
+    lastFrameTime: 0   // for timing control
+};
+
+// Positioning mode state
+let positioningMode = {
+    active: false,
+    currentQuad: 0,
+    positions: []  // [{x, y}, ...] for each quad
+};
+
+// File menu mode state
+let fileMenuMode = {
+    active: false
+};
+
+// Load mode state (within file menu)
+// The cycling/keyboard/UI framework lives in GMTools.previewLoader; this object
+// mirrors the relevant state so the rest of sprite-maker (click guards, tests)
+// can read it without reaching into the framework's internals.
+let loadMode = {
+    active: false,
+    spriteFiles: [],        // List of sprite filenames on disk
+    currentIndex: 0,        // Currently previewed sprite index
+    previewSprite: null,    // gmSprite instance for preview
+    animationId: null,      // Animation frame ID
+    lastFrameTime: 0,       // For animation timing
+    currentFrame: 0,        // Current animation frame
+    // Saved state mirror — actual save/restore is owned by previewLoader
+    savedSprite: null,
+    savedFileName: null,
+    savedSetupState: null,
+    savedSpriteColors: null,
+    savedCurrentFrame: 0,
+    savedCurrentQuad: 0
+};
+
+// Save mode state
+let saveMode = {
+    active: false,
+    fileName: '',           // The filename being edited
+    confirmingOverwrite: false  // True when showing overwrite confirmation
+};
+
+// c64Screen for preview rendering
+let previewScreen = null;
+
+// Initialize
+document.addEventListener("DOMContentLoaded", initApp, false);
+
+// Clamp all sprite positions to keep them on screen
+function clampAllSpritePositions() {
+    if (!currentSprite) return;
+
+    const xDouble = currentSprite.sprite[0].xDouble ? 2 : 1;
+    const yDouble = currentSprite.sprite[0].yDouble ? 2 : 1;
+    const spriteWidth = 12 * xDouble;
+    const spriteHeight = 21 * yDouble;
+
+    // Clamp quad 0's absolute position
+    const quad0 = currentSprite.sprite[0];
+    quad0.xPosition = Math.max(0, Math.min(160 - spriteWidth, quad0.xPosition));
+    quad0.yPosition = Math.max(0, Math.min(200 - spriteHeight, quad0.yPosition));
+
+    // Clamp quads 1-3's absolute positions, then back-calculate relative
+    for (let i = 1; i < currentSprite.sprite.length; i++) {
+        const quad = currentSprite.sprite[i];
+        const absX = quad0.xPosition + quad.xPosition;
+        const absY = quad0.yPosition + quad.yPosition;
+
+        const clampedAbsX = Math.max(0, Math.min(160 - spriteWidth, absX));
+        const clampedAbsY = Math.max(0, Math.min(200 - spriteHeight, absY));
+
+        quad.xPosition = clampedAbsX - quad0.xPosition;
+        quad.yPosition = clampedAbsY - quad0.yPosition;
+    }
+}
+
+// Convert mouse event to GM fat pixel coordinates
+function mouseToGmCoords(e) {
+    const preview = document.getElementById('preview');
+    const rect = preview.getBoundingClientRect();
+
+    // Canvas is 320x200 displayed at 480x400
+    const scaleX = 320 / rect.width;
+    const scaleY = 200 / rect.height;
+
+    // Mouse position in screen pixels (0-319, 0-199)
+    const screenX = (e.clientX - rect.left) * scaleX;
+    const screenY = (e.clientY - rect.top) * scaleY;
+
+    // Convert to GM coordinates (screen-relative: fat pixels for X, regular for Y)
+    // screenX / 2 gives fat pixels
+    const gmX = Math.floor(screenX / 2);
+    const gmY = Math.floor(screenY);
+
+    return { x: gmX, y: gmY };
+}
+
+function getQuadAtPosition(gmX, gmY) {
+    // Check which quad (if any) contains this position
+    // Check in reverse order so front quads are hit first
+    const xDouble = currentSprite.sprite[0].xDouble ? 2 : 1;
+    const yDouble = currentSprite.sprite[0].yDouble ? 2 : 1;
+    const spriteWidth = 12 * xDouble;
+    const spriteHeight = 21 * yDouble;
+
+    for (let q = positioningMode.positions.length - 1; q >= 0; q--) {
+        const pos = positioningMode.positions[q];
+
+        // Calculate absolute position
+        let absX, absY;
+        if (q === 0) {
+            absX = pos.x;
+            absY = pos.y;
+        } else {
+            absX = positioningMode.positions[0].x + pos.x;
+            absY = positioningMode.positions[0].y + pos.y;
+        }
+
+        // Check if click is within this quad's bounds
+        if (gmX >= absX && gmX < absX + spriteWidth &&
+            gmY >= absY && gmY < absY + spriteHeight) {
+            return q;
+        }
+    }
+
+    return -1; // No quad at this position
+}
+
+function positioningMouseDown(e) {
+    if (!positioningMode.active) return;
+
+    const gmCoords = mouseToGmCoords(e);
+    const clickedQuad = getQuadAtPosition(gmCoords.x, gmCoords.y);
+
+    // If clicked on background (no quad), do nothing
+    if (clickedQuad === -1) {
+        e.preventDefault();
+        return;
+    }
+
+    // If clicked on a different quad, switch to it
+    if (clickedQuad !== positioningMode.currentQuad) {
+        positioningMode.currentQuad = clickedQuad;
+        updatePreviewWithPositioning();
+    }
+
+    const q = positioningMode.currentQuad;
+    const pos = positioningMode.positions[q];
+
+    // Calculate the quad's current absolute position
+    let absX, absY;
+    if (q === 0) {
+        absX = pos.x;
+        absY = pos.y;
+    } else {
+        absX = positioningMode.positions[0].x + pos.x;
+        absY = positioningMode.positions[0].y + pos.y;
+    }
+
+    // Store drag start info
+    positioningMode.dragging = true;
+    positioningMode.dragStart = {
+        mouseX: gmCoords.x,
+        mouseY: gmCoords.y,
+        quadAbsX: absX,
+        quadAbsY: absY
+    };
+
+    e.preventDefault();
+}
+
+function positioningMouseMove(e) {
+    if (!positioningMode.active || !positioningMode.dragging) return;
+
+    const gmCoords = mouseToGmCoords(e);
+    const q = positioningMode.currentQuad;
+    const pos = positioningMode.positions[q];
+    const start = positioningMode.dragStart;
+
+    // Calculate new absolute position based on drag delta
+    const dx = gmCoords.x - start.mouseX;
+    const dy = gmCoords.y - start.mouseY;
+    let newAbsX = start.quadAbsX + dx;
+    let newAbsY = start.quadAbsY + dy;
+
+    // Clamp to screen bounds
+    const xDouble = currentSprite.sprite[0].xDouble ? 2 : 1;
+    const yDouble = currentSprite.sprite[0].yDouble ? 2 : 1;
+    const spriteWidth = 12 * xDouble;
+    const spriteHeight = 21 * yDouble;
+
+    newAbsX = Math.max(0, Math.min(160 - spriteWidth, newAbsX));
+    newAbsY = Math.max(0, Math.min(200 - spriteHeight, newAbsY));
+
+    if (q === 0) {
+        // Calculate actual movement
+        const actualDx = newAbsX - pos.x;
+        const actualDy = newAbsY - pos.y;
+
+        pos.x = newAbsX;
+        pos.y = newAbsY;
+
+        // Adjust other quads so they stay in place
+        for (let i = 1; i < positioningMode.positions.length; i++) {
+            positioningMode.positions[i].x -= actualDx;
+            positioningMode.positions[i].y -= actualDy;
+        }
+    } else {
+        // Set relative position
+        pos.x = newAbsX - positioningMode.positions[0].x;
+        pos.y = newAbsY - positioningMode.positions[0].y;
+    }
+
+    updatePreviewWithPositioning();
+}
+
+function positioningMouseUp(e) {
+    if (!positioningMode.active) return;
+    positioningMode.dragging = false;
+    positioningMode.dragStart = null;
+}
+
+// ==================== MESSAGE AREA ====================
+
+// Track current sprite name for display
+function showMessage(text) {
+    document.getElementById('messageArea').innerHTML = text;
+}
+
+function clearMessage() {
+    // Clear the message area (use innerHTML to fully clear any styled content)
+    const messageArea = document.getElementById('messageArea');
+    messageArea.innerHTML = '';
+    // Force Safari to repaint by toggling display
+    messageArea.style.display = 'none';
+    void messageArea.offsetHeight;
+    messageArea.style.display = '';
+}
+
+// ==================== BUTTON HANDLERS ====================
+// Buttons change based on mode (normal vs cmd)
+
+function btn1Click() {
+    if (animaMode.active) return; // Disabled during animation
+    if (flipMode.active) return;  // Already in flip mode
+    if (shiftMode.active) return; // Disabled during shift
+    if (clearMode.active) return; // Disabled during clear
+    if (copyMode.active) return;  // Disabled during copy
+    if (swapMode.active) return;  // Disabled during color swap
+    if (loadMode.active) return;  // Disabled during load
+    if (GMTools.quitMenu.isOpen()) return;  // Disabled during quit menu
+    if (fileMenuMode.active) {
+        // disk - show disk popup
+        showDiskPopup();
+    } else if (cmdMode) {
+        // flip - enter flip mode
+        enterFlipMode();
+    } else {
+        // setup
+        showSetupPanel();
+    }
+}
+
+function btn2Click() {
+    if (animaMode.active) {
+        // ok - exit anima mode
+        exitAnimaMode();
+    } else if (flipMode.active) {
+        // ok - exit flip mode
+        exitFlipMode();
+    } else if (shiftMode.active) {
+        // ok - exit shift mode
+        exitShiftMode();
+    } else if (clearMode.active) {
+        // ok - cancel clear (same as clicking no)
+        confirmClear(false);
+    } else if (copyMode.active) {
+        // ok - cancel copy (same as clicking no)
+        confirmCopy(false);
+    } else if (loadMode.active) {
+        // Buttons disabled during load mode (yes/no are in message area)
+        return;
+    } else if (positioningMode.active) {
+        // ok - confirm positioning
+        exitPositioningMode(true);
+    } else if (fileMenuMode.active) {
+        // menu - exit file menu mode
+        exitFileMenuMode();
+    } else if (cmdMode) {
+        // ok - exit cmd mode
+        exitCmdMode();
+    } else if (setupPanelOpen) {
+        // ok - close setup panel
+        setupOK();
+    } else {
+        // menu
+        quitEditor();
+    }
+}
+
+function btn3Click() {
+    if (animaMode.active) return; // Already in anima mode
+    if (flipMode.active) return;  // Disabled during flip
+    if (shiftMode.active) return; // Disabled during shift
+    if (clearMode.active) return; // Disabled during clear
+    if (copyMode.active) return;  // Disabled during copy
+    if (swapMode.active) return;  // Disabled during color swap
+    if (loadMode.active) return;  // Disabled during load (yes/no are in message area)
+    if (GMTools.quitMenu.isOpen()) return;  // Disabled during quit menu
+    if (fileMenuMode.active) {
+        // load - enter load mode
+        enterLoadMode();
+    } else if (cmdMode) {
+        // anima - enter animation mode
+        enterAnimaMode();
+    } else {
+        // cmd - enter cmd mode
+        enterCmdMode();
+    }
+}
+
+function btn4Click() {
+    if (animaMode.active) return; // Disabled during animation
+    if (flipMode.active) return;  // Disabled during flip
+    if (shiftMode.active) return; // Disabled during shift
+    if (clearMode.active) return; // Already in clear confirmation
+    if (copyMode.active) return;  // Disabled during copy
+    if (swapMode.active) return;  // Disabled during color swap
+    if (loadMode.active) return;  // Disabled during load
+    if (GMTools.quitMenu.isOpen()) return;  // Disabled during quit menu
+    if (saveMode.active) return;  // Already in save mode
+    if (fileMenuMode.active) {
+        // save - enter save mode
+        enterSaveMode();
+        return;
+    } else if (cmdMode) {
+        // clear - show confirmation
+        showClearConfirmation();
+    } else {
+        // file - enter file menu mode
+        enterFileMenuMode();
+    }
+}
+
+function btn5Click() {
+    if (animaMode.active) return; // Disabled during animation
+    if (flipMode.active) return;  // Disabled during flip
+    if (clearMode.active) return; // Disabled during clear
+    if (shiftMode.active) return; // Already in shift mode
+    if (copyMode.active) return;  // Disabled during copy
+    if (swapMode.active) return;  // Disabled during color swap
+    if (loadMode.active) return;  // Disabled during load
+    if (GMTools.quitMenu.isOpen()) return;  // Disabled during quit menu
+    if (fileMenuMode.active) return; // btn5 is blank in file menu
+    if (cmdMode) {
+        // shift - enter shift mode
+        enterShiftMode();
+    } else {
+        // fr=N - cycle frame
+        showFrameSelector(event);
+    }
+}
+
+function btn6Click() {
+    if (animaMode.active) return; // Disabled during animation
+    if (flipMode.active) return;  // Disabled during flip
+    if (shiftMode.active) return; // Disabled during shift
+    if (clearMode.active) return; // Disabled during clear
+    if (copyMode.active) return;  // Already in copy mode
+    if (loadMode.active) return;  // Disabled during load
+    if (GMTools.quitMenu.isOpen()) return;  // Disabled during quit menu
+    if (fileMenuMode.active) return; // btn6 is blank in file menu
+    if (cmdMode) {
+        // copy - enter copy mode
+        enterCopyMode();
+    } else {
+        // Click on the cell padding / borders (anywhere not on the label or
+        // an arrow) opens the dropdown — same behaviour as clicking the
+        // label itself. The arrows have their own onclick + stopPropagation,
+        // so this branch only runs for the cell's non-interactive areas.
+        showQuadSelector(event);
+    }
+}
+
+// "swap" button in the cmd submenu. Exits cmd mode first because
+// enterSwapMode refuses to start while cmd mode is active (mutually
+// exclusive modes). Defaults to slot 1 → slot 2; both are user-changeable
+// via the in-message dropdowns.
+function btn8Click() {
+    if (!cmdMode) return;
+    // Refuse if a cmd submode is currently active. The button is visually
+    // blanked in those modes (same as btn1/4/5/6) but the click handler
+    // is still attached, so we have to gate here too.
+    if (animaMode.active || flipMode.active || clearMode.active ||
+        shiftMode.active || copyMode.active) return;
+    exitCmdMode();
+    enterSwapMode(1);
+}
+
+// Blank the cmd-submenu extra row (btn7/btn8) without hiding it — every
+// cmd submode (flip/anima/clear/shift/copy) blanks btn1/4/5/6 the same
+// way so the grid keeps its shape. btn7 is already &nbsp; from cmd-mode
+// entry, so only btn8's "swap" label needs to go.
+function _blankCmdExtraRow() {
+    document.getElementById('btn8').innerHTML = '&nbsp;';
+}
+
+// ==================== CMD MODE ====================
+
+function enterCmdMode() {
+    cmdMode = true;
+
+    // Change button text and add red styling
+    document.getElementById('btn1').textContent = 'flip';
+    document.getElementById('btn1').classList.add('cmd-mode');
+
+    document.getElementById('btn2').textContent = 'ok';
+    document.getElementById('btn2').classList.add('cmd-mode');
+
+    document.getElementById('btn3').textContent = 'anima';
+    document.getElementById('btn3').classList.add('cmd-mode');
+
+    document.getElementById('btn4').textContent = 'clear';
+    document.getElementById('btn4').classList.add('cmd-mode');
+
+    document.getElementById('btn5').textContent = 'shift';
+    document.getElementById('btn5').classList.add('cmd-mode');
+
+    document.getElementById('btn6').textContent = 'copy';
+    document.getElementById('btn6').classList.add('cmd-mode');
+
+    // Extra cmd-submenu row (blank + swap). Display: '' restores the grid
+    // cell so it picks up the same styling as the other buttons. Re-set
+    // btn8's text in case a prior submode entry blanked it.
+    document.getElementById('btn7').style.display = '';
+    document.getElementById('btn7').classList.add('cmd-mode');
+    document.getElementById('btn8').style.display = '';
+    document.getElementById('btn8').textContent = 'swap';
+    document.getElementById('btn8').classList.add('cmd-mode');
+}
+
+function exitCmdMode() {
+    cmdMode = false;
+
+    // Restore normal button text and remove red styling
+    document.getElementById('btn1').textContent = 'setup';
+    document.getElementById('btn1').classList.remove('cmd-mode');
+
+    document.getElementById('btn2').textContent = LABEL_MENU;
+    document.getElementById('btn2').classList.remove('cmd-mode');
+    // Prevent the click that exited cmd mode from also triggering 'quit'
+    GMTools.armClickCooldown(document.getElementById('btn2'));
+
+    document.getElementById('btn3').textContent = 'cmd';
+    document.getElementById('btn3').classList.remove('cmd-mode');
+
+    document.getElementById('btn4').textContent = 'file';
+    document.getElementById('btn4').classList.remove('cmd-mode');
+
+    updateFrameButton();
+    document.getElementById('btn5').classList.remove('cmd-mode');
+
+    updateQuadButton();
+    document.getElementById('btn6').classList.remove('cmd-mode');
+
+    // Tear down the extra cmd-only row.
+    document.getElementById('btn7').style.display = 'none';
+    document.getElementById('btn7').classList.remove('cmd-mode');
+    document.getElementById('btn8').style.display = 'none';
+    document.getElementById('btn8').classList.remove('cmd-mode');
+}
+
+// ==================== FILE MENU MODE ====================
+
+function enterFileMenuMode() {
+    fileMenuMode.active = true;
+
+    // Change button text to file menu layout with red styling
+    document.getElementById('btn1').textContent = 'disk';
+    document.getElementById('btn1').classList.add('cmd-mode');
+
+    document.getElementById('btn2').textContent = ' ok ';
+    document.getElementById('btn2').classList.add('cmd-mode');
+
+    document.getElementById('btn3').textContent = 'load';
+    document.getElementById('btn3').classList.add('cmd-mode');
+
+    document.getElementById('btn4').textContent = 'save';
+    document.getElementById('btn4').classList.add('cmd-mode');
+
+    // btn5 and btn6 stay blank — init and del are not implemented.
+    // del belongs in the d64 popup eventually anyway.
+    document.getElementById('btn5').innerHTML = '&nbsp;';
+    document.getElementById('btn5').classList.add('cmd-mode');
+
+    document.getElementById('btn6').innerHTML = '&nbsp;';
+    document.getElementById('btn6').classList.add('cmd-mode');
+}
+
+function exitFileMenuMode() {
+    fileMenuMode.active = false;
+
+    // Restore normal button text and remove red styling
+    document.getElementById('btn1').textContent = 'setup';
+    document.getElementById('btn1').classList.remove('cmd-mode');
+
+    document.getElementById('btn2').textContent = LABEL_MENU;
+    document.getElementById('btn2').classList.remove('cmd-mode');
+    // Prevent the click that exited file menu from also triggering 'quit'
+    GMTools.armClickCooldown(document.getElementById('btn2'));
+
+    document.getElementById('btn3').textContent = 'cmd';
+    document.getElementById('btn3').classList.remove('cmd-mode');
+
+    document.getElementById('btn4').textContent = 'file';
+    document.getElementById('btn4').classList.remove('cmd-mode');
+
+    updateFrameButton();
+    document.getElementById('btn5').classList.remove('cmd-mode');
+
+    updateQuadButton();
+    document.getElementById('btn6').classList.remove('cmd-mode');
+}
+
+// ==================== LOAD MODE ====================
+// Cycling / keyboard / yes-no prompt UI is handled by GMTools.previewLoader.
+// This wrapper just supplies the sprite-specific preview rendering and the
+// save/restore-state hooks, plus syncs a few fields back into loadMode so the
+// existing click guards (`if (loadMode.active) return`) and tests keep working.
+
+function enterLoadMode() {
+    // Snapshot of everything that needs to come back if the user cancels.
+    const snapshot = {
+        sprite: currentSprite,
+        fileName: currentSpriteFileName,
+        setupState: { ...setupState },
+        // The palette lives on the sprite itself, so the sprite reference
+        // already preserves it for restore. Snapshot the array anyway for
+        // any test/UI code that inspects loadMode.savedSpriteColors.
+        spriteColors: currentSprite ? currentSprite.getPalette() : [...DEFAULT_SPRITE_COLORS],
+        currentFrame,
+        currentQuad
+    };
+
+    const entered = GMTools.previewLoader.enter({
+        disk,
+        fileType: GMDisk.FILE_TYPES.SPRITE,
+        messageArea: document.getElementById('messageArea'),
+        emptyMessage: 'no sprites on disk',
+        saveState: () => snapshot,
+        onPreview: (fileName, fileData) => {
+            try {
+                const previewSprite = new gmSprite(fileData);
+                loadMode.previewSprite = previewSprite;
+                currentSprite = previewSprite;
+                currentFrame = 0;
+                currentQuad = 0;
+
+                const header = currentSprite.sprite[0];
+                setupState.isMultiColor = header.isMultiColor;
+                setupState.vMag = header.yDouble;
+                setupState.hMag = header.xDouble;
+                setupState.numSprites = header.numSprites;
+
+                rebuildFatBitsGrid();
+                loadQuadPixelData();
+                updateFatBits();
+                updatePaletteDisplay();
+                updatePaletteForColorMode();
+                updatePreview();
+                startLoadAnimation();
+
+                // Mirror framework state into loadMode for click guards & tests
+                loadMode.spriteFiles = GMTools.previewLoader.files();
+                loadMode.currentIndex = GMTools.previewLoader.currentIndex();
+            } catch (e) {
+                console.error('Failed to preview sprite:', e);
+            }
+        },
+        onConfirm: (fileName) => {
+            currentSpriteFileName = fileName;
+            // No animaMode writes — anima end is on the sprite and start
+            // resets to 1 inside enterAnimaMode.
+        },
+        onCancel: (saved) => {
+            currentSprite = saved.sprite;
+            currentSpriteFileName = saved.fileName;
+            currentFrame = saved.currentFrame;
+            currentQuad = saved.currentQuad;
+
+            setupState.isMultiColor = saved.setupState.isMultiColor;
+            setupState.vMag = saved.setupState.vMag;
+            setupState.hMag = saved.setupState.hMag;
+            setupState.numSprites = saved.setupState.numSprites;
+
+            // Sprite reference restored above already carries its palette.
+            // No separate restore needed — the palette is sprite-owned now.
+
+            if (currentSprite) {
+                rebuildFatBitsGrid();
+                loadQuadPixelData();
+                updateFatBits();
+                updatePaletteDisplay();
+                updatePaletteForColorMode();
+                updatePreview();
+            }
+        },
+        onExit: () => {
+            // Stop the load-mode animation loop
+            if (loadMode.animationId) {
+                cancelAnimationFrame(loadMode.animationId);
+                loadMode.animationId = null;
+            }
+            // Reset the mirror
+            loadMode.active = false;
+            loadMode.spriteFiles = [];
+            loadMode.currentIndex = 0;
+            loadMode.previewSprite = null;
+            loadMode.savedSprite = null;
+            loadMode.savedFileName = null;
+            loadMode.savedSetupState = null;
+            loadMode.savedSpriteColors = null;
+            // Drop back out of the file menu too
+            exitFileMenuMode();
+        }
+    });
+
+    if (!entered) return; // empty disk — previewLoader already flashed the message
+
+    // Mirror state into loadMode so guards/tests can observe it
+    loadMode.active = true;
+    loadMode.savedSprite = snapshot.sprite;
+    loadMode.savedFileName = snapshot.fileName;
+    loadMode.savedSetupState = snapshot.setupState;
+    loadMode.savedSpriteColors = snapshot.spriteColors;
+    loadMode.savedCurrentFrame = snapshot.currentFrame;
+    loadMode.savedCurrentQuad = snapshot.currentQuad;
+
+    // Blank toolbar buttons except 'load' (matches anima-mode behaviour)
+    document.getElementById('btn1').innerHTML = '&nbsp;';
+    document.getElementById('btn2').innerHTML = '&nbsp;';
+    document.getElementById('btn4').innerHTML = '&nbsp;';
+    document.getElementById('btn5').innerHTML = '&nbsp;';
+    document.getElementById('btn6').innerHTML = '&nbsp;';
+}
+
+function startLoadAnimation() {
+    // Stop any existing animation
+    if (loadMode.animationId) {
+        cancelAnimationFrame(loadMode.animationId);
+    }
+
+    loadMode.currentFrame = 0;
+    loadMode.lastFrameTime = performance.now();
+
+    function animateLoad(timestamp) {
+        if (!loadMode.active) return;
+
+        // Animation speed 28: frame delay = (32 - 28) * 33 = 132ms
+        const frameDelay = (32 - 28) * 33;
+
+        if (timestamp - loadMode.lastFrameTime >= frameDelay) {
+            loadMode.lastFrameTime = timestamp;
+
+            // Advance frame
+            const numFrames = currentSprite ? currentSprite.getNumFrames() : 1;
+            loadMode.currentFrame = (loadMode.currentFrame + 1) % numFrames;
+
+            // Update preview with animated frame
+            updateAnimatedLoadPreview();
+        }
+
+        loadMode.animationId = requestAnimationFrame(animateLoad);
+    }
+
+    loadMode.animationId = requestAnimationFrame(animateLoad);
+}
+
+function updateAnimatedLoadPreview() {
+    if (!currentSprite || !previewScreen) return;
+
+    // Clear to transparent - sprites render over the background block
+    previewScreen.clearTransparent();
+
+    // Get sprite position (in fat pixel space, normalized by gmSprite at load time)
+    const gmX = (currentSprite.sprite[0].xPosition || 0) + 12;
+    const gmY = (currentSprite.sprite[0].yPosition || 0) + 50;
+
+    // Render sprite at the current animation frame
+    currentSprite.blitToBuffer(
+        previewScreen.pixels,
+        c64Screen.WIDTH,
+        c64Screen.HEIGHT,
+        gmX,
+        gmY,
+        loadMode.currentFrame
+    );
+
+    previewScreen.present();
+}
+
+// ==================== SAVE MODE ====================
+// Thin wrapper over GMTools.saveDialog — sprite-maker provides the empty-disk
+// pre-check, button blanking, and per-tool serialise/restore via callbacks.
+
+function enterSaveMode() {
+    if (!currentSprite) {
+        GMTools.flashingMessage.show(
+            document.getElementById('messageArea'),
+            'no sprite to save'
+        );
+        const dismissHandler = () => {
+            GMTools.flashingMessage.hide();
+            clearMessage();
+            document.removeEventListener('click', dismissHandler, true);
+        };
+        document.addEventListener('click', dismissHandler, true);
+        return;
+    }
+
+    saveMode.active = true;
+
+    // Blank out toolbar buttons; save label stays visible
+    document.getElementById('btn1').innerHTML = '&nbsp;';
+    document.getElementById('btn2').innerHTML = '&nbsp;';
+    document.getElementById('btn3').innerHTML = '&nbsp;';
+    document.getElementById('btn5').innerHTML = '&nbsp;';
+    document.getElementById('btn6').innerHTML = '&nbsp;';
+
+    GMTools.saveDialog.enter({
+        disk,
+        fileType: GMDisk.FILE_TYPES.SPRITE,
+        messageArea: document.getElementById('messageArea'),
+        suggestedName: currentSpriteFileName
+            ? currentSpriteFileName.replace(/\/SPR$/i, '').trim()
+            : '',
+        // Same path as the d64 popup's Save button — single source of truth
+        // for serialization (strips trailing blank frames via serializeSprite)
+        // and disk write.
+        onSave: saveSprite,
+        onExit: () => {
+            saveMode.active = false;
+            saveMode.confirmingOverwrite = false;
+            exitFileMenuMode();
+        }
+    });
+}
+
+// confirmSave is referenced by sprite-save.test.js to drive the save flow
+// from test scripts; the dialog owns the actual implementation. The mirror
+// keeps saveMode.confirmingOverwrite in sync for any sprite-maker code that
+// observes it.
+function confirmSave() {
+    GMTools.saveDialog.confirm();
+    saveMode.confirmingOverwrite = GMTools.saveDialog.confirmingOverwrite();
+}
+
+// Flip and shift are "any-click-exits" modes: the user is committing to a
+// transient gesture (use arrow keys), and any click on the canvas, palette,
+// or empty space should treat that click as "I'm done". Returns true if a
+// mode was exited so callers can skip their own action (e.g. cellMouseDown
+// shouldn't ALSO draw the pixel the user clicked to exit on).
+//
+// Buttons stay clickable but their own onclick guards refuse during these
+// modes — so clicks on btn1/3/4/5/6/7/8 quietly do nothing as before.
+function _exitTransientCmdSubmode() {
+    if (flipMode.active)  { exitFlipMode();  return true; }
+    if (shiftMode.active) { exitShiftMode(); return true; }
+    return false;
+}
+
+// ==================== FLIP MODE ====================
+
+function enterFlipMode() {
+    flipMode.active = true;
+
+    // Show flip message
+    showMessage('flip graphics using arrow keys');
+
+    // Blank out other buttons, keep only flip and ok
+    document.getElementById('btn1').textContent = 'flip';
+    document.getElementById('btn2').textContent = 'ok';
+    document.getElementById('btn3').innerHTML = '&nbsp;';
+    document.getElementById('btn4').innerHTML = '&nbsp;';
+    document.getElementById('btn5').innerHTML = '&nbsp;';
+    document.getElementById('btn6').innerHTML = '&nbsp;';
+    _blankCmdExtraRow();
+
+    document.addEventListener('keydown', flipKeyHandler);
+}
+
+function exitFlipMode() {
+    flipMode.active = false;
+
+    // Clear message
+    clearMessage();
+
+    // Exit cmd mode as well (clicking ok in flip mode exits both)
+    exitCmdMode();
+
+    document.removeEventListener('keydown', flipKeyHandler);
+}
+
+function flipKeyHandler(e) {
+    if (!flipMode.active) return;
+
+    switch (e.key) {
+        case 'ArrowLeft':
+        case 'ArrowRight':
+            flipAllQuadsHorizontal();
+            e.preventDefault();
+            break;
+        case 'ArrowUp':
+        case 'ArrowDown':
+            flipAllQuadsVertical();
+            e.preventDefault();
+            break;
+        case 'Enter':
+        case 'Escape':
+            exitFlipMode();
+            e.preventDefault();
+            break;
+    }
+}
+
+function flipAllQuadsHorizontal() {
+    if (!currentSprite) return;
+
+    // Flip all quads horizontally (current frame only)
+    for (let q = 0; q < currentSprite.sprite.length; q++) {
+        const quad = currentSprite.sprite[q];
+        if (!quad.imageData) continue;
+
+        flipImageDataHorizontal(quad.imageData[currentFrame], quad.isMultiColor);
+    }
+
+    // Reload pixel data and update display
+    loadQuadPixelData();
+    updateFatBits();
+    updatePreview();
+}
+
+function flipAllQuadsVertical() {
+    if (!currentSprite) return;
+
+    // Flip all quads vertically (current frame only)
+    for (let q = 0; q < currentSprite.sprite.length; q++) {
+        const quad = currentSprite.sprite[q];
+        if (!quad.imageData) continue;
+
+        flipImageDataVertical(quad.imageData[currentFrame]);
+    }
+
+    // Reload pixel data and update display
+    loadQuadPixelData();
+    updateFatBits();
+    updatePreview();
+}
+
+function flipImageDataHorizontal(imageData, isMultiColor) {
+    // Each row is 3 bytes
+    // In multicolor: 4 pixel pairs per byte (2 bits each)
+    // In hi-res: 8 pixels per byte (1 bit each)
+
+    for (let row = 0; row < 21; row++) {
+        const offset = row * 3;
+        const byte0 = imageData[offset];
+        const byte1 = imageData[offset + 1];
+        const byte2 = imageData[offset + 2];
+
+        if (isMultiColor) {
+            // Multicolor: reverse the 2-bit pairs within each byte, then swap bytes
+            // Byte has 4 pairs: [p0 p1 p2 p3] becomes [p3 p2 p1 p0]
+            const rev0 = reverseBitPairs(byte2);
+            const rev1 = reverseBitPairs(byte1);
+            const rev2 = reverseBitPairs(byte0);
+
+            imageData[offset] = rev0;
+            imageData[offset + 1] = rev1;
+            imageData[offset + 2] = rev2;
+        } else {
+            // Hi-res: reverse bits within each byte, then swap bytes
+            const rev0 = reverseBits(byte2);
+            const rev1 = reverseBits(byte1);
+            const rev2 = reverseBits(byte0);
+
+            imageData[offset] = rev0;
+            imageData[offset + 1] = rev1;
+            imageData[offset + 2] = rev2;
+        }
+    }
+}
+
+function flipImageDataVertical(imageData) {
+    // Swap rows (each row is 3 bytes)
+    for (let row = 0; row < 10; row++) {
+        const topOffset = row * 3;
+        const bottomOffset = (20 - row) * 3;
+
+        // Swap the 3 bytes
+        for (let i = 0; i < 3; i++) {
+            const temp = imageData[topOffset + i];
+            imageData[topOffset + i] = imageData[bottomOffset + i];
+            imageData[bottomOffset + i] = temp;
+        }
+    }
+}
+
+function reverseBitPairs(byte) {
+    // Reverse 2-bit pairs: [p0 p1 p2 p3] -> [p3 p2 p1 p0]
+    const p0 = (byte >> 6) & 0x03;
+    const p1 = (byte >> 4) & 0x03;
+    const p2 = (byte >> 2) & 0x03;
+    const p3 = byte & 0x03;
+    return (p3 << 6) | (p2 << 4) | (p1 << 2) | p0;
+}
+
+function reverseBits(byte) {
+    // Reverse all 8 bits
+    let result = 0;
+    for (let i = 0; i < 8; i++) {
+        result |= ((byte >> i) & 1) << (7 - i);
+    }
+    return result;
+}
+
+// ==================== SHIFT MODE ====================
+
+function enterShiftMode() {
+    shiftMode.active = true;
+
+    // Show shift message
+    showMessage('shift graphics using arrow keys');
+
+    // Blank out other buttons, keep only shift and ok
+    document.getElementById('btn1').innerHTML = '&nbsp;';
+    document.getElementById('btn2').textContent = 'ok';
+    document.getElementById('btn3').innerHTML = '&nbsp;';
+    document.getElementById('btn4').innerHTML = '&nbsp;';
+    // btn5 stays as 'shift'
+    document.getElementById('btn6').innerHTML = '&nbsp;';
+    _blankCmdExtraRow();
+
+    document.addEventListener('keydown', shiftKeyHandler);
+}
+
+function exitShiftMode() {
+    shiftMode.active = false;
+
+    // Clear message
+    clearMessage();
+
+    // Exit cmd mode as well
+    exitCmdMode();
+
+    document.removeEventListener('keydown', shiftKeyHandler);
+}
+
+function shiftKeyHandler(e) {
+    if (!shiftMode.active) return;
+
+    switch (e.key) {
+        case 'ArrowLeft':
+            shiftAllQuadsHorizontal(1);
+            e.preventDefault();
+            break;
+        case 'ArrowRight':
+            shiftAllQuadsHorizontal(-1);
+            e.preventDefault();
+            break;
+        case 'ArrowUp':
+            shiftAllQuadsVertical(-1);
+            e.preventDefault();
+            break;
+        case 'ArrowDown':
+            shiftAllQuadsVertical(1);
+            e.preventDefault();
+            break;
+        case 'Enter':
+        case 'Escape':
+            exitShiftMode();
+            e.preventDefault();
+            break;
+    }
+}
+
+function shiftAllQuadsHorizontal(direction) {
+    if (!currentSprite) return;
+
+    const isMultiColor = currentSprite.sprite[0].isMultiColor;
+
+    // Shift all quads horizontally (current frame only)
+    for (let q = 0; q < currentSprite.sprite.length; q++) {
+        const quad = currentSprite.sprite[q];
+        if (!quad.imageData) continue;
+
+        shiftImageDataHorizontal(quad.imageData[currentFrame], direction, isMultiColor);
+    }
+
+    // Reload pixel data and update display
+    loadQuadPixelData();
+    updateFatBits();
+    updatePreview();
+}
+
+function shiftAllQuadsVertical(direction) {
+    if (!currentSprite) return;
+
+    // Shift all quads vertically (current frame only)
+    for (let q = 0; q < currentSprite.sprite.length; q++) {
+        const quad = currentSprite.sprite[q];
+        if (!quad.imageData) continue;
+
+        shiftImageDataVertical(quad.imageData[currentFrame], direction);
+    }
+
+    // Reload pixel data and update display
+    loadQuadPixelData();
+    updateFatBits();
+    updatePreview();
+}
+
+function shiftImageDataHorizontal(imageData, direction, isMultiColor) {
+    // Each row is 3 bytes (24 bits)
+    // Multicolor: 12 fat pixels (2 bits each)
+    // Hi-res: 24 thin pixels (1 bit each)
+
+    for (let row = 0; row < 21; row++) {
+        const offset = row * 3;
+        const byte0 = imageData[offset];
+        const byte1 = imageData[offset + 1];
+        const byte2 = imageData[offset + 2];
+
+        if (isMultiColor) {
+            // Shift by one fat pixel (2 bits)
+            if (direction > 0) {
+                // Shift right: wrap leftmost pixel to right
+                const leftPixel = (byte0 >> 6) & 0x03;
+                imageData[offset] = ((byte0 << 2) | (byte1 >> 6)) & 0xFF;
+                imageData[offset + 1] = ((byte1 << 2) | (byte2 >> 6)) & 0xFF;
+                imageData[offset + 2] = ((byte2 << 2) | leftPixel) & 0xFF;
+            } else {
+                // Shift left: wrap rightmost pixel to left
+                const rightPixel = byte2 & 0x03;
+                imageData[offset + 2] = ((byte2 >> 2) | (byte1 << 6)) & 0xFF;
+                imageData[offset + 1] = ((byte1 >> 2) | (byte0 << 6)) & 0xFF;
+                imageData[offset] = ((byte0 >> 2) | (rightPixel << 6)) & 0xFF;
+            }
+        } else {
+            // Shift by one thin pixel (1 bit)
+            if (direction > 0) {
+                // Shift right: wrap leftmost bit to right
+                const leftBit = (byte0 >> 7) & 0x01;
+                imageData[offset] = ((byte0 << 1) | (byte1 >> 7)) & 0xFF;
+                imageData[offset + 1] = ((byte1 << 1) | (byte2 >> 7)) & 0xFF;
+                imageData[offset + 2] = ((byte2 << 1) | leftBit) & 0xFF;
+            } else {
+                // Shift left: wrap rightmost bit to left
+                const rightBit = byte2 & 0x01;
+                imageData[offset + 2] = ((byte2 >> 1) | (byte1 << 7)) & 0xFF;
+                imageData[offset + 1] = ((byte1 >> 1) | (byte0 << 7)) & 0xFF;
+                imageData[offset] = ((byte0 >> 1) | (rightBit << 7)) & 0xFF;
+            }
+        }
+    }
+}
+
+function shiftImageDataVertical(imageData, direction) {
+    // Each row is 3 bytes
+    if (direction > 0) {
+        // Shift down: save bottom row, shift all rows down, put saved at top
+        const savedRow = [imageData[60], imageData[61], imageData[62]];
+        for (let row = 20; row > 0; row--) {
+            const dstOffset = row * 3;
+            const srcOffset = (row - 1) * 3;
+            imageData[dstOffset] = imageData[srcOffset];
+            imageData[dstOffset + 1] = imageData[srcOffset + 1];
+            imageData[dstOffset + 2] = imageData[srcOffset + 2];
+        }
+        imageData[0] = savedRow[0];
+        imageData[1] = savedRow[1];
+        imageData[2] = savedRow[2];
+    } else {
+        // Shift up: save top row, shift all rows up, put saved at bottom
+        const savedRow = [imageData[0], imageData[1], imageData[2]];
+        for (let row = 0; row < 20; row++) {
+            const dstOffset = row * 3;
+            const srcOffset = (row + 1) * 3;
+            imageData[dstOffset] = imageData[srcOffset];
+            imageData[dstOffset + 1] = imageData[srcOffset + 1];
+            imageData[dstOffset + 2] = imageData[srcOffset + 2];
+        }
+        imageData[60] = savedRow[0];
+        imageData[61] = savedRow[1];
+        imageData[62] = savedRow[2];
+    }
+}
+
+// ==================== ANIMATION MODE ====================
+
+function enterAnimaMode() {
+    if (!currentSprite) return;
+
+    animaMode.active = true;
+
+    // fromFrame always resets to 1 — see animaMode docs. Anima end is read
+    // straight off the sprite (numFrames), no syncing needed.
+    animaMode.fromFrame = 1;
+
+    // Start at the from frame
+    animaMode.currentFrame = animaMode.fromFrame - 1; // Convert to 0-based
+
+    // Show anima controls in message area
+    updateAnimaMessage();
+
+    // Blank out other buttons, keep only anima and ok
+    document.getElementById('btn1').innerHTML = '&nbsp;';
+    document.getElementById('btn2').textContent = 'ok';
+    // btn3 stays as 'anima'
+    document.getElementById('btn4').innerHTML = '&nbsp;';
+    document.getElementById('btn5').innerHTML = '&nbsp;';
+    document.getElementById('btn6').innerHTML = '&nbsp;';
+    _blankCmdExtraRow();
+
+    // Add keyboard listener for enter key
+    document.addEventListener('keydown', animaEnterHandler);
+
+    // Start animation loop
+    animaMode.lastFrameTime = performance.now();
+    animaMode.animationId = requestAnimationFrame(animationLoop);
+}
+
+function exitAnimaMode() {
+    animaMode.active = false;
+
+    // Stop animation loop
+    if (animaMode.animationId) {
+        cancelAnimationFrame(animaMode.animationId);
+        animaMode.animationId = null;
+    }
+
+    // Close any open dropdown
+    closeAnimaDropdown();
+
+    // Clear message
+    clearMessage();
+
+    // Exit cmd mode as well
+    exitCmdMode();
+
+    // Remove keyboard listener
+    document.removeEventListener('keydown', animaEnterHandler);
+
+    // Stay on whatever frame anima last displayed — the user can resume
+    // editing at that frame and the inc/dec arrows operate from a sensible
+    // starting point. (Previously we reset to frame 0, which left the
+    // frame button label stale: button kept showing the last animated
+    // frame while currentFrame was actually 0, so inc/dec acted from 1.)
+    currentFrame = animaMode.currentFrame;
+    loadQuadPixelData();
+    updateFrameButton();
+    updateFatBits();
+    updatePreview();
+}
+
+function animaEnterHandler(e) {
+    if (!animaMode.active) return;
+
+    if (e.key === 'Enter') {
+        exitAnimaMode();
+        e.preventDefault();
+    } else if (e.key === 'Escape') {
+        closeAnimaDropdown();
+        e.preventDefault();
+    }
+}
+
+function updateAnimaMessage() {
+    const fromStr = animaMode.fromFrame.toString().padStart(2, '0');
+    const toStr = currentSprite.getNumFrames().toString().padStart(2, '0');
+    const speedStr = animaMode.speed.toString().padStart(2, '0');
+
+    const messageArea = document.getElementById('messageArea');
+    messageArea.innerHTML =
+        `animate-from <span class="anima-value anima-from">${fromStr}</span> to <span class="anima-value anima-to">${toStr}</span><br>` +
+        `speed = <span class="anima-value anima-speed">${speedStr}</span>`;
+
+    // Cache the spans and update text in-place on value changes so the focused
+    // / interacting element is preserved (full innerHTML rebuild would destroy it).
+    const fromSpan = messageArea.querySelector('.anima-from');
+    const toSpan = messageArea.querySelector('.anima-to');
+    const speedSpan = messageArea.querySelector('.anima-speed');
+
+    const refresh = () => {
+        fromSpan.textContent = animaMode.fromFrame.toString().padStart(2, '0');
+        toSpan.textContent = currentSprite.getNumFrames().toString().padStart(2, '0');
+        speedSpan.textContent = animaMode.speed.toString().padStart(2, '0');
+    };
+
+    // GM allows the full 1-31 range for both fields independently — including
+    // from > to. When that's set, the animation loop just sits on the end
+    // frame (see animationLoop). The "to" value writes through to the sprite's
+    // numFrames so it survives reload via the normal save path.
+    GMTools.draggableField.attach(fromSpan, {
+        type: 'numeric',
+        min: 1,
+        max: MAX_FRAMES,
+        getValue: () => animaMode.fromFrame,
+        setValue: (v) => {
+            animaMode.fromFrame = v;
+            animaMode.currentFrame = animaMode.fromFrame - 1;
+            refresh();
+        }
+    });
+
+    GMTools.draggableField.attach(toSpan, {
+        type: 'numeric',
+        min: 1,
+        max: MAX_FRAMES,
+        getValue: () => currentSprite.getNumFrames(),
+        setValue: (v) => {
+            currentSprite.setNumFrames(v);
+            animaMode.currentFrame = animaMode.fromFrame - 1;
+            refresh();
+        }
+    });
+
+    GMTools.draggableField.attach(speedSpan, {
+        type: 'numeric',
+        min: 1,
+        max: 31,
+        getValue: () => animaMode.speed,
+        setValue: (v) => {
+            animaMode.speed = v;
+            refresh();
+        }
+    });
+}
+
+function closeAnimaDropdown() {
+    document.getElementById('animaDropdown').classList.remove('open');
+}
+
+function animationLoop(timestamp) {
+    if (!animaMode.active) return;
+
+    // Calculate time between frames based on speed
+    // Speed 31 = fastest (every frame), speed 1 = slowest
+    // At 60fps, we want to match C64's ~30fps at speed 31
+    // Formula: delay = (32 - speed) * 33ms (roughly)
+    const frameDelay = (32 - animaMode.speed) * 33;
+
+    if (timestamp - animaMode.lastFrameTime >= frameDelay) {
+        animaMode.lastFrameTime = timestamp;
+
+        // GM behaviour: if from > to, there's no range to loop — just sit on
+        // the end frame (no animation). Otherwise advance and wrap normally.
+        const toFrame = currentSprite.getNumFrames();
+        if (animaMode.fromFrame > toFrame) {
+            animaMode.currentFrame = toFrame - 1;
+        } else {
+            animaMode.currentFrame++;
+            if (animaMode.currentFrame > toFrame - 1) {
+                animaMode.currentFrame = animaMode.fromFrame - 1;
+            }
+        }
+
+        // Update preview with animated frame
+        updateAnimatedPreview();
+    }
+
+    animaMode.animationId = requestAnimationFrame(animationLoop);
+}
+
+function updateAnimatedPreview() {
+    if (!previewScreen || !currentSprite) return;
+
+    // Clear to transparent
+    previewScreen.clearTransparent();
+
+    // Update background color block
+    updatePreviewBgColor();
+
+    // Sync current edits to sprite before rendering
+    syncToSprite();
+
+    // xPosition is always in fat pixel space (normalized by gmSprite at load time)
+    const gmX = (currentSprite.sprite[0].xPosition || 0) + 12;
+    const gmY = (currentSprite.sprite[0].yPosition || 0) + 50;
+
+    // Render at the animated frame
+    currentSprite.blitToBuffer(
+        previewScreen.pixels,
+        c64Screen.WIDTH,
+        c64Screen.HEIGHT,
+        gmX,
+        gmY,
+        animaMode.currentFrame
+    );
+
+    previewScreen.present();
+}
+
+// Close dropdown when clicking elsewhere
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('.anima-dropdown') && !e.target.classList.contains('anima-value')) {
+        closeAnimaDropdown();
+    }
+});
+
+// ==================== CLEAR COMMAND ====================
+
+// Clear mode state
+let clearMode = {
+    active: false
+};
+
+function showClearConfirmation() {
+    clearMode.active = true;
+
+    // Show confirmation in message area
+    const html = `clear the sprite area?<br>` +
+                 `<span class="anima-value" onclick="confirmClear(true)">yes</span> ` +
+                 `<span class="anima-value" onclick="confirmClear(false)">no</span>`;
+    document.getElementById('messageArea').innerHTML = html;
+
+    // Blank out other buttons, keep only clear and ok
+    document.getElementById('btn1').innerHTML = '&nbsp;';
+    document.getElementById('btn2').textContent = 'ok';
+    document.getElementById('btn3').innerHTML = '&nbsp;';
+    // btn4 stays as 'clear'
+    document.getElementById('btn5').innerHTML = '&nbsp;';
+    document.getElementById('btn6').innerHTML = '&nbsp;';
+    _blankCmdExtraRow();
+
+    // Add keyboard listener
+    document.addEventListener('keydown', clearKeyHandler);
+}
+
+function confirmClear(doIt) {
+    clearMode.active = false;
+
+    // Remove keyboard listener
+    document.removeEventListener('keydown', clearKeyHandler);
+
+    if (doIt) {
+        // Preserve the palette across the reset. newSprite() builds a fresh
+        // sprite with the default palette; we copy the user's current colours
+        // onto it afterwards so a clear doesn't yank the palette back to green.
+        const savedPalette = currentSprite ? currentSprite.getPalette() : [...DEFAULT_SPRITE_COLORS];
+
+        // Reset sprite-shape defaults: multicolor on, no V/H magnification.
+        // newSprite() reads setupState, so set this before calling it.
+        setupState.isMultiColor = true;
+        setupState.vMag = false;
+        setupState.hMag = false;
+
+        // Create a new blank sprite
+        newSprite();
+
+        // Restore palette onto the fresh sprite
+        if (currentSprite) {
+            currentSprite.setPalette(savedPalette);
+        }
+        updatePaletteDisplay();
+        updatePreview();
+        updateFatBits();
+    }
+
+    // Clear message and exit cmd mode
+    clearMessage();
+    exitCmdMode();
+}
+
+function clearKeyHandler(e) {
+    if (!clearMode.active) return;
+
+    if (e.key === 'Enter' || e.key === 'Escape') {
+        confirmClear(false);
+        e.preventDefault();
+    } else if (e.key === 'y' || e.key === 'Y') {
+        confirmClear(true);
+        e.preventDefault();
+    } else if (e.key === 'n' || e.key === 'N') {
+        confirmClear(false);
+        e.preventDefault();
+    }
+}
+
+// ==================== COPY COMMAND ====================
+
+function enterCopyMode() {
+    if (!currentSprite) return;
+
+    copyMode.active = true;
+    copyMode.fromFrame = currentFrame + 1;  // Default to current frame (1-based)
+    copyMode.toFrame = currentFrame + 1;
+    copyMode.selectedField = null;
+
+    // Show copy controls in message area
+    updateCopyMessage();
+
+    // Blank out other buttons, keep only copy and ok
+    document.getElementById('btn1').innerHTML = '&nbsp;';
+    document.getElementById('btn2').textContent = 'ok';
+    document.getElementById('btn3').innerHTML = '&nbsp;';
+    document.getElementById('btn4').innerHTML = '&nbsp;';
+    document.getElementById('btn5').innerHTML = '&nbsp;';
+    // btn6 stays as 'copy'
+    _blankCmdExtraRow();
+
+    // Add keyboard listener
+    document.addEventListener('keydown', copyKeyHandler);
+}
+
+function exitCopyMode() {
+    copyMode.active = false;
+    copyMode.selectedField = null;
+
+    // Close any open dropdown
+    closeAnimaDropdown();
+
+    // Restore the frame we were editing before copy mode
+    loadQuadPixelData();
+    updateFatBits();
+    updatePreview();
+
+    // Clear message
+    clearMessage();
+
+    // Exit cmd mode as well
+    exitCmdMode();
+
+    // Remove keyboard listener
+    document.removeEventListener('keydown', copyKeyHandler);
+}
+
+function updateCopyMessage() {
+    const fromStr = copyMode.fromFrame.toString().padStart(2, '0');
+    const toStr = copyMode.toFrame.toString().padStart(2, '0');
+
+    const html = `copy from frame <span class="anima-value" onclick="selectCopyFrame('from', event)">${fromStr}</span> to <span class="anima-value" onclick="selectCopyFrame('to', event)">${toStr}</span><br>` +
+                 `<span class="anima-value" onclick="confirmCopy(true)">yes</span> ` +
+                 `<span class="anima-value" onclick="confirmCopy(false)">no</span>`;
+
+    document.getElementById('messageArea').innerHTML = html;
+}
+
+function selectCopyFrame(field, event) {
+    event.stopPropagation();
+
+    copyMode.selectedField = field;
+
+    // Show the selected frame in the editor
+    const frameToShow = field === 'from' ? copyMode.fromFrame : copyMode.toFrame;
+    currentFrame = frameToShow - 1;  // Convert to 0-based
+    loadQuadPixelData();
+    updateFatBits();
+    updatePreview();
+
+    // Show dropdown for frame selection
+    showCopyDropdown(field, event);
+}
+
+function showCopyDropdown(field, event) {
+    const dropdown = document.getElementById('animaDropdown');
+    dropdown.innerHTML = '';
+
+    // GM's copy command lets you pick any of the 31 frame slots as source or
+    // destination, regardless of whether the slot has data — blank slots
+    // copy as transparent.
+    const currentValue = field === 'from' ? copyMode.fromFrame : copyMode.toFrame;
+
+    for (let i = 1; i <= MAX_FRAMES; i++) {
+        const optDiv = document.createElement('div');
+        optDiv.className = 'anima-dropdown-option' + (i === currentValue ? ' selected' : '');
+        optDiv.textContent = i.toString().padStart(2, '0');
+        optDiv.onclick = (e) => {
+            e.stopPropagation();
+            selectCopyOption(field, i);
+        };
+        dropdown.appendChild(optDiv);
+    }
+
+    // Position dropdown near the clicked element
+    const rect = event.target.getBoundingClientRect();
+    const screenRect = document.getElementById('screen').getBoundingClientRect();
+    dropdown.style.left = (rect.left - screenRect.left) + 'px';
+    dropdown.style.top = (rect.bottom - screenRect.top + 2) + 'px';
+
+    dropdown.classList.add('open');
+
+    // Scroll to selected option
+    const selected = dropdown.querySelector('.selected');
+    if (selected) {
+        selected.scrollIntoView({ block: 'center' });
+    }
+}
+
+function selectCopyOption(field, value) {
+    if (field === 'from') {
+        copyMode.fromFrame = value;
+    } else {
+        copyMode.toFrame = value;
+    }
+
+    // Show the newly selected frame
+    currentFrame = value - 1;
+    loadQuadPixelData();
+    updateFatBits();
+    updatePreview();
+
+    closeAnimaDropdown();
+    updateCopyMessage();
+}
+
+function confirmCopy(doIt) {
+    if (doIt && copyMode.fromFrame !== copyMode.toFrame) {
+        // Copy frame data from source to destination for all quads. Either
+        // index may point beyond imageData's current length (user can pick
+        // any of 31 slots) — treat a missing source as blank and lazily
+        // extend imageData so the destination slot exists.
+        const srcFrame = copyMode.fromFrame - 1;  // 0-based
+        const dstFrame = copyMode.toFrame - 1;    // 0-based
+
+        for (let q = 0; q < currentSprite.sprite.length; q++) {
+            const quad = currentSprite.sprite[q];
+            if (!quad.imageData) continue;
+
+            const srcData = quad.imageData[srcFrame];
+            while (quad.imageData.length <= dstFrame) {
+                quad.imageData.push(new Uint8Array(63));
+            }
+            const dstData = quad.imageData[dstFrame];
+            if (srcData) {
+                for (let i = 0; i < srcData.length; i++) dstData[i] = srcData[i];
+            } else {
+                // Source slot doesn't exist yet → blank copy (already zeroed)
+                for (let i = 0; i < dstData.length; i++) dstData[i] = 0;
+            }
+            quad.totalFrames = quad.imageData.length;
+        }
+
+        // Set current frame to destination
+        currentFrame = dstFrame;
+    }
+
+    exitCopyMode();
+}
+
+function copyKeyHandler(e) {
+    if (!copyMode.active) return;
+
+    if (e.key === 'Enter') {
+        confirmCopy(true);
+        e.preventDefault();
+    } else if (e.key === 'Escape') {
+        confirmCopy(false);
+        e.preventDefault();
+    } else if (e.key === 'y' || e.key === 'Y') {
+        confirmCopy(true);
+        e.preventDefault();
+    } else if (e.key === 'n' || e.key === 'N') {
+        confirmCopy(false);
+        e.preventDefault();
+    }
+}
+
+// ==================== COLOR SWAP ====================
+// Swap the contents of two colour slots: both the slot's palette colour
+// AND every pixel using that slot trade places. The sprite looks visually
+// identical after the swap; only the slot LABELS have moved. Useful when
+// the editor's "unique per slot" constraint means the colour you want to
+// vary needs to live in slot 1 — this lets the user reorganise without
+// repainting.
+//
+// Internally pixelData is stored as raw C64 hardware values (0-3); the
+// SLOT_PIXEL_MAP translates UI slot → hardware. Walk all quads/frames,
+// rewriting bytes 2-bit pairs through a permutation that swaps the two
+// hardware values, then swap the corresponding palette entries.
+
+function enterSwapMode(fromSlot) {
+    if (!currentSprite) return;
+    // Refuse if another mutually-exclusive mode is active.
+    if (animaMode.active || flipMode.active || clearMode.active ||
+        shiftMode.active || copyMode.active || loadMode.active ||
+        cmdMode || fileMenuMode.active || swapMode.active) return;
+
+    swapMode.active = true;
+    swapMode.fromSlot = fromSlot;
+    // Default the target to a different slot so the dropdown has somewhere
+    // useful to start. Picking the same slot is allowed but is a no-op.
+    swapMode.toSlot = (fromSlot === 1) ? 2 : 1;
+    updateSwapMessage();
+    document.addEventListener('keydown', swapKeyHandler);
+}
+
+function exitSwapMode() {
+    swapMode.active = false;
+    closeAnimaDropdown();
+    clearMessage();
+    document.removeEventListener('keydown', swapKeyHandler);
+}
+
+// "b" for the background slot matches the palette row labels.
+function _swapSlotLabel(slot) {
+    return slot === 0 ? 'b' : String(slot);
+}
+
+function updateSwapMessage() {
+    const from = _swapSlotLabel(swapMode.fromSlot);
+    const to   = _swapSlotLabel(swapMode.toSlot);
+    document.getElementById('messageArea').innerHTML =
+        `swap color ` +
+        `<span class="anima-value" onclick="showSwapSourceDropdown(event)">${from}</span>` +
+        ` pixels with color ` +
+        `<span class="anima-value" onclick="showSwapTargetDropdown(event)">${to}</span><br>` +
+        `<span class="anima-value" onclick="confirmSwap(true)">yes</span> ` +
+        `<span class="anima-value" onclick="confirmSwap(false)">no</span>`;
+}
+
+// Shared dropdown builder for the two swap-slot pickers. The "from" and
+// "to" dropdowns are structurally identical (same options, same position
+// logic, same updateSwapMessage refresh) — they only differ in which
+// swapMode field they read/write.
+function _showSwapSlotDropdown(event, currentSlot, onPick) {
+    event.stopPropagation();
+    const dropdown = document.getElementById('animaDropdown');
+    dropdown.innerHTML = '';
+
+    // All four slots are valid (including the currently-selected one,
+    // which is a no-op — kept selectable so the dropdown isn't surprising).
+    [1, 2, 3, 0].forEach(slot => {
+        const opt = document.createElement('div');
+        opt.className = 'anima-dropdown-option' + (slot === currentSlot ? ' selected' : '');
+        opt.textContent = _swapSlotLabel(slot);
+        opt.onclick = (e) => {
+            e.stopPropagation();
+            onPick(slot);
+            updateSwapMessage();
+            closeAnimaDropdown();
+        };
+        dropdown.appendChild(opt);
+    });
+
+    const rect = event.target.getBoundingClientRect();
+    const screenRect = document.getElementById('screen').getBoundingClientRect();
+    dropdown.style.left = (rect.left - screenRect.left) + 'px';
+    dropdown.style.top = (rect.bottom - screenRect.top + 2) + 'px';
+    dropdown.classList.add('open');
+
+    const selected = dropdown.querySelector('.selected');
+    if (selected) selected.scrollIntoView({ block: 'center' });
+}
+
+function showSwapSourceDropdown(event) {
+    _showSwapSlotDropdown(event, swapMode.fromSlot, (slot) => { swapMode.fromSlot = slot; });
+}
+
+function showSwapTargetDropdown(event) {
+    _showSwapSlotDropdown(event, swapMode.toSlot, (slot) => { swapMode.toSlot = slot; });
+}
+
+function confirmSwap(doIt) {
+    if (doIt && swapMode.fromSlot !== swapMode.toSlot) {
+        // Translate UI slots → raw C64 hardware pixel values.
+        const a = SLOT_PIXEL_MAP[swapMode.fromSlot];
+        const b = SLOT_PIXEL_MAP[swapMode.toSlot];
+
+        // Build a 4-entry lookup: idx = original hw value, val = new hw value.
+        const remap = [0, 1, 2, 3];
+        remap[a] = b;
+        remap[b] = a;
+
+        // Rewrite every byte of every frame of every quad. Each byte holds
+        // four 2-bit pixel values; remap each one through the table.
+        for (const quad of currentSprite.sprite) {
+            if (!quad.imageData) continue;
+            for (const frame of quad.imageData) {
+                if (!frame) continue;
+                for (let i = 0; i < frame.length; i++) {
+                    const byte = frame[i];
+                    let out = 0;
+                    for (let bitPair = 0; bitPair < 4; bitPair++) {
+                        const shift = 6 - bitPair * 2;
+                        const v = (byte >> shift) & 0b11;
+                        out |= (remap[v] << shift);
+                    }
+                    frame[i] = out;
+                }
+            }
+        }
+
+        // Swap the two palette slots on the sprite itself.
+        const palette = currentSprite.getPalette();
+        [palette[swapMode.fromSlot], palette[swapMode.toSlot]] =
+            [palette[swapMode.toSlot], palette[swapMode.fromSlot]];
+        currentSprite.setPalette(palette);
+
+        // Reload the visible quad/frame from the rewritten bytes and refresh
+        // the palette display so the swatch colours match.
+        loadQuadPixelData();
+        updatePaletteDisplay();
+        updateFatBits();
+        updatePreview();
+    }
+    exitSwapMode();
+}
+
+function swapKeyHandler(e) {
+    if (!swapMode.active) return;
+    if (e.key === 'Enter' || e.key === 'y' || e.key === 'Y') {
+        confirmSwap(true);
+        e.preventDefault();
+    } else if (e.key === 'Escape' || e.key === 'n' || e.key === 'N') {
+        confirmSwap(false);
+        e.preventDefault();
+    }
+}
+
+function initApp() {
+    // Apply the canonical base-mode label so LABEL_MENU is the only place
+    // the string lives (the HTML literal is a placeholder for static views).
+    document.getElementById('btn2').textContent = LABEL_MENU;
+
+    // Build the fat bits table (12x21 grid for multicolor)
+    const fatbits = document.getElementById("fatbits");
+    for (let y = 0; y < 21; y++) {
+        const row = document.createElement("tr");
+        for (let x = 0; x < 12; x++) {
+            const cell = document.createElement("td");
+            cell.setAttribute("data-x", x);
+            cell.setAttribute("data-y", y);
+            cell.style.backgroundColor = "transparent";
+            cell.addEventListener("mousedown", cellMouseDown);
+            cell.addEventListener("mouseover", cellHover);
+            row.appendChild(cell);
+        }
+        fatbits.appendChild(row);
+    }
+
+    // Initialize pixel data
+    initPixelData();
+
+    // Select color 1 by default
+    selectColor(1);
+    updatePaletteDisplay();
+
+    // Initialize c64Screen for preview
+    initPreviewScreen();
+    window.addEventListener('resize', initPreviewScreen);
+
+    // Initialize with new sprite, then attempt to restore last session
+    newSprite();
+    restoreSpriteSession();
+}
+
+// ==================== SESSION PERSISTENCE ====================
+// Persists in-progress sprite work to localStorage so navigating away and back
+// to the editor doesn't drop unsaved changes. See GMTools.session.
+
+const saveSpriteSession = GMTools.session.debouncedSaver('sprite-maker', () => {
+    if (!currentSprite) return null;
+    return {
+        bytes: GMTools.session.bytesToBase64(serializeSprite()),
+        fileName: currentSpriteFileName,
+        frame: currentFrame,
+        quad: currentQuad,
+        // Palette is already inside the serialised bytes; we still store it
+        // separately for legacy session-restore inspection but reading back
+        // from the sprite is authoritative.
+        colors: currentSprite.getPalette(),
+        setupState: { ...setupState }
+    };
+});
+
+function restoreSpriteSession() {
+    const s = GMTools.session.load('sprite-maker');
+    if (!s || !s.bytes) return;
+    try {
+        const bytes = GMTools.session.base64ToBytes(s.bytes);
+        currentSprite = new gmSprite(bytes);
+        currentSpriteFileName = s.fileName || null;
+        currentFrame = s.frame || 0;
+        currentQuad = s.quad || 0;
+        // Palette was restored as part of the deserialised sprite bytes; the
+        // separate s.colors field is legacy and intentionally ignored.
+        if (s.setupState) {
+            setupState.isMultiColor = s.setupState.isMultiColor;
+            setupState.vMag = s.setupState.vMag;
+            setupState.hMag = s.setupState.hMag;
+            setupState.numSprites = s.setupState.numSprites;
+        }
+        rebuildFatBitsGrid();
+        loadQuadPixelData();
+        updateFrameButton();
+        updateQuadButton();
+        updatePaletteDisplay();
+        updateFatBits();
+        updatePreview();
+    } catch (e) {
+        console.warn('sprite-maker: failed to restore session, starting fresh:', e.message);
+        // newSprite() already ran in initApp, so we're already in a clean state
+    }
+}
+
+function initPreviewScreen() {
+    const canvas = document.getElementById("preview");
+
+    // Set canvas to full c64Screen dimensions (320x200)
+    // CSS handles scaling (1.5x, 2x)
+    canvas.width = c64Screen.WIDTH;
+    canvas.height = c64Screen.HEIGHT;
+
+    // Create c64Screen instance
+    previewScreen = new c64Screen(canvas);
+
+    // Initialize background block color
+    updatePreviewBgColor();
+
+    updatePreview();
+}
+
+function updatePreviewBgColor() {
+    const bgBlock = document.getElementById("previewBg");
+    if (bgBlock) {
+        // Called once during initPreviewScreen before newSprite() runs, so
+        // fall back to defaults when there's no sprite yet.
+        const bg = currentSprite ? currentSprite.getColor(0) : DEFAULT_SPRITE_COLORS[0];
+        bgBlock.style.background = paletteToCSS(bg);
+    }
+}
+
+function initPixelData() {
+    pixelData = [];
+    const width = setupState.isMultiColor ? 12 : 24;
+    for (let y = 0; y < 21; y++) {
+        pixelData[y] = [];
+        for (let x = 0; x < width; x++) {
+            pixelData[y][x] = 0; // All transparent initially
+        }
+    }
+}
+
+function rebuildFatBitsGrid() {
+    const fatbits = document.getElementById("fatbits");
+    fatbits.innerHTML = '';
+
+    const width = setupState.isMultiColor ? 12 : 24;
+    const cellWidth = setupState.isMultiColor ? 30 : 15; // Multicolor 3:2, hi-res 3:4 (height=20)
+
+    for (let y = 0; y < 21; y++) {
+        const row = document.createElement("tr");
+        for (let x = 0; x < width; x++) {
+            const cell = document.createElement("td");
+            cell.setAttribute("data-x", x);
+            cell.setAttribute("data-y", y);
+            cell.style.backgroundColor = "transparent";
+            cell.style.width = cellWidth + "px";
+            cell.addEventListener("mousedown", cellMouseDown);
+            cell.addEventListener("mouseover", cellHover);
+            row.appendChild(cell);
+        }
+        fatbits.appendChild(row);
+    }
+
+    // Re-initialize pixel data for new width (will be populated by loadQuadPixelData if sprite exists)
+    initPixelData();
+}
+
+// Convert current pixel data to raw bytes (for preserving across mode switches when no sprite)
+function pixelDataToRawBytes() {
+    const rawBytes = new Uint8Array(64);
+
+    if (setupState.isMultiColor) {
+        // Multicolor: 4 pixels per byte (2 bits each)
+        for (let row = 0; row < 21; row++) {
+            for (let col = 0; col < 3; col++) {
+                let byte = 0;
+                for (let bitPair = 0; bitPair < 4; bitPair++) {
+                    const x = col * 4 + bitPair;
+                    const colorIndex = (pixelData[row] && pixelData[row][x]) ? (pixelData[row][x] & 0b11) : 0;
+                    byte |= (colorIndex << (6 - bitPair * 2));
+                }
+                rawBytes[row * 3 + col] = byte;
+            }
+        }
+    } else {
+        // Hi-res: 8 pixels per byte (1 bit each)
+        for (let row = 0; row < 21; row++) {
+            for (let col = 0; col < 3; col++) {
+                let byte = 0;
+                for (let bit = 0; bit < 8; bit++) {
+                    const x = col * 8 + bit;
+                    const isSet = (pixelData[row] && pixelData[row][x]) ? 1 : 0;
+                    byte |= (isSet << (7 - bit));
+                }
+                rawBytes[row * 3 + col] = byte;
+            }
+        }
+    }
+
+    return rawBytes;
+}
+
+// Convert raw bytes to pixel data in current mode
+function rawBytesToPixelData(rawBytes) {
+    initPixelData();
+
+    if (setupState.isMultiColor) {
+        // Multicolor: Each row is 3 bytes, 4 pixels per byte (2 bits each)
+        for (let row = 0; row < 21; row++) {
+            for (let col = 0; col < 3; col++) {
+                const byte = rawBytes[row * 3 + col];
+                for (let bitPair = 0; bitPair < 4; bitPair++) {
+                    const colorIndex = (byte >> (6 - bitPair * 2)) & 0b11;
+                    const x = col * 4 + bitPair;
+                    pixelData[row][x] = colorIndex;
+                }
+            }
+        }
+    } else {
+        // Hi-res: Each row is 3 bytes, 8 pixels per byte (1 bit each)
+        for (let row = 0; row < 21; row++) {
+            for (let col = 0; col < 3; col++) {
+                const byte = rawBytes[row * 3 + col];
+                for (let bit = 0; bit < 8; bit++) {
+                    const isSet = (byte >> (7 - bit)) & 0b1;
+                    const x = col * 8 + bit;
+                    pixelData[row][x] = isSet ? 1 : 0;
+                }
+            }
+        }
+    }
+}
+
+// Create a new blank sprite
+function newSprite() {
+    currentFrame = 0;
+    currentQuad = 0;
+    currentSpriteFileName = null;
+
+    // Create actual sprite object with default palette baked in.
+    currentSprite = gmSprite.createBlank({
+        name: 'NEW',
+        isMultiColor: setupState.isMultiColor,
+        xDouble: setupState.hMag,
+        yDouble: setupState.vMag,
+        numFrames: 1,
+        xPosition: 100,
+        yPosition: 100,
+        bgColor:  DEFAULT_SPRITE_COLORS[0],
+        gmColor1: DEFAULT_SPRITE_COLORS[1],
+        gmColor2: DEFAULT_SPRITE_COLORS[2],
+        gmColor3: DEFAULT_SPRITE_COLORS[3]
+    });
+
+    // Rebuild the grid in case the previous sprite had a different color mode —
+    // multicolor uses 12 cells per row, hi-res uses 24. Without this, stale
+    // DOM cells from the previous mode would survive a clear/reset and show
+    // ghost pixels (since updateFatBits only iterates the active mode's width).
+    rebuildFatBitsGrid();
+
+    initPixelData();
+    updateFrameButton();
+    updateQuadButton();
+    updatePaletteDisplay();
+    updatePaletteForColorMode();
+    updateFatBits();
+    updatePreview();
+}
+
+// Mouse state for drag drawing
+let drawMode = null; // 'draw' or 'erase' - set on mousedown based on initial cell
+
+document.onmouseup = function(event) {
+    drawMode = null;
+};
+
+function cellMouseDown(event) {
+    if (animaMode.active) return; // No drawing during animation
+    if (loadMode.active) return;  // No drawing during load
+    if (saveMode.active) return;  // No drawing during save
+    // Any click during flip/shift is "I'm done" — exit and don't draw.
+    if (_exitTransientCmdSubmode()) { event.preventDefault(); return; }
+    event.preventDefault(); // Prevent text selection while dragging
+    const x = parseInt(event.target.getAttribute("data-x"));
+    const y = parseInt(event.target.getAttribute("data-y"));
+
+    // pixelData stores raw C64 hardware values (00/01/10/11); map from the
+    // GM slot the user picked to the corresponding hardware value.
+    const drawValue = setupState.isMultiColor ? SLOT_PIXEL_MAP[selectedColorSlot] : 1;
+
+    // Determine draw mode based on initial click
+    // In hi-res, check if pixel is set (non-zero); in multicolor check exact color match
+    const isCurrentColor = setupState.isMultiColor
+        ? (pixelData[y][x] === drawValue)
+        : (pixelData[y][x] !== 0 && selectedColorSlot !== 0);
+
+    if (isCurrentColor) {
+        // Clicking on same color = erase mode
+        drawMode = 'erase';
+        pixelData[y][x] = 0;
+    } else {
+        // Clicking on different color = draw mode
+        drawMode = 'draw';
+        pixelData[y][x] = drawValue;
+    }
+
+    updateFatBits();
+    updatePreview();
+    syncToSprite();
+}
+
+function cellHover(event) {
+    if (drawMode) {
+        const x = parseInt(event.target.getAttribute("data-x"));
+        const y = parseInt(event.target.getAttribute("data-y"));
+
+        if (drawMode === 'erase') {
+            pixelData[y][x] = 0;
+        } else {
+            // Same slot→hardware mapping as cellMouseDown above.
+            const drawValue = setupState.isMultiColor ? SLOT_PIXEL_MAP[selectedColorSlot] : 1;
+            pixelData[y][x] = drawValue;
+        }
+
+        updateFatBits();
+        updatePreview();
+        syncToSprite();
+    }
+}
+
+// Select which color slot to draw with
+function selectColor(slot) {
+    // Any click during flip/shift is "I'm done" — exit and don't change colour.
+    if (_exitTransientCmdSubmode()) return;
+    // In single color mode:
+    // - Row 1 displays color 2 (so clicking row 1 selects color 2)
+    // - Rows 2 and 3 are disabled
+    if (!setupState.isMultiColor) {
+        if (slot === 1) {
+            slot = 2; // Row 1 controls color 2 in single-color mode
+        } else if (slot === 2 || slot === 3) {
+            return; // Rows 2 and 3 are disabled
+        }
+    }
+
+    selectedColorSlot = slot;
+
+    // Update selection highlight
+    // In single-color mode, highlight row 1 when color 2 is selected
+    for (let i = 0; i <= 3; i++) {
+        const row = document.getElementById("color" + i);
+        const shouldHighlight = setupState.isMultiColor
+            ? (i === slot)
+            : (i === 0 && slot === 0) || (i === 1 && slot === 2);
+        if (shouldHighlight) {
+            row.classList.add("colorSelected");
+        } else {
+            row.classList.remove("colorSelected");
+        }
+    }
+}
+
+// Click on color swatch to change it
+// Name cell opens the colour picker. We stopPropagation so the row's
+// selectColor onclick doesn't also fire — picking a colour shouldn't
+// double as selecting that slot for drawing.
+// (Swatch click intentionally has no handler: it bubbles up to the row's
+// onclick=selectColor, so clicking the swatch sets the drawing colour.)
+document.getElementById('color0Name').addEventListener('click', (e) => { e.stopPropagation(); showColorPicker(0, e); });
+document.getElementById('color1Name').addEventListener('click', (e) => { e.stopPropagation(); showColorPicker(1, e); });
+document.getElementById('color2Name').addEventListener('click', (e) => { e.stopPropagation(); showColorPicker(2, e); });
+document.getElementById('color3Name').addEventListener('click', (e) => { e.stopPropagation(); showColorPicker(3, e); });
+
+function showColorPicker(slot, event) {
+    // Any click during flip/shift is "I'm done" — exit and don't open picker.
+    if (_exitTransientCmdSubmode()) return;
+    // In hi-res mode only slots 0 (bg) and 1 (foreground) are rendered;
+    // slots 2 and 3 aren't used so their swatches are inert. Hi-res
+    // renders from _gmColor1 (slot 1), so the slot the user clicks is the
+    // slot we write — no remap needed.
+    if (!setupState.isMultiColor) {
+        if (slot === 2 || slot === 3) return;
+    }
+
+    GMTools.colorPicker.show({
+        x: event.clientX,
+        y: event.clientY,
+        onSelect: (c64ColorIndex) => {
+            if (currentSprite) currentSprite.setColor(slot, c64ColorIndex);
+            updatePaletteDisplay();
+            updateFatBits();
+            updatePreview();
+        }
+    });
+}
+
+function updatePaletteDisplay() {
+    // Update color names and swatches
+    const palette = currentSprite ? currentSprite.getPalette() : DEFAULT_SPRITE_COLORS;
+    for (let slot = 0; slot < 4; slot++) {
+        const colorIndex = palette[slot];
+        document.getElementById('color' + slot + 'Name').textContent = c64ColorNames[colorIndex];
+        document.getElementById('color' + slot + 'Swatch').style.color = paletteToCSS(colorIndex);
+    }
+}
+
+function updatePaletteForColorMode() {
+    const color1Row = document.getElementById('color1');
+    const color2Row = document.getElementById('color2');
+    const color3Row = document.getElementById('color3');
+    const color1Name = document.getElementById('color1Name');
+    const color2Name = document.getElementById('color2Name');
+    const color3Name = document.getElementById('color3Name');
+    const color1Swatch = document.getElementById('color1Swatch');
+    const color2Swatch = document.getElementById('color2Swatch');
+    const color3Swatch = document.getElementById('color3Swatch');
+
+    const palette = currentSprite ? currentSprite.getPalette() : DEFAULT_SPRITE_COLORS;
+    if (setupState.isMultiColor) {
+        // Multicolor - show all colors in their normal slots
+        color1Row.style.cursor = 'pointer';
+        color2Row.style.cursor = 'pointer';
+        color3Row.style.cursor = 'pointer';
+        color1Name.textContent = c64ColorNames[palette[1]];
+        color2Name.textContent = c64ColorNames[palette[2]];
+        color3Name.textContent = c64ColorNames[palette[3]];
+        color1Swatch.style.visibility = 'visible';
+        color2Swatch.style.visibility = 'visible';
+        color3Swatch.style.visibility = 'visible';
+        color1Swatch.style.color = paletteToCSS(palette[1]);
+        color2Swatch.style.color = paletteToCSS(palette[2]);
+        color3Swatch.style.color = paletteToCSS(palette[3]);
+    } else {
+        // Hi-res mode: only background and foreground colors are used.
+        // Slot 1 holds the foreground color (gmSprite normalizes this).
+        // Display it in the "1" row, hide rows 2 and 3.
+        color1Row.style.cursor = 'pointer';
+        color2Row.style.cursor = 'default';
+        color3Row.style.cursor = 'default';
+        color1Name.textContent = c64ColorNames[palette[1]];
+        color1Swatch.style.visibility = 'visible';
+        color1Swatch.style.color = paletteToCSS(palette[1]);
+        // Rows 2 and 3 unused in hi-res
+        color2Name.textContent = '';
+        color3Name.textContent = '';
+        color2Swatch.style.visibility = 'hidden';
+        color3Swatch.style.visibility = 'hidden';
+    }
+}
+
+function updateFatBits() {
+    const fatbits = document.getElementById("fatbits");
+    const rows = fatbits.getElementsByTagName("tr");
+    const width = setupState.isMultiColor ? 12 : 24;
+    const palette = currentSprite ? currentSprite.getPalette() : DEFAULT_SPRITE_COLORS;
+
+    // SLOT_PIXEL_MAP is its own inverse, so we use it to go pixel→slot here too.
+    for (let y = 0; y < 21; y++) {
+        const cells = rows[y].getElementsByTagName("td");
+        for (let x = 0; x < width; x++) {
+            const pixelValue = pixelData[y][x];
+            if (pixelValue === 0) {
+                cells[x].style.backgroundColor = paletteToCSS(palette[0]); // Background color
+            } else if (setupState.isMultiColor) {
+                const colorIndex = SLOT_PIXEL_MAP[pixelValue];
+                cells[x].style.backgroundColor = paletteToCSS(palette[colorIndex]);
+            } else {
+                // Hi-res mode: foreground uses GM "Color 1"
+                cells[x].style.backgroundColor = paletteToCSS(palette[1]);
+            }
+        }
+    }
+
+    // Update fatbits background to match sprite bg color
+    fatbits.style.backgroundColor = paletteToCSS(palette[0]);
+}
+
+function updatePreview() {
+    if (!previewScreen) return;
+
+    // Persist current state to localStorage (debounced — fires ~500ms after the
+    // last edit, so we don't pummel localStorage during rapid editing).
+    saveSpriteSession();
+
+    // Clear to transparent - sprites render over the background block
+    previewScreen.clearTransparent();
+
+    // Update the background color block
+    updatePreviewBgColor();
+
+    if (!currentSprite) return;
+
+    // Sync current edits to sprite before rendering
+    syncToSprite();
+
+    // xPosition is always in fat pixel space (normalized by gmSprite at load time)
+    const gmX = (currentSprite.sprite[0].xPosition || 0) + 12;
+    const gmY = (currentSprite.sprite[0].yPosition || 0) + 50;
+
+    // Use gmSprite's blitToBuffer for authentic rendering
+    currentSprite.blitToBuffer(
+        previewScreen.pixels,
+        c64Screen.WIDTH,
+        c64Screen.HEIGHT,
+        gmX,
+        gmY,
+        currentFrame
+    );
+
+    // Display the rendered frame
+    previewScreen.present();
+}
+
+// Frame selection
+function showFrameSelector(event) {
+    event.stopPropagation();
+
+    if (!currentSprite) {
+        // No sprite loaded - only frame 1
+        return;
+    }
+
+    const dropdown = document.getElementById('frameDropdown');
+
+    // Toggle: clicking fr=NN closes the dropdown if it's already open.
+    // (The dedicated < > arrows next to the button now handle stepping;
+    // we don't need the click-to-advance behaviour any more.)
+    if (dropdown.classList.contains('open')) {
+        closeFrameDropdown();
+        return;
+    }
+
+    // Mutual exclusion: opening this dropdown closes any sibling dropdown
+    // so the user never ends up with two stacked open at once.
+    closeQuadDropdown();
+
+    dropdown.innerHTML = '';
+
+    // GM exposes all 31 frame slots — user can navigate to any of them without
+    // an explicit "add". Blank slots simply render as empty; the serializer
+    // trims trailing blanks on save.
+    for (let i = 0; i < MAX_FRAMES; i++) {
+        const option = document.createElement('div');
+        option.className = 'selector-option' + (i === currentFrame ? ' selected' : '');
+        option.textContent = 'frame ' + (i + 1).toString().padStart(2, '0');
+        option.onclick = (e) => { e.stopPropagation(); selectFrame(i); };
+        dropdown.appendChild(option);
+    }
+
+    // Prevent clicks inside dropdown from closing it
+    dropdown.onclick = (e) => e.stopPropagation();
+
+    // Position dropdown below the fr= button
+    const btn = document.getElementById('btn5');
+    const rect = btn.getBoundingClientRect();
+    const controlsRect = document.getElementById('controls').getBoundingClientRect();
+    dropdown.style.left = (rect.left - controlsRect.left) + 'px';
+    dropdown.style.top = (rect.bottom - controlsRect.top + 2) + 'px';
+
+    dropdown.classList.add('open');
+
+    // Add keyboard listener for arrow navigation
+    document.addEventListener('keydown', frameDropdownKeyHandler);
+}
+
+// Advance to next frame (cycles, doesn't add new)
+function advanceFrame() {
+    if (!currentSprite) return;
+
+    syncToSprite();
+
+    // Wrap through all 31 slots — matches the dropdown showing 1-31.
+    currentFrame = (currentFrame + 1) % MAX_FRAMES;
+
+    loadQuadPixelData();
+    updateFrameButton();
+    updateFatBits();
+    updatePreview();
+
+    updateFrameDropdownSelection();
+}
+
+function updateFrameDropdownSelection() {
+    const dropdown = document.getElementById('frameDropdown');
+    const options = dropdown.querySelectorAll('.selector-option');
+    options.forEach((opt, i) => {
+        opt.classList.toggle('selected', i === currentFrame);
+    });
+}
+
+function frameDropdownKeyHandler(e) {
+    const dropdown = document.getElementById('frameDropdown');
+    if (!dropdown.classList.contains('open')) return;
+    if (!currentSprite) return;
+
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        syncToSprite();
+        currentFrame = (currentFrame + 1) % MAX_FRAMES;
+        loadQuadPixelData();
+        updateFrameButton();
+        updateFatBits();
+        updatePreview();
+        updateFrameDropdownSelection();
+    } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        syncToSprite();
+        currentFrame = (currentFrame - 1 + MAX_FRAMES) % MAX_FRAMES;
+        loadQuadPixelData();
+        updateFrameButton();
+        updateFatBits();
+        updatePreview();
+        updateFrameDropdownSelection();
+    } else if (e.key === 'Enter' || e.key === 'Escape') {
+        e.preventDefault();
+        closeFrameDropdown();
+    }
+}
+
+function closeFrameDropdown() {
+    document.getElementById('frameDropdown').classList.remove('open');
+    document.removeEventListener('keydown', frameDropdownKeyHandler);
+}
+
+function selectFrame(frameIndex) {
+    // Save current pixel data back to sprite before switching. Navigating to
+    // a frame that doesn't exist in imageData yet is fine — loadQuadPixelData
+    // shows a blank grid for missing frames; the slot only materializes in
+    // imageData if the user actually paints (see syncToSprite).
+    syncToSprite();
+
+    currentFrame = frameIndex;
+    loadQuadPixelData();
+    updateFrameButton();
+    updateFatBits();
+    updatePreview();
+
+    closeFrameDropdown();
+}
+
+function updateFrameButton() {
+    // The label span is preserved when only the label changes; when a
+    // mode overwrites btn5.innerHTML entirely we rebuild the full cell.
+    const labelEl = document.getElementById('frameLabel');
+    const text = 'fr=' + (currentFrame + 1).toString().padStart(2, '0');
+    if (labelEl) {
+        labelEl.textContent = text;
+    } else {
+        document.getElementById('btn5').innerHTML =
+            '<span id="frameLabel">' + text + '</span>' +
+            '<div id="frameArrowsRow">' +
+                '<div class="frame-arrow" onclick="event.stopPropagation(); stepFrame(-1)">&lt;</div>' +
+                '<div class="frame-arrow" onclick="event.stopPropagation(); stepFrame(1)">&gt;</div>' +
+            '</div>';
+    }
+}
+
+// Step the current frame by +1 or -1 with wrap, matching advanceFrame's
+// behaviour (all 31 slots reachable).
+function stepFrame(direction) {
+    if (!currentSprite) return;
+    syncToSprite();
+    currentFrame = (currentFrame + direction + MAX_FRAMES) % MAX_FRAMES;
+    loadQuadPixelData();
+    updateFrameButton();
+    updateFatBits();
+    updatePreview();
+    // If the dropdown was open, close it — the arrows are a deliberate
+    // navigation gesture that supersedes browsing the list.
+    closeFrameDropdown();
+}
+
+// Close dropdown when clicking elsewhere, and dismiss cmd/file menu mode
+document.addEventListener('click', (e) => {
+    closeFrameDropdown();
+    closeQuadDropdown();
+
+    // Dismiss file menu mode when clicking outside buttons
+    // But not during load mode - clicking should only affect yes/no in message area
+    if (fileMenuMode.active && !loadMode.active && !e.target.closest('#buttons')) {
+        exitFileMenuMode();
+    }
+
+    // Any click outside the buttons row exits a transient cmd submode
+    // (flip/shift). cellMouseDown / selectColor / showColorPicker handle
+    // clicks INSIDE the canvas and palette directly; this branch catches
+    // clicks on empty background, the message area, etc.
+    if (!e.target.closest('#buttons') && _exitTransientCmdSubmode()) {
+        return;
+    }
+
+    // Dismiss cmd mode when clicking outside buttons (like clicking ok)
+    // But not during animation mode - clicking background should do nothing
+    if (cmdMode && !animaMode.active && !e.target.closest('#buttons')) {
+        exitCmdMode();
+    }
+});
+
+// Quad selection
+// Cycle the current quad by direction (+1 or -1) with wrap. Single-quad
+// sprites are a no-op. Used by both the < > arrows and the back-compat
+// cycleQuad() wrapper.
+function stepQuad(direction) {
+    if (!currentSprite) return;
+    const numQuads = currentSprite.sprite[0].numSprites;
+    if (numQuads <= 1) return;
+
+    syncToSprite();
+    currentQuad = (currentQuad + direction + numQuads) % numQuads;
+
+    loadQuadPixelData();
+    updateQuadButton();
+    updatePaletteDisplay();
+    updateFatBits();
+    updatePreview();
+    updateQuadDropdownSelection();
+    closeQuadDropdown();
+}
+
+// Back-compat shim for cmd-mode / older callers — advances one quad.
+function cycleQuad() { stepQuad(1); }
+
+function updateQuadButton() {
+    // Mirrors updateFrameButton: update only the label span if the inner
+    // structure is intact, otherwise rebuild after a mode overwrote btn6.
+    // The < > arrows row is rendered only when the current sprite has
+    // multiple quads (single-quad sprites get just the bare label).
+    const btn = document.getElementById('btn6');
+    const numQuads = currentSprite ? currentSprite.sprite[0].numSprites : 1;
+    const text = 'spr=' + (currentQuad + 1);
+
+    const labelEl = document.getElementById('quadLabel');
+    const arrowsEl = document.getElementById('quadArrowsRow');
+    if (labelEl) {
+        labelEl.textContent = text;
+        if (arrowsEl) arrowsEl.style.display = numQuads > 1 ? 'flex' : 'none';
+        return;
+    }
+
+    // btn6 was overwritten by another mode — rebuild from scratch.
+    const arrowsHtml = numQuads > 1
+        ? '<div id="quadArrowsRow">' +
+              '<div class="frame-arrow" onclick="event.stopPropagation(); stepQuad(-1)">&lt;</div>' +
+              '<div class="frame-arrow" onclick="event.stopPropagation(); stepQuad(1)">&gt;</div>' +
+          '</div>'
+        : '<div id="quadArrowsRow" style="display:none">' +
+              '<div class="frame-arrow" onclick="event.stopPropagation(); stepQuad(-1)">&lt;</div>' +
+              '<div class="frame-arrow" onclick="event.stopPropagation(); stepQuad(1)">&gt;</div>' +
+          '</div>';
+    btn.innerHTML =
+        '<span id="quadLabel" onclick="event.stopPropagation(); showQuadSelector(event)">' + text + '</span>' +
+        arrowsHtml;
+}
+
+// Toggle the quad dropdown (or rebuild + show it if closed). Single-quad
+// sprites have nothing to select between, so this is a no-op for them.
+function showQuadSelector(event) {
+    event.stopPropagation();
+    if (!currentSprite) return;
+    const numQuads = currentSprite.sprite[0].numSprites;
+    if (numQuads <= 1) return;
+
+    const dropdown = document.getElementById('quadDropdown');
+    if (dropdown.classList.contains('open')) {
+        closeQuadDropdown();
+        return;
+    }
+
+    // Mutual exclusion: opening this dropdown closes any sibling dropdown
+    // so the user never ends up with two stacked open at once.
+    closeFrameDropdown();
+
+    dropdown.innerHTML = '';
+    for (let q = 0; q < numQuads; q++) {
+        const option = document.createElement('div');
+        option.className = 'selector-option' + (q === currentQuad ? ' selected' : '');
+        option.textContent = 'sprite ' + (q + 1);
+        option.onclick = (e) => { e.stopPropagation(); selectQuad(q); };
+        dropdown.appendChild(option);
+    }
+    dropdown.onclick = (e) => e.stopPropagation();
+
+    // Position dropdown below the spr= button
+    const btn = document.getElementById('btn6');
+    const rect = btn.getBoundingClientRect();
+    const controlsRect = document.getElementById('controls').getBoundingClientRect();
+    dropdown.style.left = (rect.left - controlsRect.left) + 'px';
+    dropdown.style.top = (rect.bottom - controlsRect.top + 2) + 'px';
+    dropdown.classList.add('open');
+}
+
+function closeQuadDropdown() {
+    document.getElementById('quadDropdown').classList.remove('open');
+}
+
+function updateQuadDropdownSelection() {
+    const dropdown = document.getElementById('quadDropdown');
+    if (!dropdown || !dropdown.classList.contains('open')) return;
+    const options = dropdown.querySelectorAll('.selector-option');
+    options.forEach((opt, i) => opt.classList.toggle('selected', i === currentQuad));
+}
+
+function selectQuad(q) {
+    if (!currentSprite) return;
+    syncToSprite();
+    currentQuad = q;
+    loadQuadPixelData();
+    updateQuadButton();
+    updatePaletteDisplay();
+    updateFatBits();
+    updatePreview();
+    closeQuadDropdown();
+}
+
+// Highlight current quad in preview on hover
+let quadHighlightActive = false;
+
+function highlightCurrentQuad(show) {
+    if (cmdMode) return; // Don't highlight in cmd mode (button shows 'copy')
+    quadHighlightActive = show;
+
+    if (show) {
+        startPulseAnimation();
+    } else {
+        stopPulseAnimation();
+        updatePreview();
+    }
+}
+
+// Load pixel data from current sprite quad/frame
+function loadQuadPixelData() {
+    if (!currentSprite) {
+        initPixelData();
+        return;
+    }
+
+    const quad = currentSprite.sprite[currentQuad];
+    if (!quad || !quad.imageData || !quad.imageData[currentFrame]) {
+        initPixelData();
+        return;
+    }
+
+    // Palette is sprite-scoped (one set per sprite, applied to every quad
+    // by the VIC), so we don't read per-quad colours here — the swatches
+    // read currentSprite.getPalette() directly via updatePaletteDisplay.
+
+    // Decode pixel data from raw bytes
+    const imageData = quad.imageData[currentFrame];
+
+    initPixelData();
+
+    if (setupState.isMultiColor) {
+        // Multicolor: Each row is 3 bytes, 4 pixels per byte (2 bits each)
+        for (let row = 0; row < 21; row++) {
+            for (let col = 0; col < 3; col++) {
+                const byte = imageData[row * 3 + col];
+                for (let bitPair = 0; bitPair < 4; bitPair++) {
+                    const colorIndex = (byte >> (6 - bitPair * 2)) & 0b11;
+                    const x = col * 4 + bitPair;
+                    pixelData[row][x] = colorIndex;
+                }
+            }
+        }
+    } else {
+        // Hi-res: Each row is 3 bytes, 8 pixels per byte (1 bit each)
+        // Bit = 1 means foreground (color 1), bit = 0 means background
+        for (let row = 0; row < 21; row++) {
+            for (let col = 0; col < 3; col++) {
+                const byte = imageData[row * 3 + col];
+                for (let bit = 0; bit < 8; bit++) {
+                    const isSet = (byte >> (7 - bit)) & 0b1;
+                    const x = col * 8 + bit;
+                    pixelData[row][x] = isSet ? 1 : 0;
+                }
+            }
+        }
+    }
+}
+
+// Sync pixel data back to sprite
+function syncToSprite() {
+    if (!currentSprite) return;
+
+    const quad = currentSprite.sprite[currentQuad];
+    if (!quad || !quad.imageData) return;
+
+    // Encode pixel data to raw bytes
+    const imageData = new Uint8Array(64); // 63 bytes + 1 padding
+
+    if (setupState.isMultiColor) {
+        // Multicolor: 4 pixels per byte (2 bits each)
+        for (let row = 0; row < 21; row++) {
+            for (let col = 0; col < 3; col++) {
+                let byte = 0;
+                for (let bitPair = 0; bitPair < 4; bitPair++) {
+                    const x = col * 4 + bitPair;
+                    const colorIndex = pixelData[row][x] & 0b11;
+                    byte |= (colorIndex << (6 - bitPair * 2));
+                }
+                imageData[row * 3 + col] = byte;
+            }
+        }
+    } else {
+        // Hi-res: 8 pixels per byte (1 bit each)
+        for (let row = 0; row < 21; row++) {
+            for (let col = 0; col < 3; col++) {
+                let byte = 0;
+                for (let bit = 0; bit < 8; bit++) {
+                    const x = col * 8 + bit;
+                    const isSet = pixelData[row][x] ? 1 : 0;
+                    byte |= (isSet << (7 - bit));
+                }
+                imageData[row * 3 + col] = byte;
+            }
+        }
+    }
+
+    // Lazy extension: if the user navigated to a frame beyond imageData's
+    // current length, fill the gaps with blank frames so the array stays
+    // contiguous (findLastNonBlankFrame and other walkers assume that).
+    while (quad.imageData.length < currentFrame) {
+        quad.imageData.push(new Uint8Array(63));
+    }
+    quad.imageData[currentFrame] = imageData;
+    quad.totalFrames = quad.imageData.length;
+
+    // Mark sprite as dirty so it re-renders. Palette is sprite-owned and
+    // updated directly via setColor/setPalette by colour-changing flows,
+    // so we don't need to copy anything here.
+    currentSprite.dirty = true;
+}
+
+// GMDisk instance
+const disk = new GMDisk();
+disk.autoLoad();
+
+// Show disk popup with sprite file filter
+function showDiskPopup() {
+    disk.showPopup({
+        fileType: GMDisk.FILE_TYPES.SPRITE,
+        showSave: true,
+        suggestedSaveName: () => currentSpriteFileName || '',
+        onSave: saveSprite,
+        onSelect: loadSpriteFromDisk,
+        customButtons: [
+            { label: 'Export GIF', onClick: exportGif }
+        ]
+    });
+}
+
+function closeDiskPopup() {
+    disk.closePopup();
+}
+
+
+// Export sprite as animated GIF
+function exportGif() {
+    if (!currentSprite) {
+        alert('No sprite to export');
+        return;
+    }
+
+    // Sync current edits
+    syncToSprite();
+
+    const header = currentSprite.sprite[0];
+    const xDouble = header.xDouble ? 2 : 1;
+    const yDouble = header.yDouble ? 2 : 1;
+
+    // Calculate bounding box for all quads (in GM fat-pixel units)
+    // Note: xDouble/yDouble expand the sprite size in GM units too
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (let q = 0; q < currentSprite.sprite.length; q++) {
+        const quad = currentSprite.sprite[q];
+        if (!quad.imageData) continue;
+
+        let qx = 0, qy = 0;
+        if (q > 0) {
+            qx = quad.xPosition; // Already in fat pixels
+            qy = quad.yPosition;
+        }
+
+        minX = Math.min(minX, qx);
+        minY = Math.min(minY, qy);
+        maxX = Math.max(maxX, qx + 12 * xDouble); // 12 fat pixels wide * xDouble
+        maxY = Math.max(maxY, qy + 21 * yDouble); // 21 pixels tall * yDouble
+    }
+
+    // Default to single quad if no quads found
+    if (minX === Infinity) {
+        minX = 0; minY = 0; maxX = 12 * xDouble; maxY = 21 * yDouble;
+    }
+
+    // Calculate buffer size in screen pixels
+    // GM fat pixels * 2 = screen pixels
+    const bufferWidth = (maxX - minX) * 2;
+    const bufferHeight = (maxY - minY);
+
+    // Scale 3x for output (like preview)
+    const scale = 3;
+    const outputWidth = bufferWidth * scale;
+    const outputHeight = bufferHeight * scale;
+
+    // Create temporary canvas for rendering frames
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = bufferWidth;
+    tempCanvas.height = bufferHeight;
+    const tempCtx = tempCanvas.getContext('2d');
+
+    // Create buffer for rendering
+    const buffer = new Uint8ClampedArray(bufferWidth * bufferHeight * 4);
+
+    // Create scaled canvas for GIF frames
+    const scaledCanvas = document.createElement('canvas');
+    scaledCanvas.width = outputWidth;
+    scaledCanvas.height = outputHeight;
+    const scaledCtx = scaledCanvas.getContext('2d');
+    scaledCtx.imageSmoothingEnabled = false;
+
+    // Calculate frame delay from animation speed
+    const frameDelay = Math.max(20, (32 - animaMode.speed) * 33);
+
+    // Create GIF encoder (using gifWorkerBlobUrl from gifWorkerBlob.js)
+    const gif = new GIF({
+        workers: 2,
+        quality: 10,
+        width: outputWidth,
+        height: outputHeight,
+        workerScript: gifWorkerBlobUrl
+    });
+
+    // Get background color RGB
+    const bgRGB = c64Palette[currentSprite.getColor(0)];
+
+    // Use blitToBuffer with a fake GM coordinate that places sprite at buffer origin
+    // GM visible area starts at X=12, Y=50, so we use those as base
+    // Then offset by minX/minY to position the bounding box at origin
+    const gmX = 12 - minX;
+    const gmY = 50 - minY;
+
+    // Render each frame in animation range
+    for (let f = animaMode.fromFrame - 1; f < currentSprite.getNumFrames(); f++) {
+        // Clear buffer to background color
+        for (let i = 0; i < buffer.length; i += 4) {
+            buffer[i] = bgRGB[0];
+            buffer[i + 1] = bgRGB[1];
+            buffer[i + 2] = bgRGB[2];
+            buffer[i + 3] = 255;
+        }
+
+        // Use sprite's own blitToBuffer for correct rendering
+        currentSprite.blitToBuffer(buffer, bufferWidth, bufferHeight, gmX, gmY, f);
+
+        // Put buffer to temp canvas
+        const imageData = new ImageData(buffer, bufferWidth, bufferHeight);
+        tempCtx.putImageData(imageData, 0, 0);
+
+        // Scale up to output canvas
+        scaledCtx.drawImage(tempCanvas, 0, 0, outputWidth, outputHeight);
+
+        // Add frame to GIF
+        gif.addFrame(scaledCtx, { copy: true, delay: frameDelay });
+    }
+
+    // Render and download
+    gif.on('finished', function(blob) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = (currentSpriteFileName || 'sprite').replace('.SPR', '') + '.gif';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        closeDiskPopup();
+    });
+
+    gif.render();
+}
+
+// Save sprite to D64. Returns true on success so callers (notably the in-app
+// save dialog via GMTools.saveDialog.onSave) can branch on the result. The
+// d64 popup's Save button also uses this — same path, same serializer, no
+// divergence between the two save UIs.
+function saveSprite(fileName) {
+    if (!currentSprite) {
+        disk.showInfoMessage('No sprite to save');
+        return false;
+    }
+
+    // Sync internal sprite name to the disk filename's base so the
+    // header field shown by GM (real or our editor) matches what the
+    // file is called. Without this, sprite-maker'd files keep their
+    // create-time name ("NEW") regardless of how the user named the
+    // file on disk. Multi-quad subsprites follow the GM convention
+    // of "-" + first 5 chars of main name (encoded 5-char fields
+    // truncate to 4 chars after the dash, but that matches what GM
+    // does when authoring multi-quad sprites natively).
+    const mainName = fileName.substring(0, 6).toUpperCase();
+    currentSprite.sprite[0].spriteName = mainName;
+    for (let q = 1; q < currentSprite.sprite.length; q++) {
+        currentSprite.sprite[q].spriteName = '-' + mainName.substring(0, 5);
+    }
+
+    const fileData = serializeSprite();
+    if (disk.saveFile(fileName, fileData)) {
+        currentSpriteFileName = fileName;
+        return true;
+    }
+    disk.showInfoMessage('Failed to save. Disk may be full.');
+    return false;
+}
+
+// Serialize the current sprite to GM .SPR bytes. The animation end lives
+// directly on the sprite as numFrames, so there's nothing to fold in —
+// gmSprite.serialize owns the file-format details (charset, trailing-
+// blank-frame trim, etc).
+function serializeSprite() {
+    if (!currentSprite) return null;
+    return currentSprite.serialize();
+}
+
+// Load sprite from disk (called by GMDisk popup onSelect)
+function loadSpriteFromDisk(fileName, fileData) {
+    try {
+        currentSprite = new gmSprite(fileData);
+        currentFrame = 0;
+        currentQuad = 0;
+        currentSpriteFileName = fileName;
+
+        // Sync setup state from loaded sprite
+        const header = currentSprite.sprite[0];
+        setupState.isMultiColor = header.isMultiColor;
+        setupState.vMag = header.yDouble;
+        setupState.hMag = header.xDouble;
+        setupState.numSprites = header.numSprites;
+
+        // No animaMode writes — anima end is the sprite's numFrames (which
+        // we just deserialised), and start resets to 1 inside enterAnimaMode.
+
+        // Rebuild fat bits grid for the sprite's color mode
+        rebuildFatBitsGrid();
+
+        // Load pixel data from first quad/frame
+        loadQuadPixelData();
+
+        updateFrameButton();
+        updateQuadButton();
+        updatePaletteDisplay();
+        updatePaletteForColorMode();
+        updateFatBits();
+        updatePreview();
+
+        console.log('Loaded sprite:', currentSprite);
+    } catch (e) {
+        console.error('Failed to load sprite:', e);
+        alert('Failed to load sprite file');
+    }
+}
+
+function quitEditor() {
+    GMTools.quitMenu.show();
+}
+
+// ==================== SETUP PANEL ====================
+
+// Setup state
+let setupState = {
+    isMultiColor: true,  // mult/sing
+    vMag: false,         // vertical magnification
+    hMag: false,         // horizontal magnification
+    numSprites: 1        // 1-4 quads
+};
+
+// Pulsing animation for positioning mode
+let pulseAnimId = null;
+let pulseAlpha = 0;
+let pulseDirection = 1;
+
+let setupPanelOpen = false;
+
+function showSetupPanel() {
+    // Initialize setup state from current sprite (if loaded)
+    if (currentSprite) {
+        const header = currentSprite.sprite[0];
+        setupState.isMultiColor = header.isMultiColor;
+        setupState.vMag = header.yDouble;
+        setupState.hMag = header.xDouble;
+        setupState.numSprites = header.numSprites;
+    }
+
+    // Update display
+    updateSetupDisplay();
+
+    // Hide cmd/file and fr/spr buttons (no longer in table rows since the
+    // buttons area is a CSS grid — hide each cell individually).
+    ['btn3', 'btn4', 'btn5', 'btn6'].forEach(id => {
+        document.getElementById(id).style.display = 'none';
+    });
+
+    // Change menu to ok
+    document.getElementById('btn2').textContent = 'ok';
+
+    // Show panel
+    document.getElementById('setupPanel').classList.add('open');
+    setupPanelOpen = true;
+}
+
+function updateSetupDisplay() {
+    document.getElementById('setupColorValue').textContent = setupState.isMultiColor ? 'mult' : 'sing';
+    document.getElementById('setupVMagValue').textContent = setupState.vMag ? 'on' : 'off';
+    document.getElementById('setupHMagValue').textContent = setupState.hMag ? 'on' : 'off';
+    document.getElementById('setupSpritesValue').textContent = setupState.numSprites;
+}
+
+function toggleColorMode() {
+    // Save current pixel data as raw bytes before switching
+    const rawBytes = pixelDataToRawBytes();
+
+    // First, sync current edits back to sprite's raw bytes
+    if (currentSprite) {
+        syncToSprite();
+    }
+
+    setupState.isMultiColor = !setupState.isMultiColor;
+    updateSetupDisplay();
+
+    // Swap slots 1 and 2 to match GM's behavior. setMultiColorMode below
+    // updates internal C64 hardware fields; the palette swap here makes the
+    // UI swatch labels follow.
+    if (currentSprite) {
+        const palette = currentSprite.getPalette();
+        [palette[1], palette[2]] = [palette[2], palette[1]];
+        currentSprite.setPalette(palette);
+        currentSprite.setMultiColorMode(setupState.isMultiColor);
+    }
+
+    // Rebuild fat bits grid for new mode (changes grid width)
+    rebuildFatBitsGrid();
+
+    // Reload pixel data (reinterprets the raw bytes in new mode)
+    if (currentSprite) {
+        loadQuadPixelData();
+    } else {
+        // No sprite - reinterpret the saved raw bytes in the new mode
+        rawBytesToPixelData(rawBytes);
+    }
+
+    // Update palette display for new mode
+    updatePaletteForColorMode();
+
+    // If in single color mode, select row 1 (which controls color 1 - the foreground)
+    if (!setupState.isMultiColor) {
+        selectColor(1); // Selects the foreground color (palette slot 1)
+    }
+
+    updateFatBits();
+    updatePreview();
+}
+
+function toggleVMag() {
+    setupState.vMag = !setupState.vMag;
+    updateSetupDisplay();
+
+    // Apply immediately to current sprite
+    if (currentSprite) {
+        for (let i = 0; i < currentSprite.sprite.length; i++) {
+            currentSprite.sprite[i].yDouble = setupState.vMag;
+        }
+        // Scale relative positions for quads > 0
+        for (let i = 1; i < currentSprite.sprite.length; i++) {
+            if (setupState.vMag) {
+                currentSprite.sprite[i].yPosition *= 2;
+            } else {
+                currentSprite.sprite[i].yPosition /= 2;
+            }
+        }
+        // Clamp all positions to keep sprites on screen
+        clampAllSpritePositions();
+        currentSprite.dirty = true; // Force re-render
+    }
+
+    updatePreview();
+}
+
+function toggleHMag() {
+    setupState.hMag = !setupState.hMag;
+    updateSetupDisplay();
+
+    // Apply immediately to current sprite
+    if (currentSprite) {
+        for (let i = 0; i < currentSprite.sprite.length; i++) {
+            currentSprite.sprite[i].xDouble = setupState.hMag;
+        }
+        // Scale relative positions for quads > 0
+        for (let i = 1; i < currentSprite.sprite.length; i++) {
+            if (setupState.hMag) {
+                currentSprite.sprite[i].xPosition *= 2;
+            } else {
+                currentSprite.sprite[i].xPosition /= 2;
+            }
+        }
+        // Clamp all positions to keep sprites on screen
+        clampAllSpritePositions();
+        currentSprite.dirty = true; // Force re-render
+    }
+
+    updatePreview();
+}
+
+function cycleSpritesCount() {
+    setupState.numSprites = (setupState.numSprites % 4) + 1;
+    updateSetupDisplay();
+}
+
+function setupOK() {
+    // Keep setup panel visible during positioning mode
+    // (rows 2 and 3 stay hidden, btn2 stays as "ok")
+
+    // Apply setup state to sprite
+    applySetupToSprite();
+
+    // Enter positioning mode (will use the already-hidden button rows)
+    enterPositioningMode();
+}
+
+function applySetupToSprite() {
+    // Create sprite if none exists
+    if (!currentSprite) {
+        currentSprite = createNewSprite();
+    }
+
+    const header = currentSprite.sprite[0];
+
+    // Apply color mode
+    if (setupState.isMultiColor !== header.isMultiColor) {
+        // Switching color mode
+        header.isMultiColor = setupState.isMultiColor;
+        // TODO: handle color slot changes when switching modes
+    }
+
+    // Apply magnification
+    header.xDouble = setupState.hMag;
+    header.yDouble = setupState.vMag;
+
+    // Apply to all quads
+    for (let i = 0; i < currentSprite.sprite.length; i++) {
+        currentSprite.sprite[i].isMultiColor = setupState.isMultiColor;
+        currentSprite.sprite[i].xDouble = setupState.hMag;
+        currentSprite.sprite[i].yDouble = setupState.vMag;
+    }
+
+    // Add or remove quads as needed
+    adjustQuadCount(setupState.numSprites);
+
+    // Update displays
+    updateQuadButton();
+    updateFatBits();
+    updatePreview();
+}
+
+function createNewSprite() {
+    // Carry the current palette onto the new sprite (if there is one) so
+    // the user's chosen colours survive shape-changing operations that
+    // rebuild the sprite. Fall back to defaults on a true cold start.
+    const palette = currentSprite ? currentSprite.getPalette() : DEFAULT_SPRITE_COLORS;
+    const sprite = gmSprite.createBlank({
+        name: 'NEW',
+        isMultiColor: setupState.isMultiColor,
+        xDouble: setupState.hMag,
+        yDouble: setupState.vMag,
+        numFrames: 1,
+        xPosition: 100,
+        yPosition: 100,
+        bgColor:  palette[0],
+        gmColor1: palette[1],
+        gmColor2: palette[2],
+        gmColor3: palette[3]
+    });
+
+    // Copy current pixel data to sprite
+    encodePixelDataToImageData(sprite.sprite[0].imageData[0]);
+
+    return sprite;
+}
+
+function encodePixelDataToImageData(imageData) {
+    for (let row = 0; row < 21; row++) {
+        for (let col = 0; col < 3; col++) {
+            let byte = 0;
+            for (let bitPair = 0; bitPair < 4; bitPair++) {
+                const x = col * 4 + bitPair;
+                const colorIndex = pixelData[row][x] & 0b11;
+                byte |= (colorIndex << (6 - bitPair * 2));
+            }
+            imageData[row * 3 + col] = byte;
+        }
+    }
+}
+
+function adjustQuadCount(targetCount) {
+    if (!currentSprite) return;
+
+    const currentCount = currentSprite.sprite.length;
+
+    if (targetCount > currentCount) {
+        // Add quads
+        for (let i = currentCount; i < targetCount; i++) {
+            addNewQuad(i);
+        }
+    } else if (targetCount < currentCount) {
+        // Remove quads (keep data in memory, just reduce the count)
+        currentSprite.sprite.length = targetCount;
+    }
+
+    // Update header
+    currentSprite.sprite[0].numSprites = targetCount;
+
+    // Reset current quad if it's beyond the new count
+    if (currentQuad >= targetCount) {
+        currentQuad = 0;
+        loadQuadPixelData();
+    }
+}
+
+function addNewQuad(index) {
+    const header = currentSprite.sprite[0];
+
+    // Default positions in a 2x2 layout
+    // 1  3
+    // 2  4
+    // Account for magnification in default positions
+    const xDouble = header.xDouble ? 2 : 1;
+    const yDouble = header.yDouble ? 2 : 1;
+    let xOff = 0, yOff = 0;
+    const spriteWidth = 12 * xDouble;  // fat pixels (x position units)
+    const spriteHeight = 21 * yDouble; // pixels
+
+    switch (index) {
+        case 1: yOff = spriteHeight; break;           // Below quad 1
+        case 2: xOff = spriteWidth; break;            // Right of quad 1
+        case 3: xOff = spriteWidth; yOff = spriteHeight; break; // Diagonal
+    }
+
+    const newQuad = {
+        spriteName: (index + 1).toString() + '     ',
+        isMultiColor: header.isMultiColor,
+        numFrames: currentSprite.getNumFrames(),
+        totalFrames: header.totalFrames,
+        numSprites: 1,
+        xDouble: header.xDouble,
+        yDouble: header.yDouble,
+        xPosition: xOff,  // Relative to quad 0
+        yPosition: yOff,
+        // Per-quad colour fields are kept in sync with the sprite's palette
+        // (the renderer reads the top-level palette only — see gmSprite).
+        _bgColor:  currentSprite.getColor(0),
+        _gmColor1: currentSprite.getColor(1),
+        _gmColor2: currentSprite.getColor(2),
+        _gmColor3: currentSprite.getColor(3),
+        imageData: []
+    };
+
+    // Initialize blank frames (use totalFrames to match header)
+    for (let f = 0; f < header.totalFrames; f++) {
+        newQuad.imageData.push(new Uint8Array(64));
+    }
+
+    currentSprite.sprite.push(newQuad);
+}
+
+// ==================== POSITIONING MODE ====================
+
+function enterPositioningMode() {
+    if (!currentSprite || currentSprite.sprite[0].numSprites < 1) return;
+
+    const numQuads = currentSprite.sprite[0].numSprites;
+
+    // Initialize positions from current sprite data
+    positioningMode.positions = [];
+    for (let i = 0; i < numQuads; i++) {
+        const quad = currentSprite.sprite[i];
+        positioningMode.positions.push({
+            x: quad.xPosition,
+            y: quad.yPosition
+        });
+    }
+
+    positioningMode.active = true;
+    positioningMode.currentQuad = 0;
+    positioningMode.dragging = false;
+    positioningMode.dragStart = null;
+
+    // Show positioning message
+    showMessage('position sprites using arrow keys<br>(enter to confirm, esc to cancel)');
+
+    // Enable mouse interaction on preview canvas
+    const preview = document.getElementById('preview');
+    preview.style.pointerEvents = 'auto';
+    preview.style.cursor = 'move';
+    preview.addEventListener('mousedown', positioningMouseDown);
+    document.addEventListener('mousemove', positioningMouseMove);
+    document.addEventListener('mouseup', positioningMouseUp);
+
+    // Start pulsing animation
+    startPulseAnimation();
+
+    // Add keyboard listener
+    document.addEventListener('keydown', positioningKeyHandler);
+
+    updatePreviewWithPositioning();
+}
+
+function exitPositioningMode(saveChanges) {
+    positioningMode.active = false;
+
+    // Clear message
+    clearMessage();
+
+    // Hide setup panel and restore button cells (un-hide what hideSetup did).
+    document.getElementById('setupPanel').classList.remove('open');
+    ['btn3', 'btn4', 'btn5', 'btn6'].forEach(id => {
+        document.getElementById(id).style.display = '';
+    });
+    document.getElementById('btn2').textContent = LABEL_MENU;
+    setupPanelOpen = false;
+
+    // Disable mouse interaction on preview canvas
+    const preview = document.getElementById('preview');
+    preview.style.pointerEvents = 'none';
+    preview.style.cursor = '';
+    preview.removeEventListener('mousedown', positioningMouseDown);
+    document.removeEventListener('mousemove', positioningMouseMove);
+    document.removeEventListener('mouseup', positioningMouseUp);
+
+    // Stop pulse animation
+    if (pulseAnimId) {
+        cancelAnimationFrame(pulseAnimId);
+        pulseAnimId = null;
+    }
+
+    // Remove keyboard listener
+    document.removeEventListener('keydown', positioningKeyHandler);
+
+    if (saveChanges) {
+        // Apply positions to sprite
+        for (let i = 0; i < positioningMode.positions.length; i++) {
+            currentSprite.sprite[i].xPosition = positioningMode.positions[i].x;
+            currentSprite.sprite[i].yPosition = positioningMode.positions[i].y;
+        }
+    }
+
+    updatePreview();
+}
+
+function positioningKeyHandler(e) {
+    if (!positioningMode.active) return;
+
+    let dx = 0, dy = 0;
+    switch (e.key) {
+        case 'ArrowUp':    dy = -1; break;
+        case 'ArrowDown':  dy = 1;  break;
+        case 'ArrowLeft':  dx = -1; break;
+        case 'ArrowRight': dx = 1;  break;
+        case 'Enter':
+            positioningMode.currentQuad++;
+            if (positioningMode.currentQuad >= positioningMode.positions.length) {
+                exitPositioningMode(true);
+                return;
+            }
+            e.preventDefault();
+            updatePreviewWithPositioning();
+            return;
+        case 'Escape':
+            exitPositioningMode(false);
+            e.preventDefault();
+            return;
+        default:
+            return;
+    }
+
+    const q = positioningMode.currentQuad;
+    const pos = positioningMode.positions[q];
+    pos.x += dx;
+    pos.y += dy;
+
+    // Clamp so the sprite stays fully on screen.
+    const xDouble = currentSprite.sprite[0].xDouble ? 2 : 1;
+    const yDouble = currentSprite.sprite[0].yDouble ? 2 : 1;
+    const spriteWidth = 12 * xDouble;
+    const spriteHeight = 21 * yDouble;
+
+    if (q === 0) {
+        // Quad 0 absolute position. Clamp, then shift other quads by the actual delta
+        // so they stay glued to quad 0 visually.
+        const oldX = pos.x - dx;
+        const oldY = pos.y - dy;
+        pos.x = Math.max(0, Math.min(160 - spriteWidth, pos.x));
+        pos.y = Math.max(0, Math.min(200 - spriteHeight, pos.y));
+        const actualDx = pos.x - oldX;
+        const actualDy = pos.y - oldY;
+        for (let i = 1; i < positioningMode.positions.length; i++) {
+            positioningMode.positions[i].x -= actualDx;
+            positioningMode.positions[i].y -= actualDy;
+        }
+    } else {
+        // Quads 1-3 are relative to quad 0. Clamp the absolute position, then back-solve.
+        const quad0Pos = positioningMode.positions[0];
+        const clampedAbsX = Math.max(0, Math.min(160 - spriteWidth, quad0Pos.x + pos.x));
+        const clampedAbsY = Math.max(0, Math.min(200 - spriteHeight, quad0Pos.y + pos.y));
+        pos.x = clampedAbsX - quad0Pos.x;
+        pos.y = clampedAbsY - quad0Pos.y;
+    }
+
+    e.preventDefault();
+    updatePreviewWithPositioning();
+}
+
+function startPulseAnimation() {
+    if (pulseAnimId) return; // Already running
+
+    function animate() {
+        // Update pulse alpha
+        pulseAlpha += 0.05 * pulseDirection;
+        if (pulseAlpha >= 1) {
+            pulseAlpha = 1;
+            pulseDirection = -1;
+        } else if (pulseAlpha <= 0.3) {
+            pulseAlpha = 0.3;
+            pulseDirection = 1;
+        }
+
+        // Continue animation if either mode is active
+        if (positioningMode.active) {
+            updatePreviewWithPositioning();
+            pulseAnimId = requestAnimationFrame(animate);
+        } else if (quadHighlightActive) {
+            updatePreviewWithQuadHighlight();
+            pulseAnimId = requestAnimationFrame(animate);
+        } else {
+            pulseAnimId = null;
+        }
+    }
+    pulseAnimId = requestAnimationFrame(animate);
+}
+
+function stopPulseAnimation() {
+    if (pulseAnimId) {
+        cancelAnimationFrame(pulseAnimId);
+        pulseAnimId = null;
+    }
+}
+
+function updatePreviewWithQuadHighlight() {
+    updatePreview();
+    drawPulsingQuadBorder(currentQuad);
+    previewScreen.present();
+}
+
+function updatePreviewWithPositioning() {
+    if (!previewScreen || !currentSprite) return;
+
+    // Clear to transparent - sprites render over the background block
+    previewScreen.clearTransparent();
+
+    // Update background color block
+    updatePreviewBgColor();
+
+    const numQuads = currentSprite.sprite[0].numSprites;
+
+    // Draw all quads at their current positions
+    // Positions are always in fat pixel space (normalized by gmSprite at load time)
+    for (let q = 0; q < numQuads; q++) {
+        const quad = currentSprite.sprite[q];
+        const pos = positioningMode.positions[q];
+
+        // Calculate actual GM position (in fat pixel space)
+        let gmX, gmY;
+
+        if (q === 0) {
+            // Quad 0 uses absolute position (convert screen-relative to GM)
+            gmX = pos.x + 12;
+            gmY = pos.y + 50;
+        } else {
+            // Other quads are relative to quad 0
+            gmX = positioningMode.positions[0].x + pos.x + 12;
+            gmY = positioningMode.positions[0].y + pos.y + 50;
+        }
+
+        // Draw the quad
+        drawQuadToBuffer(q, gmX, gmY);
+    }
+
+    // Draw bounding box around current quad being positioned
+    drawPositioningBoundingBox();
+
+    previewScreen.present();
+}
+
+function drawQuadToBuffer(quadIndex, gmX, gmY) {
+    const quad = currentSprite.sprite[quadIndex];
+    if (!quad || !quad.imageData || !quad.imageData[currentFrame]) return;
+
+    // Get magnification settings
+    const xDouble = currentSprite.sprite[0].xDouble;
+    const yDouble = currentSprite.sprite[0].yDouble;
+    const isMultiColor = quad.isMultiColor;
+
+    // Convert GM coords (fat pixel space) to screen coords
+    // screenX = (gmX - 12) * 2, screenY = gmY - 50
+    const screenX = (gmX - 12) * 2;
+    const screenY = gmY - 50;
+
+    const imageData = quad.imageData[currentFrame];
+
+    // Pixel dimensions based on magnification
+    const pixelHeight = yDouble ? 2 : 1; // Each row is 1 screen pixel, doubled = 2
+
+    // Decode and draw
+    for (let row = 0; row < 21; row++) {
+        for (let col = 0; col < 3; col++) {
+            const byte = imageData[row * 3 + col];
+
+            if (isMultiColor) {
+                // MULTICOLOR: 4 pixels per byte (2 bits each)
+                const pixelWidth = xDouble ? 4 : 2;  // Each fat pixel is 2 screen pixels, doubled = 4
+                for (let bitPair = 0; bitPair < 4; bitPair++) {
+                    const colorSlot = (byte >> (6 - bitPair * 2)) & 0b11;
+                    if (colorSlot !== 0) {
+                        // Palette indices map to pixel values:
+                        // [0]=bg, [1]=gmColor2 (pixel 01), [2]=gmColor1 (pixel 10), [3]=gmColor3 (pixel 11)
+                        const pal = currentSprite.getPalette();
+                        const colorIndex = [pal[0], pal[2], pal[1], pal[3]][colorSlot];
+                        const color = c64Palette[colorIndex];
+
+                        const x = col * 4 + bitPair;
+                        const px = screenX + x * pixelWidth;
+                        const py = screenY + row * pixelHeight;
+
+                        for (let dy = 0; dy < pixelHeight; dy++) {
+                            for (let dx = 0; dx < pixelWidth; dx++) {
+                                const drawX = px + dx;
+                                const drawY = py + dy;
+                                if (drawX >= 0 && drawX < c64Screen.WIDTH && drawY >= 0 && drawY < c64Screen.HEIGHT) {
+                                    const idx = (drawY * c64Screen.WIDTH + drawX) * 4;
+                                    previewScreen.pixels[idx] = color[0];
+                                    previewScreen.pixels[idx + 1] = color[1];
+                                    previewScreen.pixels[idx + 2] = color[2];
+                                    previewScreen.pixels[idx + 3] = 255;
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // HI-RES: 8 pixels per byte (1 bit each)
+                // Each hi-res pixel is 1 screen pixel (not 2 like fat pixels)
+                const pixelWidth = xDouble ? 2 : 1;
+                for (let bit = 0; bit < 8; bit++) {
+                    const colorSlot = (byte >> (7 - bit)) & 0b1;
+                    if (colorSlot !== 0) {
+                        const colorIndex = currentSprite.getColor(1);  // Hi-res uses only GM "Color 1"
+                        const color = c64Palette[colorIndex];
+
+                        const x = col * 8 + bit;
+                        const px = screenX + x * pixelWidth;
+                        const py = screenY + row * pixelHeight;
+
+                        for (let dy = 0; dy < pixelHeight; dy++) {
+                            for (let dx = 0; dx < pixelWidth; dx++) {
+                                const drawX = px + dx;
+                                const drawY = py + dy;
+                                if (drawX >= 0 && drawX < c64Screen.WIDTH && drawY >= 0 && drawY < c64Screen.HEIGHT) {
+                                    const idx = (drawY * c64Screen.WIDTH + drawX) * 4;
+                                    previewScreen.pixels[idx] = color[0];
+                                    previewScreen.pixels[idx + 1] = color[1];
+                                    previewScreen.pixels[idx + 2] = color[2];
+                                    previewScreen.pixels[idx + 3] = 255;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // If quad is blank, draw numbered box
+    if (isQuadBlank(quadIndex)) {
+        drawNumberedBox(quadIndex, screenX, screenY);
+    }
+}
+
+function isQuadBlank(quadIndex) {
+    const quad = currentSprite.sprite[quadIndex];
+    if (!quad || !quad.imageData || !quad.imageData[currentFrame]) return true;
+
+    const imageData = quad.imageData[currentFrame];
+    for (let i = 0; i < 63; i++) {
+        if (imageData[i] !== 0) return false;
+    }
+    return true;
+}
+
+function drawNumberedBox(quadIndex, screenX, screenY) {
+    // Get magnification settings
+    const xDouble = currentSprite.sprite[0].xDouble;
+    const yDouble = currentSprite.sprite[0].yDouble;
+
+    // Box dimensions based on magnification
+    const boxWidth = xDouble ? 48 : 24;   // 24 * 2 when x doubled
+    const boxHeight = yDouble ? 42 : 21;  // 21 * 2 when y doubled
+
+    const num = quadIndex + 1;
+    const color = c64Palette.white;
+
+    // Draw border using shared function
+    drawQuadBorder(quadIndex, color, screenX, screenY);
+
+    // Draw number in center (simple 3x5 digit, scaled with magnification)
+    const digitPatterns = {
+        1: [[1], [1], [1], [1], [1]],
+        2: [[1,1,1], [0,0,1], [1,1,1], [1,0,0], [1,1,1]],
+        3: [[1,1,1], [0,0,1], [1,1,1], [0,0,1], [1,1,1]],
+        4: [[1,0,1], [1,0,1], [1,1,1], [0,0,1], [0,0,1]]
+    };
+
+    const pattern = digitPatterns[num];
+    if (pattern) {
+        const digitWidth = pattern[0].length * (xDouble ? 2 : 1);
+        const digitHeight = pattern.length * (yDouble ? 2 : 1);
+        const startX = screenX + Math.floor((boxWidth - digitWidth) / 2);
+        const startY = screenY + Math.floor((boxHeight - digitHeight) / 2);
+
+        for (let py = 0; py < pattern.length; py++) {
+            for (let px = 0; px < pattern[py].length; px++) {
+                if (pattern[py][px]) {
+                    // Draw scaled digit pixel
+                    const scaleX = xDouble ? 2 : 1;
+                    const scaleY = yDouble ? 2 : 1;
+                    for (let dy = 0; dy < scaleY; dy++) {
+                        for (let dx = 0; dx < scaleX; dx++) {
+                            setPixel(startX + px * scaleX + dx, startY + py * scaleY + dy, color);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+function setPixel(x, y, color) {
+    if (x < 0 || x >= c64Screen.WIDTH || y < 0 || y >= c64Screen.HEIGHT) return;
+    const idx = (y * c64Screen.WIDTH + x) * 4;
+    previewScreen.pixels[idx] = color[0];
+    previewScreen.pixels[idx + 1] = color[1];
+    previewScreen.pixels[idx + 2] = color[2];
+    previewScreen.pixels[idx + 3] = 255;
+}
+
+// Draw border around a quad in the preview
+// Can be called with just quadIndex (calculates position from sprite),
+// or with explicit screenX/screenY for positioning mode
+function drawQuadBorder(quadIndex, color = c64Palette.white, screenX = null, screenY = null) {
+    if (!currentSprite || !previewScreen) return;
+
+    const header = currentSprite.sprite[0];
+    const xDouble = header.xDouble ? 2 : 1;
+    const yDouble = header.yDouble ? 2 : 1;
+
+    // Calculate screen coordinates if not provided
+    // xPosition is always in fat pixel space (normalized by gmSprite at load time)
+    if (screenX === null || screenY === null) {
+        let qx = 0, qy = 0;
+        if (quadIndex > 0) {
+            const quad = currentSprite.sprite[quadIndex];
+            qx = quad.xPosition;
+            qy = quad.yPosition;
+        }
+
+        const baseGmX = (header.xPosition || 0) + 12;
+        const baseGmY = (header.yPosition || 0) + 50;
+        screenX = (baseGmX + qx - 12) * 2;
+        screenY = baseGmY + qy - 50;
+    }
+
+    // Quad size in screen pixels (always 12 fat pixels wide)
+    const boxWidth = 12 * xDouble * 2;
+    const boxHeight = 21 * yDouble;
+
+    // Draw border
+    for (let x = 0; x < boxWidth; x++) {
+        setPixel(screenX + x, screenY, color);
+        setPixel(screenX + x, screenY + boxHeight - 1, color);
+    }
+    for (let y = 0; y < boxHeight; y++) {
+        setPixel(screenX, screenY + y, color);
+        setPixel(screenX + boxWidth - 1, screenY + y, color);
+    }
+}
+
+function drawPositioningBoundingBox() {
+    const q = positioningMode.currentQuad;
+    const pos = positioningMode.positions[q];
+
+    // Positions are always in fat pixel space (normalized by gmSprite at load time)
+    let gmX, gmY;
+
+    if (q === 0) {
+        gmX = pos.x + 12;
+        gmY = pos.y + 50;
+    } else {
+        gmX = positioningMode.positions[0].x + pos.x + 12;
+        gmY = positioningMode.positions[0].y + pos.y + 50;
+    }
+
+    // Convert GM to screen coords
+    const screenX = (gmX - 12) * 2;
+    const screenY = gmY - 50;
+
+    drawPulsingQuadBorder(q, screenX, screenY);
+}
+
+// Draw pulsing dashed border around a quad
+// Can be called with just quadIndex (calculates position from sprite),
+// or with explicit screenX/screenY for positioning mode
+function drawPulsingQuadBorder(quadIndex, screenX = null, screenY = null) {
+    if (!currentSprite || !previewScreen) return;
+
+    const header = currentSprite.sprite[0];
+    const xDouble = header.xDouble ? 2 : 1;
+    const yDouble = header.yDouble ? 2 : 1;
+
+    // Calculate screen coordinates if not provided
+    // xPosition is always in fat pixel space (normalized by gmSprite at load time)
+    if (screenX === null || screenY === null) {
+        let qx = 0, qy = 0;
+        if (quadIndex > 0) {
+            const quad = currentSprite.sprite[quadIndex];
+            qx = quad.xPosition;
+            qy = quad.yPosition;
+        }
+
+        const baseGmX = (header.xPosition || 0) + 12;
+        const baseGmY = (header.yPosition || 0) + 50;
+        screenX = (baseGmX + qx - 12) * 2;
+        screenY = baseGmY + qy - 50;
+    }
+
+    // Box dimensions based on magnification (always 12 fat pixels wide)
+    const boxWidth = 12 * xDouble * 2;
+    const boxHeight = 21 * yDouble;
+
+    // Draw pulsing bounding box
+    const alpha = Math.floor(pulseAlpha * 255);
+    const boxColor = [255, 255, 0, alpha]; // Yellow
+
+    // Draw dashed border effect (outside the quad)
+    for (let x = 0; x < boxWidth; x++) {
+        if ((x + Math.floor(Date.now() / 100)) % 4 < 2) {
+            setPixelAlpha(screenX + x, screenY - 1, boxColor);
+            setPixelAlpha(screenX + x, screenY + boxHeight, boxColor);
+        }
+    }
+    for (let y = 0; y < boxHeight; y++) {
+        if ((y + Math.floor(Date.now() / 100)) % 4 < 2) {
+            setPixelAlpha(screenX - 1, screenY + y, boxColor);
+            setPixelAlpha(screenX + boxWidth, screenY + y, boxColor);
+        }
+    }
+}
+
+function setPixelAlpha(x, y, color) {
+    if (x < 0 || x >= c64Screen.WIDTH || y < 0 || y >= c64Screen.HEIGHT) return;
+    const idx = (y * c64Screen.WIDTH + x) * 4;
+    // Simple alpha blend
+    const alpha = color[3] / 255;
+    previewScreen.pixels[idx] = Math.floor(previewScreen.pixels[idx] * (1 - alpha) + color[0] * alpha);
+    previewScreen.pixels[idx + 1] = Math.floor(previewScreen.pixels[idx + 1] * (1 - alpha) + color[1] * alpha);
+    previewScreen.pixels[idx + 2] = Math.floor(previewScreen.pixels[idx + 2] * (1 - alpha) + color[2] * alpha);
+    previewScreen.pixels[idx + 3] = 255;
+}
+
+</script>
+</body>
+</html>

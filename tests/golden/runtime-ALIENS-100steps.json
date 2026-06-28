@@ -1,0 +1,186 @@
+{
+  "variables": [
+    {
+      "name": "a",
+      "value": 70,
+      "defined": true
+    },
+    {
+      "name": "b",
+      "value": 0,
+      "defined": true
+    },
+    {
+      "name": "c",
+      "value": 0,
+      "defined": true
+    },
+    {
+      "name": "d",
+      "value": 0,
+      "defined": true
+    },
+    {
+      "name": "e",
+      "value": 0,
+      "defined": true
+    },
+    {
+      "name": "f",
+      "value": 0,
+      "defined": true
+    },
+    {
+      "name": "g",
+      "value": 0,
+      "defined": true
+    },
+    {
+      "name": "i",
+      "value": 0,
+      "defined": true
+    },
+    {
+      "name": "j",
+      "value": 0,
+      "defined": true
+    },
+    {
+      "name": "k",
+      "value": 0,
+      "defined": true
+    },
+    {
+      "name": "l",
+      "value": 0,
+      "defined": true
+    },
+    {
+      "name": "m",
+      "value": 0,
+      "defined": true
+    },
+    {
+      "name": "n",
+      "value": 0,
+      "defined": true
+    },
+    {
+      "name": "o",
+      "value": 10,
+      "defined": true
+    },
+    {
+      "name": "p",
+      "value": 1,
+      "defined": true
+    },
+    {
+      "name": "q",
+      "value": 0,
+      "defined": true
+    }
+  ],
+  "sprites": [
+    {
+      "slot": 1,
+      "visible": true,
+      "name": "ship  ",
+      "x": 80,
+      "y": 220,
+      "speed": 0,
+      "direction": 0,
+      "animSpeed": 0
+    },
+    {
+      "slot": 2,
+      "visible": true,
+      "name": "pbull ",
+      "x": 0,
+      "y": 30,
+      "speed": 0,
+      "direction": 0,
+      "animSpeed": 0
+    },
+    {
+      "slot": 3,
+      "visible": true,
+      "name": "ebull ",
+      "x": 0,
+      "y": 30,
+      "speed": 0,
+      "direction": 128,
+      "animSpeed": 0
+    },
+    {
+      "slot": 4,
+      "visible": true,
+      "name": "pair  ",
+      "x": 14,
+      "y": 70,
+      "speed": 0,
+      "direction": 0,
+      "animSpeed": 24
+    },
+    {
+      "slot": 5,
+      "visible": true,
+      "name": "pair  ",
+      "x": 40,
+      "y": 70,
+      "speed": 0,
+      "direction": 0,
+      "animSpeed": 24
+    },
+    {
+      "slot": 6,
+      "visible": true,
+      "name": "pair  ",
+      "x": 66,
+      "y": 70,
+      "speed": 0,
+      "direction": 0,
+      "animSpeed": 24
+    },
+    {
+      "slot": 7,
+      "visible": true,
+      "name": "pair  ",
+      "x": 92,
+      "y": 70,
+      "speed": 0,
+      "direction": 0,
+      "animSpeed": 24
+    },
+    {
+      "slot": 8,
+      "visible": true,
+      "name": "pair  ",
+      "x": 118,
+      "y": 70,
+      "speed": 0,
+      "direction": 0,
+      "animSpeed": 24
+    }
+  ],
+  "scenes": [
+    {
+      "slot": 1,
+      "loaded": true,
+      "name": "stars"
+    },
+    {
+      "slot": 2,
+      "loaded": true,
+      "name": null
+    }
+  ],
+  "activeScene": 0,
+  "scores": [
+    0,
+    0
+  ],
+  "running": true,
+  "paused": false,
+  "pc": 70
+}

@@ -1,0 +1,141 @@
+{
+  "variables": [
+    {
+      "name": "a",
+      "value": 0,
+      "defined": true
+    },
+    {
+      "name": "b",
+      "value": 0,
+      "defined": true
+    },
+    {
+      "name": "c",
+      "value": 2,
+      "defined": true
+    },
+    {
+      "name": "d",
+      "value": 0,
+      "defined": true
+    },
+    {
+      "name": "e",
+      "value": 0,
+      "defined": true
+    },
+    {
+      "name": "r",
+      "value": 6,
+      "defined": true
+    },
+    {
+      "name": "z",
+      "value": 40,
+      "defined": true
+    }
+  ],
+  "sprites": [
+    {
+      "slot": 1,
+      "visible": true,
+      "name": "jet r ",
+      "x": 203.26,
+      "y": 91,
+      "speed": 150,
+      "direction": 64,
+      "animSpeed": 21
+    },
+    {
+      "slot": 2,
+      "visible": false,
+      "name": null,
+      "x": 0,
+      "y": 0,
+      "speed": 0,
+      "direction": 0,
+      "animSpeed": 0
+    },
+    {
+      "slot": 3,
+      "visible": true,
+      "name": "baloon",
+      "x": 0,
+      "y": 0,
+      "speed": 0,
+      "direction": 0,
+      "animSpeed": 0
+    },
+    {
+      "slot": 4,
+      "visible": true,
+      "name": "baloon",
+      "x": 0,
+      "y": 0,
+      "speed": 0,
+      "direction": 0,
+      "animSpeed": 0
+    },
+    {
+      "slot": 5,
+      "visible": true,
+      "name": "baloon",
+      "x": 0,
+      "y": 0,
+      "speed": 0,
+      "direction": 0,
+      "animSpeed": 0
+    },
+    {
+      "slot": 6,
+      "visible": true,
+      "name": "baloon",
+      "x": 0,
+      "y": 0,
+      "speed": 0,
+      "direction": 0,
+      "animSpeed": 0
+    },
+    {
+      "slot": 7,
+      "visible": true,
+      "name": "baloon",
+      "x": 0,
+      "y": 0,
+      "speed": 0,
+      "direction": 0,
+      "animSpeed": 0
+    },
+    {
+      "slot": 8,
+      "visible": true,
+      "name": "baloon",
+      "x": 0,
+      "y": 0,
+      "speed": 0,
+      "direction": 0,
+      "animSpeed": 0
+    }
+  ],
+  "scenes": [
+    {
+      "slot": 1,
+      "loaded": true,
+      "name": null
+    },
+    {
+      "slot": 2,
+      "loaded": true,
+      "name": null
+    }
+  ],
+  "activeScene": 0,
+  "scores": [
+    0,
+    0
+  ],
+  "running": true,
+  "paused": false,
+  "pc": 444
+}

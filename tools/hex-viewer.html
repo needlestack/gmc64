@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>D64 Hex Viewer</title>
+    <style>
+        body {
+            font-family: monospace;
+            background: #1a1a2e;
+            color: #eee;
+            margin: 20px;
+        }
+        .container {
+            display: flex;
+            gap: 20px;
+        }
+        .file-list {
+            width: 200px;
+            border: 1px solid #444;
+            padding: 10px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        .file-item {
+            padding: 5px;
+            cursor: pointer;
+        }
+        .file-item:hover {
+            background: #333;
+        }
+        .file-item.selected {
+            background: #446;
+        }
+        .hex-view {
+            flex: 1;
+            border: 1px solid #444;
+            padding: 10px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        .hex-row {
+            display: flex;
+            gap: 20px;
+        }
+        .hex-offset {
+            color: #888;
+            width: 60px;
+        }
+        .hex-bytes {
+            width: 360px;
+        }
+        .hex-byte {
+            display: inline-block;
+            width: 24px;
+        }
+        .hex-ascii {
+            color: #8f8;
+        }
+        h2 {
+            margin-top: 0;
+            color: #aaf;
+        }
+        .disk-info {
+            margin-bottom: 20px;
+            padding: 10px;
+            background: #222;
+            border: 1px solid #444;
+        }
+        #loadDisk {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        .byte-info {
+            margin-top: 20px;
+            padding: 10px;
+            background: #222;
+            border: 1px solid #444;
+        }
+        #hexTextarea {
+            width: 100%;
+            height: 60vh;
+            font-family: monospace;
+            font-size: 14px;
+            background: #1a1a2e;
+            color: #eee;
+            border: 1px solid #444;
+            padding: 10px;
+            resize: vertical;
+        }
+    </style>
+</head>
+<body>
+    <h1>D64 Hex Viewer</h1>
+
+    <div class="disk-info">
+        <input type="file" id="diskInput" accept=".d64" style="display:none">
+        <button id="loadDisk" onclick="document.getElementById('diskInput').click()">Load D64 Disk</button>
+        <span id="diskName" style="margin-left: 20px;"></span>
+    </div>
+
+    <div class="container">
+        <div class="file-list">
+            <h2>Files</h2>
+            <div id="fileList"></div>
+        </div>
+        <div class="hex-view">
+            <h2>Hex View: <span id="fileName">-</span></h2>
+            <div class="byte-info">
+                Size: <span id="fileSize">-</span> bytes
+            </div>
+            <textarea id="hexTextarea" readonly style="margin-top: 10px;"></textarea>
+        </div>
+    </div>
+
+    <script src="js/d64lib.js"></script>
+    <script>
+        let disk = null;
+        let files = [];
+
+        document.getElementById('diskInput').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const arrayBuffer = await file.arrayBuffer();
+            disk = new D64(arrayBuffer);
+
+            document.getElementById('diskName').textContent = file.name;
+
+            files = disk.getDirectory();
+
+            const listEl = document.getElementById('fileList');
+            listEl.innerHTML = '';
+
+            files.forEach((f, idx) => {
+                const div = document.createElement('div');
+                div.className = 'file-item';
+                div.textContent = `${f.fileName} (${f.fileSize} blocks)`;
+                div.onclick = () => showFile(idx);
+                listEl.appendChild(div);
+            });
+        });
+
+        function showFile(idx) {
+            document.querySelectorAll('.file-item').forEach((el, i) => {
+                el.classList.toggle('selected', i === idx);
+            });
+
+            const file = files[idx];
+            const data = disk.readFile(file.fileName);
+
+            document.getElementById('fileName').textContent = file.fileName;
+            document.getElementById('fileSize').textContent = data.length;
+
+            const textarea = document.getElementById('hexTextarea');
+            let hexText = '';
+
+            // 8 bytes per row, no offsets, no ASCII
+            for (let offset = 0; offset < data.length; offset += 8) {
+                let line = '';
+                for (let i = 0; i < 8; i++) {
+                    if (offset + i < data.length) {
+                        line += data[offset + i].toString(16).padStart(2, '0').toUpperCase();
+                    }
+                    if (i < 7 && offset + i < data.length - 1) line += ' ';
+                }
+                hexText += line + '\n';
+            }
+
+            textarea.value = hexText;
+        }
+    </script>
+</body>
+</html>

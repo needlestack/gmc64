@@ -1,0 +1,47 @@
+{
+  "originalSize": 51,
+  "name": "engine",
+  "repeatCount": 100,
+  "repeatDelay": 0,
+  "speed": 254,
+  "eqOn": false,
+  "volume": 15,
+  "frames": [
+    {
+      "index": 0,
+      "wave": 16,
+      "att": 3,
+      "dec": 3,
+      "sus": 0,
+      "rel": 0,
+      "freqHi": 6,
+      "freqLo": 0,
+      "spd": 128,
+      "pulseHi": 0,
+      "pulseLo": 0,
+      "dur": 5,
+      "eqLowPass": 0,
+      "eqBandPass": 0,
+      "eqHighPass": 0,
+      "tie": true
+    },
+    {
+      "index": 1,
+      "wave": 16,
+      "att": 3,
+      "dec": 3,
+      "sus": 0,
+      "rel": 0,
+      "freqHi": 6,
+      "freqLo": 0,
+      "spd": 127,
+      "pulseHi": 0,
+      "pulseLo": 0,
+      "dur": 5,
+      "eqLowPass": 0,
+      "eqBandPass": 0,
+      "eqHighPass": 0,
+      "tie": true
+    }
+  ]
+}

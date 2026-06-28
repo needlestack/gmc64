@@ -1,0 +1,3180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>C64 GameMaker Music Editor</title>
+<link rel="stylesheet" href="css/gm-ui.css">
+<style>
+
+#screen {
+    background: var(--c64-blue);
+    width: 720px;
+    height: 560px;
+    margin: 0 auto;
+    position: relative;
+}
+
+/* Piano keyboard container */
+#pianoContainer {
+    position: absolute;
+    top: 10px;
+    left: 60px;
+    width: 600px;
+    height: 80px;
+}
+
+/* Wood trim above piano */
+#woodTrim {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 15px;
+    background: var(--c64-brown);
+    border: 2px solid var(--c64-black);
+    border-bottom: none;
+}
+
+/* Piano keys area */
+#piano {
+    position: absolute;
+    top: 15px;
+    left: 0;
+    right: 0;
+    height: 65px;
+    background: var(--c64-black);
+    display: flex;
+    border: 2px solid var(--c64-black);
+}
+
+.white-key {
+    flex: 1;
+    background: linear-gradient(to bottom, var(--c64-white) 0%, var(--c64-gray3) 90%, var(--c64-gray2) 100%);
+    border: 1px solid var(--c64-black);
+    border-radius: 0 0 3px 3px;
+    cursor: pointer;
+    position: relative;
+    z-index: 1;
+}
+
+.white-key:hover {
+    background: var(--c64-white);
+}
+
+.white-key.active {
+    background: var(--c64-gray3);
+}
+
+.black-key {
+    width: 12px;
+    height: 40px;
+    background: linear-gradient(to bottom, var(--c64-gray1) 0%, var(--c64-black) 100%);
+    border-radius: 0 0 2px 2px;
+    position: absolute;
+    z-index: 2;
+    cursor: pointer;
+}
+
+.black-key:hover {
+    background: var(--c64-gray1);
+}
+
+.black-key.active {
+    background: var(--c64-black);
+}
+
+/* Staff area */
+#staffContainer {
+    position: absolute;
+    top: 96px;
+    left: 10px;
+    right: 200px;
+    bottom: 6px;
+    background: var(--c64-white);
+    border: 3px solid var(--c64-black);
+    overflow: hidden;
+}
+
+#staffArea {
+    position: relative;
+    width: 100%;
+    height: 100%;
+}
+
+/* Staff lines */
+.staff-line {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--c64-black);
+}
+
+.staff-line.invisible {
+    background: var(--c64-gray3);
+}
+
+/* Playhead line - vertical line at 3/4 across staff where notes play */
+#playhead {
+    position: absolute;
+    left: 75%;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--c64-red);
+    z-index: 100;
+}
+
+/* Notes on staff */
+.note {
+    position: absolute;
+    cursor: pointer;
+    pointer-events: auto;
+}
+
+.note:hover {
+    filter: brightness(1.5);
+    cursor: grab;
+}
+
+.note.dragging {
+    filter: brightness(1.5) drop-shadow(3px 3px 4px rgba(0,0,0,0.6));
+    cursor: grabbing;
+    z-index: 200;
+}
+
+.note svg {
+    overflow: visible;
+}
+
+/* Preview note that follows mouse */
+.preview-note {
+    position: absolute;
+    pointer-events: none;
+    opacity: 0.6;
+    animation: blink 0.5s infinite;
+}
+
+@keyframes blink {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 0.3; }
+}
+
+/* Controls panel (right side) */
+#controls {
+    position: absolute;
+    top: 100px;
+    right: 10px;
+    width: 180px;
+    bottom: 10px;
+}
+
+/* Button grid */
+#buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px;
+    width: 100%;
+}
+
+#buttons button {
+    width: 100%;
+}
+
+#buttons button.active {
+    background: var(--c64-lt-green);
+}
+
+#buttons button.flashing {
+    animation: flash 0.5s infinite;
+}
+
+@keyframes flash {
+    0%, 100% { background: var(--c64-gray3); }
+    50% { background: var(--c64-yellow); }
+}
+
+/* Duration selector */
+#durationPanel {
+    margin-top: 5px;
+    background: var(--c64-white);
+    border: 3px solid var(--c64-black);
+    padding: 3px;
+}
+
+#durationScroller {
+    overflow-x: auto;
+}
+
+.duration-row {
+    display: flex;
+    gap: 3px;
+}
+
+.duration-row + .duration-row {
+    margin-top: 3px;
+}
+
+.duration-note, .duration-spacer {
+    min-width: 28px;
+    width: 28px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid var(--c64-gray3);
+    background: var(--c64-gray3);
+    padding: 1px;
+    flex-shrink: 0;
+}
+
+.duration-note {
+    cursor: pointer;
+}
+
+.duration-spacer {
+    visibility: hidden;
+}
+
+.duration-note.selected {
+    border-color: var(--c64-black);
+    background: var(--c64-lt-blue);
+}
+
+.duration-note svg {
+    width: 24px;
+    height: 32px;
+}
+
+#tieRow {
+    display: flex;
+    justify-content: center;
+    margin-top: 4px;
+}
+
+#tieButton {
+    padding: 2px 10px;
+    margin: 0;
+    color: var(--c64-gray2);
+}
+
+#tieButton.active {
+    color: var(--c64-blue);
+    background: var(--c64-lt-green);
+}
+
+/* Nav + Tempo row */
+#navTempoRow {
+    display: flex;
+    gap: 5px;
+    margin-top: 5px;
+    align-items: stretch;
+}
+
+#navArrows {
+    display: flex;
+    gap: 3px;
+}
+
+.nav-arrow {
+    padding: 3px 8px;
+    margin: 0;
+}
+
+#tempoPanel {
+    flex: 1;
+    background: var(--c64-white);
+    border: 3px solid var(--c64-black);
+    padding: 3px;
+    text-align: center;
+}
+
+#tempoLabel {
+    color: var(--c64-blue);
+    margin-bottom: 4px;
+}
+
+#tempoValue {
+    color: var(--c64-black);
+    cursor: ns-resize;
+}
+
+#tempoPanel.disabled #tempoValue {
+    color: var(--c64-gray2);
+    cursor: default;
+}
+
+#tempoPanel.disabled #tempoLabel {
+    color: var(--c64-gray2);
+}
+
+/* Channel list */
+#channelPanel {
+    margin-top: 5px;
+    background: var(--c64-white);
+    border: 3px solid var(--c64-black);
+    padding: 3px;
+}
+
+#channelHeader {
+    color: var(--c64-black);
+    text-align: center;
+    margin-bottom: 5px;
+}
+
+.channel-row {
+    display: flex;
+    align-items: center;
+    padding: 2px 3px;
+    cursor: pointer;
+}
+
+.channel-row:hover {
+    background: var(--c64-gray3);
+}
+
+.channel-num {
+    width: 20px;
+}
+
+.channel-inst {
+    flex: 1;
+}
+
+.channel-row:nth-child(2) .channel-num,
+.channel-row:nth-child(2) .channel-inst { color: var(--c64-red); }
+.channel-row:nth-child(3) .channel-num,
+.channel-row:nth-child(3) .channel-inst { color: var(--c64-green); }
+.channel-row:nth-child(4) .channel-num,
+.channel-row:nth-child(4) .channel-inst { color: var(--c64-lt-blue); }
+
+.channel-row:nth-child(2).selected { background: var(--c64-red); }
+.channel-row:nth-child(3).selected { background: var(--c64-green); }
+.channel-row:nth-child(4).selected { background: var(--c64-lt-blue); }
+
+.channel-row.selected .channel-num,
+.channel-row.selected .channel-inst {
+    color: var(--c64-white) !important;
+}
+
+/* Instrument dropdown */
+.inst-dropdown {
+    position: absolute;
+    background: var(--c64-white);
+    border: 2px solid var(--c64-black);
+    z-index: 1000;
+    display: none;
+}
+
+.inst-dropdown.open {
+    display: block;
+}
+
+.inst-option {
+    padding: 5px 10px;
+    cursor: pointer;
+    color: var(--c64-black);
+}
+
+.inst-option:hover {
+    background: var(--c64-blue);
+    color: var(--c64-white);
+}
+
+/* Confirmation dialog */
+.confirm-dialog {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: var(--c64-blue);
+    border: 4px solid var(--c64-white);
+    padding: 20px;
+    z-index: 2000;
+    display: none;
+    text-align: center;
+}
+
+.confirm-dialog.open {
+    display: block;
+}
+
+.confirm-text {
+    color: var(--c64-white);
+    margin-bottom: 15px;
+}
+
+.confirm-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+}
+
+.confirm-btn {
+    padding: 5px 15px;
+}
+
+/* Song name sits in the controls panel just above the menu buttons */
+#songNamePanel {
+    background: var(--c64-blue);
+    padding: 1px 8px;
+    margin-bottom: 6px;
+    text-align: center;
+}
+
+#songName {
+    color: var(--c64-white);
+    cursor: text;
+}
+
+/* MIDI Import dialog */
+.midi-dialog {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: var(--c64-blue);
+    border: 4px solid var(--c64-white);
+    padding: 15px;
+    z-index: 2000;
+    display: none;
+    min-width: 320px;
+}
+
+.midi-dialog.open {
+    display: block;
+}
+
+.midi-header {
+    color: var(--c64-white);
+    text-align: center;
+    font-size: 1.2em;
+    margin-bottom: 15px;
+    border-bottom: 2px solid var(--c64-lt-blue);
+    padding-bottom: 8px;
+}
+
+.midi-content {
+    color: var(--c64-white);
+}
+
+.midi-section {
+    margin-bottom: 12px;
+}
+
+.midi-label {
+    display: block;
+    margin-bottom: 5px;
+    color: var(--c64-lt-blue);
+}
+
+.midi-btn {
+    padding: 5px 12px;
+    cursor: pointer;
+}
+
+.midi-filename {
+    display: inline-block;
+    margin-left: 10px;
+    color: var(--c64-gray3);
+    font-style: italic;
+}
+
+.midi-track-map {
+    margin: 8px 0;
+}
+
+.midi-channel-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 5px;
+}
+
+.midi-ch-label {
+    width: 50px;
+    font-weight: bold;
+}
+
+.midi-select {
+    flex: 1;
+    padding: 4px;
+    background: var(--c64-white);
+    border: 2px solid var(--c64-black);
+    color: var(--c64-black);
+}
+
+.midi-status {
+    color: var(--c64-yellow);
+    margin: 10px 0;
+    min-height: 20px;
+}
+
+.midi-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 15px;
+    margin-top: 15px;
+}
+
+.midi-checkbox-row {
+    display: flex;
+    align-items: center;
+    margin-top: 10px;
+    gap: 8px;
+}
+
+.midi-checkbox-label {
+    color: var(--c64-white);
+    font-size: 0.9em;
+}
+
+#midiVoiceSep {
+    width: 16px;
+    height: 16px;
+}
+
+/* MIDI export radio buttons */
+.midi-radio-group {
+    margin: 8px 0;
+}
+
+.midi-radio-label {
+    display: block;
+    color: var(--c64-white);
+    margin-bottom: 8px;
+    cursor: pointer;
+}
+
+.midi-radio-label input {
+    margin-right: 8px;
+}
+
+.midi-info {
+    color: var(--c64-lt-blue);
+    font-size: 0.9em;
+    line-height: 1.4;
+}
+
+</style>
+</head>
+<body>
+
+<div id="screen">
+    <!-- Piano keyboard -->
+    <div id="pianoContainer">
+        <div id="woodTrim"></div>
+        <div id="piano"></div>
+    </div>
+
+    <!-- Staff area -->
+    <div id="staffContainer">
+        <div id="staffArea">
+            <div id="playhead"></div>
+            <div id="previewNote" class="preview-note" style="display: none;"></div>
+        </div>
+    </div>
+
+    <!-- Controls -->
+    <div id="controls">
+        <!-- Song name sits just above the menu. Push-down past existing
+             content is fine — there's headroom below the instrument panel. -->
+        <div id="songNamePanel">
+            <span id="songName">&nbsp;</span>
+        </div>
+
+        <div id="buttons">
+            <button id="btnFile" onclick="showFilePopup()">file</button>
+            <button id="btnQuit" onclick="quitEditor()">menu</button>
+            <button id="btnIns" onclick="toggleInsMode()">ins</button>
+            <button id="btnTop" onclick="goToTop()">top</button>
+            <button id="btnDel" onclick="deleteNote()">del</button>
+            <button id="btnPlay" onclick="togglePlay()">play</button>
+            <button id="btnClr" onclick="clearSong()">clr</button>
+            <button id="btnUndo" onclick="undo()">undo</button>
+        </div>
+
+        <div id="durationPanel">
+            <div id="durationScroller">
+                <div id="noteRow" class="duration-row"></div>
+                <div id="restRow" class="duration-row"></div>
+            </div>
+            <div id="tieRow">
+                <button id="tieButton" onclick="toggleTie()">tie</button>
+            </div>
+        </div>
+
+        <div id="navTempoRow">
+            <div id="navArrows">
+                <button class="nav-arrow" id="btnBack">&lt;</button>
+                <button class="nav-arrow" id="btnForward">&gt;</button>
+            </div>
+            <div id="tempoPanel">
+                <div id="tempoLabel">tempo</div>
+                <div id="tempoValue">080</div>
+            </div>
+        </div>
+
+        <div id="channelPanel">
+            <div id="channelHeader">channel</div>
+            <div class="channel-row selected" data-channel="0" onclick="selectChannel(0)" ondblclick="showInstrumentPicker(0)">
+                <span class="channel-num">1</span>
+                <span class="channel-inst">piano</span>
+            </div>
+            <div class="channel-row" data-channel="1" onclick="selectChannel(1)" ondblclick="showInstrumentPicker(1)">
+                <span class="channel-num">2</span>
+                <span class="channel-inst">violin</span>
+            </div>
+            <div class="channel-row" data-channel="2" onclick="selectChannel(2)" ondblclick="showInstrumentPicker(2)">
+                <span class="channel-num">3</span>
+                <span class="channel-inst">bass</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirmation dialog -->
+    <div id="confirmDialog" class="confirm-dialog">
+        <div class="confirm-text" id="confirmText">delete note channel 1?</div>
+        <div class="confirm-buttons">
+            <button class="confirm-btn" onclick="confirmYes()">yes</button>
+            <button class="confirm-btn" onclick="confirmNo()">no</button>
+        </div>
+    </div>
+
+    <!-- Delete dialog with count input -->
+    <div id="deleteDialog" class="confirm-dialog">
+        <div class="confirm-text">delete <input type="number" id="deleteCount" value="1" min="1" max="100" style="width:40px;text-align:center;font-size:14px;"> notes<br>channel <span id="deleteChannel">1</span>?</div>
+        <div class="confirm-buttons">
+            <button class="confirm-btn" onclick="confirmDelete()">yes</button>
+            <button class="confirm-btn" onclick="cancelDelete()">no</button>
+        </div>
+    </div>
+
+    <!-- Instrument picker dropdown -->
+    <div id="instDropdown" class="inst-dropdown"></div>
+
+    <!-- MIDI Import dialog -->
+    <div id="midiDialog" class="midi-dialog">
+        <div class="midi-header">Import MIDI</div>
+        <div class="midi-content">
+            <div id="midiFileSelect" class="midi-section">
+                <label class="midi-label">Select MIDI file:</label>
+                <input type="file" id="midiFileInput" accept=".mid,.midi" style="display:none">
+                <button class="midi-btn" onclick="document.getElementById('midiFileInput').click()">Choose File</button>
+                <span id="midiFileName" class="midi-filename">No file selected</span>
+            </div>
+            <div id="midiTrackSection" class="midi-section" style="display:none">
+                <label class="midi-label">Map tracks to channels:</label>
+                <div class="midi-track-map">
+                    <div class="midi-channel-row">
+                        <span class="midi-ch-label" style="color:var(--c64-red)">Ch 1:</span>
+                        <select id="midiTrack1" class="midi-select"></select>
+                    </div>
+                    <div class="midi-channel-row">
+                        <span class="midi-ch-label" style="color:var(--c64-green)">Ch 2:</span>
+                        <select id="midiTrack2" class="midi-select"></select>
+                    </div>
+                    <div class="midi-channel-row">
+                        <span class="midi-ch-label" style="color:var(--c64-lt-blue)">Ch 3:</span>
+                        <select id="midiTrack3" class="midi-select"></select>
+                    </div>
+                </div>
+                <label class="midi-label">Quantization:</label>
+                <select id="midiQuantize" class="midi-select">
+                    <option value="eighth">8th note</option>
+                    <option value="sixteenth" selected>16th note</option>
+                    <option value="32nd">32nd note</option>
+                </select>
+                <div class="midi-checkbox-row">
+                    <input type="checkbox" id="midiVoiceSep" checked>
+                    <label for="midiVoiceSep" class="midi-checkbox-label">Voice separation (split chords across channels)</label>
+                </div>
+            </div>
+            <div id="midiStatus" class="midi-status"></div>
+        </div>
+        <div class="midi-buttons">
+            <button class="midi-btn" id="midiImportBtn" onclick="doMidiImport()" disabled>Import</button>
+            <button class="midi-btn" onclick="closeMidiDialog()">Cancel</button>
+        </div>
+    </div>
+
+    <!-- MIDI Export dialog -->
+    <div id="midiExportDialog" class="midi-dialog">
+        <div class="midi-header">Export MIDI</div>
+        <div class="midi-content">
+            <div class="midi-section">
+                <label class="midi-label">Instrument mapping:</label>
+                <div class="midi-radio-group">
+                    <label class="midi-radio-label">
+                        <input type="radio" name="midiMapping" value="acoustic" checked>
+                        Acoustic (realistic instruments)
+                    </label>
+                    <label class="midi-radio-label">
+                        <input type="radio" name="midiMapping" value="synth">
+                        Synth (electronic sounds)
+                    </label>
+                </div>
+            </div>
+            <div class="midi-section">
+                <label class="midi-label">Song info:</label>
+                <div id="midiExportInfo" class="midi-info"></div>
+            </div>
+        </div>
+        <div class="midi-buttons">
+            <button class="midi-btn" onclick="doMidiExport()">Export</button>
+            <button class="midi-btn" onclick="closeMidiExportDialog()">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<script src="js/d64lib.js"></script>
+<script src="js/gmDisk.js"></script>
+<script src="js/c64lib.js"></script>
+<script src="js/gmSound.js"></script>
+<script src="js/gmMusic.js"></script>
+<script src="js/gmTools.js"></script>
+<script src="js/midiImport.js"></script>
+<script>
+// ============================================================================
+// MUSIC EDITOR - Create and edit C64 GameMaker songs
+// ============================================================================
+//
+// This editor mimics the original GameMaker music editor UI with a piano
+// keyboard, sheet music staff, and note entry system.
+//
+// === KEY CONCEPTS ===
+//
+// PITCH RANGE: G1 to G6 (5 octaves), matching the piano keyboard display
+// - Pitch byte 0x26 (38) = A4 (A440)
+// - G1 = pitch 0x07, G6 = pitch 0x43
+//
+// STAFF LAYOUT: 3 staves spanning the full pitch range
+// - Top staff: higher pitches
+// - Bottom staff: lower pitches (bass)
+//
+// CHANNELS: 3 independent voices, color-coded
+// - Channel 1: Red/pink
+// - Channel 2: Green
+// - Channel 3: Blue
+//
+// PLAYHEAD: Position at right edge of staff where notes are entered
+// Notes scroll left during playback and when navigating.
+
+// === CONSTANTS ===
+
+const INSTRUMENTS = [
+    'off', 'bass', 'cow bell', 'cymbal', 'flute', 'guitar', 'harpsicrd',
+    'piano', 'saxophone', 'snare', 'synthesiz', 'trumpet', 'violin', 'xylophone'
+];
+
+// Duration values (base byte values) - includes all GM durations
+// Rest mode is toggled separately, applies to any duration
+// Note: GM does not have dotted rests, only dotted notes
+const DURATIONS = [
+    { name: 'whole', byte: 0x1F, beats: 4.0, dotted: false },
+    { name: 'dotted-half', byte: 0x17, beats: 3.0, dotted: true },
+    { name: 'half', byte: 0x0F, beats: 2.0, dotted: false },
+    { name: 'dotted-quarter', byte: 0x0B, beats: 1.5, dotted: true },
+    { name: 'quarter', byte: 0x07, beats: 1.0, dotted: false },
+    { name: 'dotted-eighth', byte: 0x05, beats: 0.75, dotted: true },
+    { name: 'eighth', byte: 0x03, beats: 0.5, dotted: false },
+    { name: 'sixteenth', byte: 0x01, beats: 0.25, dotted: false },
+    { name: '32nd', byte: 0x00, beats: 0.125, dotted: false }
+];
+
+// Durations available for rests (no dotted rests in GM)
+const REST_DURATIONS = [
+    { name: 'whole', byte: 0x1F, beats: 4.0 },
+    { name: 'half', byte: 0x0F, beats: 2.0 },
+    { name: 'quarter', byte: 0x07, beats: 1.0 },
+    { name: 'eighth', byte: 0x03, beats: 0.5 },
+    { name: 'sixteenth', byte: 0x01, beats: 0.25 },
+    { name: '32nd', byte: 0x00, beats: 0.125 }
+];
+
+// Map from duration byte to beats for loaded songs
+const DURATION_BYTE_TO_BEATS = {
+    0x00: 0.125,  // 32nd
+    0x01: 0.25,   // 16th
+    0x03: 0.5,    // 8th
+    0x05: 0.75,   // dotted 8th
+    0x07: 1.0,    // quarter
+    0x0B: 1.5,    // dotted quarter
+    0x0F: 2.0,    // half
+    0x17: 3.0,    // dotted half
+    0x1F: 4.0     // whole
+};
+
+// Pitch constants
+const PITCH_A440 = 0x26; // 38 decimal
+const PITCH_G1 = 0x07;   // Lowest note on keyboard
+const PITCH_G6 = 0x43;   // Highest note on keyboard
+const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
+// Staff layout
+const STAFF_HEIGHT = 472; // Total staff area height (extra room for G6 above top line)
+
+// Horizontal spacing: fixed slots per beat (like traditional sheet music)
+// Each beat divided into 8 slots (32nd note resolution)
+// Notes are positioned by their slot, not by their duration
+const SLOTS_PER_BEAT = 8; // 8 slots = 32nd note resolution
+const PIXELS_PER_SLOT = 25; // Each slot gets 25 pixels
+
+// === STATE ===
+
+let currentSong = null;
+let currentSongFileName = null;
+let currentChannel = 0;
+let currentDuration = 4; // Index into DURATIONS (default: quarter)
+let tieEnabled = false;
+let restMode = false; // When true, enter rests instead of notes
+let insMode = false;
+let playheadBeat = 0; // Current beat position (playhead at right edge)
+let visualBeat = 0; // Visual position for smooth scrolling
+let scrollAnimationId = null; // Animation frame ID
+let isPlaying = false;
+let playbackStartTime = 0;
+let playbackStartBeat = 0;
+let playbackAnimId = null;
+let confirmCallback = null;
+let activePlaybackNotes = []; // Track notes currently playing for piano highlighting
+let undoHistory = []; // Stack of previous song states
+const MAX_UNDO_HISTORY = 50; // Limit undo history size
+
+// === INITIALIZATION ===
+
+function initApp() {
+    createPianoKeyboard();
+    createDurationSelector();
+    createStaffLines();
+    newSong();
+    restoreSongSession();
+    setupTempoControl();
+    setupKeyboardShortcuts();
+    setupNavButtons();
+    updateUndoButton();
+}
+
+// === SESSION PERSISTENCE ===
+// Persists work-in-progress to localStorage. See GMTools.session.
+
+const saveSongSession = GMTools.session.debouncedSaver('music-maker', () => {
+    if (!currentSong) return null;
+    return {
+        bytes: GMTools.session.bytesToBase64(currentSong.serialize()),
+        fileName: currentSongFileName
+    };
+});
+
+function restoreSongSession() {
+    const s = GMTools.session.load('music-maker');
+    if (!s || !s.bytes) return;
+    try {
+        const bytes = GMTools.session.base64ToBytes(s.bytes);
+        currentSong = new gmMusic(bytes);
+        currentSongFileName = s.fileName || null;
+        playheadBeat = 0;
+        visualBeat = 0;
+        clearUndoHistory();
+        updateSongNameDisplay();
+        updateChannelDisplay();
+        updateTempoDisplay();
+        renderStaff();
+    } catch (e) {
+        console.warn('music-maker: failed to restore session, starting fresh:', e.message);
+    }
+}
+
+function newSong() {
+    currentSong = gmMusic.createBlank();
+    // Reset the filename so the save dialog doesn't prefill with the prior song's name
+    currentSongFileName = null;
+    playheadBeat = 0;
+    visualBeat = 0;
+    clearUndoHistory();
+    updateSongNameDisplay();
+    updateChannelDisplay();
+    updateTempoDisplay();
+    renderStaff();
+}
+
+// === PIANO KEYBOARD ===
+
+function createPianoKeyboard() {
+    const piano = document.getElementById('piano');
+    piano.innerHTML = '';
+
+    // 5 octaves: G1 to G6
+    // White keys: G A B C D E F (repeating)
+    // Pattern from G: W b W b W W b W b W b W (where W=white, b=black)
+
+    const whiteKeyPattern = [0, 2, 4, 5, 7, 9, 11]; // Semitones for white keys in octave (C-based)
+    const blackKeyPattern = [1, 3, 6, 8, 10]; // Semitones for black keys
+
+    // Start from G1 (pitch 0x07)
+    // G is 7 semitones above C, so G1 in our system...
+    // Let's think: pitch 0x26 = A4. A is 9 semitones above C.
+    // So C4 = 0x26 - 9 = 0x1D (29)
+    // C1 = 29 - 36 = -7... that's not right.
+    // Actually from music-player: C1 = 0x05
+    // So G1 = 0x05 + 7 = 0x0C (12)... but we said PITCH_G1 = 0x07
+    // Let me recalculate. From the code: noteValue 0x05 maps to C1
+    // G1 = C1 + 7 semitones = 0x05 + 7 = 0x0C
+    // But that doesn't match... let me check again.
+
+    // From music-player.html:
+    // const semitone = noteValue - 5;  // semitones from C1
+    // So noteValue 5 = C1, noteValue 12 = G1
+    // Let me fix PITCH_G1:
+    const REAL_PITCH_G1 = 0x00; // 0 = G0 (bottom line of bottom staff)
+    const REAL_PITCH_G6 = REAL_PITCH_G1 + 60; // 5 octaves = 60 semitones
+
+    // Build white and black keys for 5 octaves starting from G
+    let whiteKeyIndex = 0;
+    const whiteKeys = [];
+    const blackKeys = [];
+
+    // Iterate through all pitches from G1 to G6
+    for (let pitch = REAL_PITCH_G1; pitch <= REAL_PITCH_G6; pitch++) {
+        const semitone = pitch - 5; // semitones from C1
+        const noteInOctave = ((semitone % 12) + 12) % 12;
+
+        if (whiteKeyPattern.includes(noteInOctave)) {
+            whiteKeys.push({ pitch, noteInOctave, index: whiteKeyIndex++ });
+        } else {
+            blackKeys.push({ pitch, noteInOctave, whiteIndex: whiteKeyIndex - 1 });
+        }
+    }
+
+    // Create white keys
+    whiteKeys.forEach(key => {
+        const keyEl = document.createElement('div');
+        keyEl.className = 'white-key';
+        keyEl.dataset.pitch = key.pitch;
+        keyEl.dataset.whiteIndex = key.index;
+        keyEl.onclick = () => enterNoteFromPiano(key.pitch);
+        keyEl.onmouseenter = () => showPianoPreview(key.pitch, false);
+        keyEl.onmouseleave = hidePianoPreview;
+        piano.appendChild(keyEl);
+    });
+
+    // Create black keys after a brief delay to allow layout
+    // Position based on actual rendered white key positions to avoid drift
+    requestAnimationFrame(() => {
+        const whiteKeyEls = piano.querySelectorAll('.white-key');
+
+        blackKeys.forEach(key => {
+            const keyEl = document.createElement('div');
+            keyEl.className = 'black-key';
+            keyEl.dataset.pitch = key.pitch;
+
+            // Position based on actual white key position
+            const leftWhiteKey = whiteKeyEls[key.whiteIndex];
+            const rightWhiteKey = whiteKeyEls[key.whiteIndex + 1];
+            if (leftWhiteKey && rightWhiteKey) {
+                // Center between the right edge of left key and left edge of right key
+                const leftEdge = leftWhiteKey.offsetLeft + leftWhiteKey.offsetWidth;
+                const rightEdge = rightWhiteKey.offsetLeft;
+                const center = (leftEdge + rightEdge) / 2;
+                keyEl.style.left = (center - 6) + 'px'; // 6 = half of black key width (12px)
+            } else if (leftWhiteKey) {
+                // Edge case: use left key's right edge
+                keyEl.style.left = (leftWhiteKey.offsetLeft + leftWhiteKey.offsetWidth - 6) + 'px';
+            }
+
+            keyEl.onclick = (e) => { e.stopPropagation(); enterNoteFromPiano(key.pitch); };
+            keyEl.onmouseenter = () => showPianoPreview(key.pitch, true);
+            keyEl.onmouseleave = hidePianoPreview;
+            piano.appendChild(keyEl);
+        });
+    });
+}
+
+// Show ghost note preview on staff when hovering over piano key
+function showPianoPreview(pitch, isSharp) {
+    if (isPlaying || draggingNote) return;
+
+    // Highlight the piano key with channel color
+    ghostHighlightPianoKey(pitch, currentChannel);
+
+    const previewNote = document.getElementById('previewNote');
+    const staffArea = document.getElementById('staffArea');
+    const rect = staffArea.getBoundingClientRect();
+    const x = rect.width * 0.75; // Position at playhead (75% across)
+
+    // Get the snapped Y position for this pitch
+    const snappedY = pitchToStaffY(pitch);
+
+    // Get current duration info
+    const durationsArray = restMode ? REST_DURATIONS : DURATIONS;
+    const duration = durationsArray[currentDuration] || durationsArray[0];
+    const baseDuration = duration.byte;
+    const isDotted = duration.dotted || false;
+
+    // Determine stem direction based on position
+    const stemUp = snappedY > getStemFlipY();
+
+    // Get channel color
+    const color = getChannelColor(currentChannel);
+
+    // Render preview
+    if (restMode) {
+        previewNote.innerHTML = getRestSvg(baseDuration, color, isDotted);
+        previewNote.style.left = (x - 20) + 'px';
+        previewNote.style.top = (snappedY - 30) + 'px';
+        previewNote.style.width = '50px';
+        previewNote.style.height = '70px';
+    } else {
+        const svgContent = getNoteSvg(baseDuration, color, isDotted, stemUp, isSharp, tieEnabled);
+        previewNote.innerHTML = `<div style="position:absolute;left:-36px;top:-30px;width:80px;height:140px;pointer-events:none">${svgContent}</div>`;
+        previewNote.style.left = (x - 4) + 'px';
+        previewNote.style.top = snappedY + 'px';
+        previewNote.style.width = '32px';
+        previewNote.style.height = '24px';
+    }
+
+    previewNote.style.display = 'block';
+}
+
+function hidePianoPreview() {
+    const previewNote = document.getElementById('previewNote');
+    previewNote.style.display = 'none';
+    clearGhostHighlight();
+}
+
+function highlightPianoKey(pitch, highlight, channel = null) {
+    const keys = document.querySelectorAll('#piano .white-key, #piano .black-key');
+    keys.forEach(key => {
+        if (parseInt(key.dataset.pitch) === pitch) {
+            if (highlight && channel !== null) {
+                // Set channel-specific color - fully bright
+                // Use 'background' (not backgroundColor) to override the CSS gradient
+                const colors = ['#FF0000', '#00FF00', '#0088FF']; // Red, Green, Blue (bright)
+                key.style.background = colors[channel];
+                key.classList.add('active');
+            } else if (highlight) {
+                key.classList.add('active');
+                key.style.background = '';
+            } else {
+                key.classList.remove('active');
+                key.style.background = '';
+            }
+        }
+    });
+}
+
+function clearAllPianoHighlights() {
+    const keys = document.querySelectorAll('#piano .white-key, #piano .black-key');
+    keys.forEach(key => {
+        key.classList.remove('active');
+        key.style.background = '';
+    });
+}
+
+// Ghost highlight for preview - different colors for black vs white keys
+function ghostHighlightPianoKey(pitch, channel) {
+    clearGhostHighlight();
+    const keys = document.querySelectorAll('#piano .white-key, #piano .black-key');
+    keys.forEach(key => {
+        if (parseInt(key.dataset.pitch) === pitch) {
+            const isBlackKey = key.classList.contains('black-key');
+            // White keys: darker/muted colors; Black keys: lighter/brighter colors
+            const whiteKeyColors = ['#ffaaaa', '#aaffaa', '#aaccff']; // Muted red, green, blue
+            const blackKeyColors = ['#ff6666', '#66ff66', '#66aaff']; // Brighter red, green, blue
+            key.style.background = isBlackKey ? blackKeyColors[channel] : whiteKeyColors[channel];
+            key.classList.add('ghost-highlight');
+        }
+    });
+}
+
+function clearGhostHighlight() {
+    const keys = document.querySelectorAll('#piano .ghost-highlight');
+    keys.forEach(key => {
+        key.classList.remove('ghost-highlight');
+        key.style.background = '';
+    });
+}
+
+// === NOTE DRAGGING ===
+
+let draggingNote = null;
+let dragStartY = 0;
+let dragStartX = 0;
+let dragActuallyStarted = false;  // True only after mouse moves beyond threshold
+let hoveringOverNote = false;
+const DRAG_THRESHOLD = 5;  // Pixels of movement before drag starts
+
+function onNoteHover(event) {
+    if (isPlaying || draggingNote) return;
+    hoveringOverNote = true;
+
+    const noteEl = event.currentTarget;
+    const channel = parseInt(noteEl.dataset.channel);
+    const noteIndex = parseInt(noteEl.dataset.noteIndex);
+    const note = currentSong.channels[channel][noteIndex];
+
+    // Show ghost highlight on piano for this note's pitch
+    ghostHighlightPianoKey(note.pitch, channel);
+
+    // Check if selected duration differs from the existing note
+    const durationsArray = restMode ? REST_DURATIONS : DURATIONS;
+    const selectedDuration = durationsArray[currentDuration] || durationsArray[0];
+    const selectedDurationByte = selectedDuration.byte | (tieEnabled ? 0x20 : 0) | (restMode ? 0x40 : 0);
+    const existingDurationByte = note.durationByte;
+
+    // Check if we'd replace or advance (same pitch, same rest status, same duration = advance)
+    const wouldAdvance = (note.isRest === restMode) && (existingDurationByte === selectedDurationByte);
+
+    const previewNote = document.getElementById('previewNote');
+
+    if (wouldAdvance) {
+        // Same note - hide preview, will advance on click
+        previewNote.style.display = 'none';
+        noteEl.style.opacity = '1';
+    } else {
+        // Different duration - show ghost preview, dim original
+        noteEl.style.opacity = '0.3';
+
+        // Get note position
+        const x = parseFloat(noteEl.dataset.originalX);
+        const y = pitchToStaffY(note.pitch);
+
+        // Render preview at this position
+        const color = getChannelColor(currentChannel);
+        const baseDuration = selectedDuration.byte;
+        const isDotted = selectedDuration.dotted || false;
+        const stemUp = y > getStemFlipY();
+
+        // Check if pitch is sharp
+        const REAL_PITCH_G1 = 0x00;
+        const semitonesFromG1 = note.pitch - REAL_PITCH_G1;
+        const semitoneInOctave = ((semitonesFromG1 % 12) + 12) % 12;
+        const isSharp = [1, 3, 6, 8, 11].includes(semitoneInOctave);
+
+        if (restMode) {
+            previewNote.innerHTML = getRestSvg(baseDuration, color, isDotted);
+            previewNote.style.left = (x - 20) + 'px';
+            previewNote.style.top = (y - 30) + 'px';
+            previewNote.style.width = '50px';
+            previewNote.style.height = '70px';
+        } else {
+            const svgContent = getNoteSvg(baseDuration, color, isDotted, stemUp, isSharp, tieEnabled);
+            previewNote.innerHTML = `<div style="position:absolute;left:-36px;top:-30px;width:80px;height:140px;pointer-events:none">${svgContent}</div>`;
+            previewNote.style.left = (x - 4) + 'px';
+            previewNote.style.top = y + 'px';
+            previewNote.style.width = '32px';
+            previewNote.style.height = '24px';
+        }
+        previewNote.style.display = 'block';
+        previewNote.style.opacity = '0.6';
+    }
+}
+
+function onNoteLeave(event) {
+    if (draggingNote) return;
+    hoveringOverNote = false;
+    clearGhostHighlight();
+
+    // Restore note opacity
+    const noteEl = event.currentTarget;
+    noteEl.style.opacity = '1';
+
+    // Hide preview
+    const previewNote = document.getElementById('previewNote');
+    previewNote.style.display = 'none';
+}
+
+function startNoteDrag(event) {
+    if (isPlaying) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    const noteEl = event.currentTarget;
+    const channel = parseInt(noteEl.dataset.channel);
+    const noteIndex = parseInt(noteEl.dataset.noteIndex);
+
+    // Calculate the original beat position of this note
+    let originalBeat = 0;
+    for (let i = 0; i < noteIndex; i++) {
+        originalBeat += currentSong.channels[channel][i].duration;
+    }
+
+    draggingNote = {
+        element: noteEl,
+        channel: channel,
+        noteIndex: noteIndex,
+        originalX: parseFloat(noteEl.dataset.originalX),
+        originalBeat: originalBeat
+    };
+    dragStartY = event.clientY;
+    dragStartX = event.clientX;
+    dragActuallyStarted = false;  // Don't start drag until threshold exceeded
+
+    // Add document-level listeners for drag
+    document.addEventListener('mousemove', onNoteDrag);
+    document.addEventListener('mouseup', endNoteDrag);
+}
+
+function onNoteDrag(event) {
+    if (!draggingNote) return;
+
+    // Check if we've exceeded the drag threshold
+    const dx = event.clientX - dragStartX;
+    const dy = event.clientY - dragStartY;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+
+    if (!dragActuallyStarted) {
+        if (distance < DRAG_THRESHOLD) {
+            return;  // Not enough movement yet, don't start drag
+        }
+        // Threshold exceeded - now we're really dragging
+        dragActuallyStarted = true;
+        draggingNote.element.classList.add('dragging');
+    }
+
+    const staffArea = document.getElementById('staffArea');
+    const rect = staffArea.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+
+    // Get pitch for this Y position
+    const newPitch = staffYToPitch(y);
+    const snappedY = pitchToStaffY(newPitch);
+
+    // Calculate new beat position from X (snapped to 32nd note grid)
+    const staffWidth = staffArea.clientWidth;
+    const playheadX = staffWidth * 0.75;
+    const renderBeat = visualBeat;
+    const playheadSlot = Math.round(renderBeat * SLOTS_PER_BEAT);
+
+    // Convert X to slot position, then to beat
+    const slotPos = playheadSlot + (x - playheadX) / PIXELS_PER_SLOT;
+    const snappedSlot = Math.round(slotPos);
+    const newBeat = Math.max(0, snappedSlot / SLOTS_PER_BEAT);  // Can't go before 0
+
+    // Calculate snapped X position for visual feedback
+    const snappedX = playheadX + (snappedSlot - playheadSlot) * PIXELS_PER_SLOT;
+
+    // Update note element position (both X and Y)
+    draggingNote.element.style.left = (snappedX - 4) + 'px';
+    draggingNote.element.style.top = snappedY + 'px';
+
+    // Update the note SVG to reflect new stem direction and sharp status
+    const note = currentSong.channels[draggingNote.channel][draggingNote.noteIndex];
+    const color = getChannelColor(draggingNote.channel);
+    const baseDuration = note.durationByte & 0x1F;
+    const isDotted = [0x05, 0x0B, 0x17].includes(baseDuration);
+    const stemUp = snappedY > getStemFlipY();
+
+    // Check if new pitch is sharp
+    const REAL_PITCH_G1 = 0x00;
+    const semitonesFromG1 = newPitch - REAL_PITCH_G1;
+    const semitoneInOctave = ((semitonesFromG1 % 12) + 12) % 12;
+    const isSharp = [1, 3, 6, 8, 11].includes(semitoneInOctave);
+    const isTied = (note.durationByte & 0x20) !== 0;
+
+    const svgContent = getNoteSvg(baseDuration, color, isDotted, stemUp, isSharp, isTied);
+    draggingNote.element.innerHTML = `<div style="position:absolute;left:-36px;top:-30px;width:80px;height:140px;pointer-events:none">${svgContent}</div>`;
+
+    // Update ghost highlight on piano
+    ghostHighlightPianoKey(newPitch, draggingNote.channel);
+
+    // Store new values for when drag ends
+    draggingNote.newPitch = newPitch;
+    draggingNote.newBeat = newBeat;
+}
+
+function endNoteDrag(event) {
+    if (!draggingNote) return;
+
+    document.removeEventListener('mousemove', onNoteDrag);
+    document.removeEventListener('mouseup', endNoteDrag);
+
+    const channelIdx = draggingNote.channel;
+    const noteIndex = draggingNote.noteIndex;
+    const wasActualDrag = dragActuallyStarted;
+    const originalBeat = draggingNote.originalBeat;
+    const newBeat = draggingNote.newBeat;
+    const newPitch = draggingNote.newPitch;
+
+    draggingNote.element.classList.remove('dragging');
+
+    if (wasActualDrag) {
+        const channel = currentSong.channels[channelIdx];
+        const note = channel[noteIndex];
+
+        // Check if position changed (horizontal drag)
+        const beatChanged = newBeat !== undefined && Math.abs(newBeat - originalBeat) > 0.001;
+
+        if (beatChanged) {
+            // Save undo state before moving
+            saveUndoState();
+            // Move note to new position in timeline
+            moveNoteToPosition(channelIdx, noteIndex, newBeat);
+
+            // Also update pitch if it changed
+            // Note: need to find the note at its new position
+            // For simplicity, we'll update pitch in the moveNoteToPosition function
+            if (newPitch !== undefined && newPitch !== note.pitch) {
+                // The note has been moved, find it at new position and update pitch
+                updateNoteAtBeat(channelIdx, newBeat, newPitch);
+            }
+        } else if (newPitch !== undefined && newPitch !== note.pitch) {
+            // Only pitch changed, simple update
+            saveUndoState();
+            note.pitch = newPitch;
+        }
+    } else {
+        // No actual drag - treat as a click on the note
+        const note = currentSong.channels[channelIdx][noteIndex];
+        enterNote(note.pitch, note.isRest);
+    }
+
+    clearGhostHighlight();
+    draggingNote = null;
+    dragActuallyStarted = false;
+
+    // Re-render to show updated note
+    renderStaff();
+}
+
+// Move a note from its current position to a new beat position
+function moveNoteToPosition(channelIdx, noteIndex, newBeat) {
+    const channel = currentSong.channels[channelIdx];
+    const note = channel[noteIndex];
+    const noteDuration = note.duration;
+
+    // Calculate original beat position
+    let originalBeat = 0;
+    for (let i = 0; i < noteIndex; i++) {
+        originalBeat += channel[i].duration;
+    }
+
+    // If moving to same position, do nothing
+    if (Math.abs(newBeat - originalBeat) < 0.001) return;
+
+    // Remove the note from its current position
+    channel.splice(noteIndex, 1);
+
+    // Fill the gap with null slots
+    const nullSlotDuration = 0.125; // 32nd note
+    const numNullSlots = Math.round(noteDuration / nullSlotDuration);
+    for (let i = 0; i < numNullSlots; i++) {
+        channel.splice(noteIndex, 0, {
+            durationByte: 0x40,
+            pitch: 0x3C,
+            isRest: true,
+            isNullSlot: true,
+            isTied: false,
+            duration: nullSlotDuration
+        });
+    }
+
+    // Now insert the note at the new position
+    // First, find the insert index for newBeat
+    let beatPos = 0;
+    let insertIndex = 0;
+    for (let i = 0; i < channel.length; i++) {
+        if (beatPos >= newBeat - 0.001) break;
+        beatPos += channel[i].duration;
+        insertIndex = i + 1;
+    }
+
+    // If new position is beyond current notes, fill gap with null slots
+    if (beatPos < newBeat - 0.001) {
+        const gap = newBeat - beatPos;
+        const numGapSlots = Math.round(gap / nullSlotDuration);
+        for (let i = 0; i < numGapSlots; i++) {
+            channel.push({
+                durationByte: 0x40,
+                pitch: 0x3C,
+                isRest: true,
+                isNullSlot: true,
+                isTied: false,
+                duration: nullSlotDuration
+            });
+        }
+        insertIndex = channel.length;
+    }
+
+    // Check if we're inserting into null slots - consume them
+    const existingNote = channel[insertIndex];
+    if (existingNote && isNullSlot(existingNote)) {
+        // Count and remove null slots up to the note's duration
+        let nullSlotsDuration = 0;
+        let nullSlotsToRemove = 0;
+        for (let i = insertIndex; i < channel.length; i++) {
+            if (isNullSlot(channel[i]) && nullSlotsDuration < noteDuration - 0.001) {
+                nullSlotsDuration += channel[i].duration;
+                nullSlotsToRemove++;
+            } else {
+                break;
+            }
+        }
+        channel.splice(insertIndex, nullSlotsToRemove);
+    }
+
+    // Insert the note at the new position
+    channel.splice(insertIndex, 0, note);
+
+    // Clean up: merge consecutive null slots and remove unnecessary ones
+    cleanupNullSlots(channelIdx);
+}
+
+// Update pitch of note at a given beat position
+function updateNoteAtBeat(channelIdx, beat, newPitch) {
+    const channel = currentSong.channels[channelIdx];
+    let beatPos = 0;
+    for (const note of channel) {
+        if (Math.abs(beatPos - beat) < 0.001 && !isNullSlot(note)) {
+            note.pitch = newPitch;
+            return;
+        }
+        beatPos += note.duration;
+    }
+}
+
+// Clean up null slots: remove trailing null slots
+function cleanupNullSlots(channelIdx) {
+    const channel = currentSong.channels[channelIdx];
+
+    // Remove trailing null slots
+    while (channel.length > 0 && isNullSlot(channel[channel.length - 1])) {
+        channel.pop();
+    }
+}
+
+// === DURATION SELECTOR ===
+
+// SVG note symbols - base notes without ties
+const baseNoteSvgs = {
+    'whole': `<ellipse cx="10" cy="14" rx="6" ry="4" fill="none" stroke="black" stroke-width="2"/>`,
+    'dotted-half': `<ellipse cx="8" cy="14" rx="5" ry="4" fill="none" stroke="black" stroke-width="2"/><line x1="13" y1="14" x2="13" y2="2" stroke="black" stroke-width="2"/>`,
+    'half': `<ellipse cx="10" cy="14" rx="5" ry="4" fill="none" stroke="black" stroke-width="2"/><line x1="15" y1="14" x2="15" y2="2" stroke="black" stroke-width="2"/>`,
+    'dotted-quarter': `<ellipse cx="8" cy="14" rx="5" ry="4" fill="black"/><line x1="13" y1="14" x2="13" y2="2" stroke="black" stroke-width="2"/>`,
+    'quarter': `<ellipse cx="10" cy="14" rx="5" ry="4" fill="black"/><line x1="15" y1="14" x2="15" y2="2" stroke="black" stroke-width="2"/>`,
+    'dotted-eighth': `<ellipse cx="7" cy="14" rx="5" ry="4" fill="black"/><line x1="12" y1="14" x2="12" y2="2" stroke="black" stroke-width="2"/><path d="M12 2 Q17 4 15 8" stroke="black" stroke-width="2" fill="none"/>`,
+    'eighth': `<ellipse cx="10" cy="14" rx="5" ry="4" fill="black"/><line x1="15" y1="14" x2="15" y2="2" stroke="black" stroke-width="2"/><path d="M15 2 Q20 4 18 8" stroke="black" stroke-width="2" fill="none"/>`,
+    'sixteenth': `<ellipse cx="10" cy="14" rx="5" ry="4" fill="black"/><line x1="15" y1="14" x2="15" y2="2" stroke="black" stroke-width="2"/><path d="M15 2 Q20 4 18 6" stroke="black" stroke-width="1.5" fill="none"/><path d="M15 5 Q20 7 18 9" stroke="black" stroke-width="1.5" fill="none"/>`,
+    '32nd': `<ellipse cx="10" cy="14" rx="5" ry="4" fill="black"/><line x1="15" y1="14" x2="15" y2="2" stroke="black" stroke-width="2"/><path d="M15 2 Q20 3 18 5" stroke="black" stroke-width="1.5" fill="none"/><path d="M15 4 Q20 5 18 7" stroke="black" stroke-width="1.5" fill="none"/><path d="M15 6 Q20 7 18 9" stroke="black" stroke-width="1.5" fill="none"/>`
+};
+
+// Rest symbols (no dotted rests in GM)
+const restSvgs = {
+    'whole': `<rect x="6" y="12" width="12" height="4" fill="black"/>`,
+    'half': `<rect x="6" y="16" width="12" height="4" fill="black"/>`,
+    'quarter': `<path d="M10 6 L14 10 L10 14 L14 18 L10 22" stroke="black" stroke-width="2" fill="none"/>`,
+    'eighth': `<circle cx="10" cy="10" r="3" fill="black"/><line x1="10" y1="10" x2="14" y2="18" stroke="black" stroke-width="2"/>`,
+    'sixteenth': `<circle cx="8" cy="8" r="2.5" fill="black"/><circle cx="10" cy="13" r="2.5" fill="black"/><line x1="10" y1="8" x2="14" y2="20" stroke="black" stroke-width="2"/>`,
+    '32nd': `<circle cx="7" cy="6" r="2" fill="black"/><circle cx="9" cy="10" r="2" fill="black"/><circle cx="11" cy="14" r="2" fill="black"/><line x1="9" y1="6" x2="14" y2="22" stroke="black" stroke-width="2"/>`
+};
+
+// Tie arc for duration selector
+const tieArc = `<path d="M17 20 Q17 14 23 14" stroke="black" stroke-width="1.5" fill="none"/>`;
+
+// Dot positions
+const dotNoTie = {
+    'dotted-half': `<circle cx="17" cy="16" r="2" fill="black"/>`,
+    'dotted-quarter': `<circle cx="17" cy="16" r="2" fill="black"/>`,
+    'dotted-eighth': `<circle cx="17" cy="16" r="2" fill="black"/>`
+};
+const dotWithTie = {
+    'dotted-half': `<circle cx="23" cy="20" r="1.5" fill="black"/>`,
+    'dotted-quarter': `<circle cx="23" cy="20" r="1.5" fill="black"/>`,
+    'dotted-eighth': `<circle cx="23" cy="20" r="1.5" fill="black"/>`
+};
+
+function createDurationSelector() {
+    const noteRow = document.getElementById('noteRow');
+    const restRow = document.getElementById('restRow');
+    noteRow.innerHTML = '';
+    restRow.innerHTML = '';
+
+    // Build note SVGs based on tie state
+    function getNoteSvgWithTie(name) {
+        let svg = baseNoteSvgs[name];
+        if (tieEnabled) {
+            svg += tieArc;
+            if (dotWithTie[name]) svg += dotWithTie[name];
+        } else {
+            if (dotNoTie[name]) svg += dotNoTie[name];
+        }
+        return svg;
+    }
+
+    // Create note row (DURATIONS)
+    DURATIONS.forEach((dur, index) => {
+        const noteEl = document.createElement('div');
+        const isSelected = !restMode && index === currentDuration;
+        noteEl.className = 'duration-note' + (isSelected ? ' selected' : '');
+        noteEl.innerHTML = `<svg viewBox="0 0 24 28">${getNoteSvgWithTie(dur.name)}</svg>`;
+        noteEl.onclick = () => selectNoteDuration(index);
+        noteEl.title = dur.name;
+        noteRow.appendChild(noteEl);
+    });
+
+    // Create rest row aligned with note row
+    // Add spacers under dotted notes (GM doesn't have dotted rests)
+    let restIndex = 0;
+    DURATIONS.forEach((dur) => {
+        if (dur.name.startsWith('dotted-')) {
+            // Add spacer for dotted durations
+            const spacer = document.createElement('div');
+            spacer.className = 'duration-spacer';
+            restRow.appendChild(spacer);
+        } else {
+            // Add rest
+            const restDur = REST_DURATIONS[restIndex];
+            if (restDur) {
+                const noteEl = document.createElement('div');
+                const isSelected = restMode && restIndex === currentDuration;
+                noteEl.className = 'duration-note' + (isSelected ? ' selected' : '');
+                noteEl.innerHTML = `<svg viewBox="0 0 24 28">${restSvgs[restDur.name]}</svg>`;
+                const idx = restIndex; // Capture for closure
+                noteEl.onclick = () => selectRestDuration(idx);
+                noteEl.title = restDur.name + ' rest';
+                restRow.appendChild(noteEl);
+                restIndex++;
+            }
+        }
+    });
+}
+
+function selectNoteDuration(index) {
+    restMode = false;
+    currentDuration = index;
+    updateDurationSelection();
+}
+
+function selectRestDuration(index) {
+    restMode = true;
+    currentDuration = index;
+    updateDurationSelection();
+}
+
+function updateDurationSelection() {
+    // Update note row
+    document.querySelectorAll('#noteRow .duration-note').forEach((el, i) => {
+        el.classList.toggle('selected', !restMode && i === currentDuration);
+    });
+    // Update rest row
+    document.querySelectorAll('#restRow .duration-note').forEach((el, i) => {
+        el.classList.toggle('selected', restMode && i === currentDuration);
+    });
+}
+
+// === STAFF RENDERING ===
+
+// Staff layout constants - shared across all functions
+const LINE_SPACING = 24; // Pixels between staff lines (slightly smaller to fit range)
+// Think of this as 18 continuous lines (0-17 from bottom to top)
+// Lines 0-4: bottom staff (visible)
+// Line 5: invisible (greyed out)
+// Lines 6-10: middle staff (visible)
+// Line 11: invisible (greyed out)
+// Lines 12-16: top staff (visible)
+// Line 17: invisible (greyed out) - needed for notes above top staff
+const TOTAL_LINES = 18; // 0-17
+
+// Calculate Y position for stem flip (center line of top staff = line 14)
+// Stems point up when note is below this line, down when above
+const STEM_FLIP_LINE = 14;
+function getStemFlipY() {
+    const totalHeight = (TOTAL_LINES - 1) * LINE_SPACING;
+    const topMargin = (STAFF_HEIGHT - totalHeight) / 2 - 8;
+    return topMargin + (TOTAL_LINES - 1 - STEM_FLIP_LINE) * LINE_SPACING;
+}
+
+function createStaffLines() {
+    const staffArea = document.getElementById('staffArea');
+
+    // Remove existing staff lines (keep playhead)
+    staffArea.querySelectorAll('.staff-line').forEach(el => el.remove());
+
+    // Total height spans 17 line spacings (from line 0 to line 17)
+    const totalHeight = (TOTAL_LINES - 1) * LINE_SPACING;
+
+    // Position with more room at bottom than top (shift up by 8px from center)
+    const topMargin = (STAFF_HEIGHT - totalHeight) / 2 - 8;
+
+    // Line 17 is at the top (y = topMargin), line 0 is at the bottom
+    // Y position for line N (from bottom) = topMargin + (17 - N) * LINE_SPACING
+
+    for (let lineNum = 0; lineNum < TOTAL_LINES; lineNum++) {
+        const lineEl = document.createElement('div');
+        const y = topMargin + (TOTAL_LINES - 1 - lineNum) * LINE_SPACING;
+        lineEl.style.top = y + 'px';
+
+        // Lines 5, 11, 17 are invisible (between/above staves)
+        if (lineNum === 5 || lineNum === 11 || lineNum === 17) {
+            lineEl.className = 'staff-line invisible';
+        } else {
+            lineEl.className = 'staff-line';
+        }
+
+        staffArea.appendChild(lineEl);
+    }
+}
+
+// Convert beat duration to number of slots (32nd note = 1 slot)
+function durationToSlots(duration) {
+    // duration is in beats (quarter note = 1)
+    // 32nd note = 1/8 beat = 1 slot
+    return Math.round(duration * SLOTS_PER_BEAT);
+}
+
+function renderStaff() {
+    // Persist current song to localStorage (debounced)
+    saveSongSession();
+
+    const staffArea = document.getElementById('staffArea');
+
+    // Remove existing notes
+    staffArea.querySelectorAll('.note').forEach(el => el.remove());
+
+    if (!currentSong) return;
+
+    const staffWidth = staffArea.clientWidth;
+
+    // Playhead line is at 3/4 across the staff area
+    const playheadX = staffWidth * 0.75;
+
+    // Use visualBeat for smooth scrolling, fall back to playheadBeat
+    const renderBeat = isPlaying ? playheadBeat : visualBeat;
+
+    // Current beat position in slots
+    const playheadSlot = Math.round(renderBeat * SLOTS_PER_BEAT);
+
+    // Calculate visible slot range (notes can appear before and after playhead)
+    const slotsBeforePlayhead = Math.floor(playheadX / PIXELS_PER_SLOT);
+    const slotsAfterPlayhead = Math.floor((staffWidth - playheadX) / PIXELS_PER_SLOT);
+    const startSlot = playheadSlot - slotsBeforePlayhead;
+    const endSlot = playheadSlot + slotsAfterPlayhead;
+
+    // Track last note Y position per channel for rest placement
+    const lastNoteY = [null, null, null];
+
+    // Render notes for each channel
+    for (let ch = 0; ch < 3; ch++) {
+        let slotPos = 0;
+        let noteIndex = 0;
+
+        for (const note of currentSong.channels[ch]) {
+            const noteSlots = durationToSlots(note.duration);
+            const noteEndSlot = slotPos + noteSlots;
+
+            // Check if note overlaps visible range
+            if (noteEndSlot > startSlot && slotPos < endSlot) {
+                // Skip hidden rests - GM uses pitch 0x3C as a marker for auto-generated
+                // spacer rests that shouldn't be displayed. User-entered rests have
+                // different pitch values.
+                const isHiddenRest = note.isRest && note.pitch === 0x3C;
+
+                if (!isHiddenRest) {
+                    // Calculate X position relative to playhead line
+                    // Notes at playheadSlot appear at playheadX
+                    // Notes before playheadSlot appear to the left, after to the right
+                    const x = playheadX + (slotPos - playheadSlot) * PIXELS_PER_SLOT;
+
+                    // Calculate Y position based on pitch
+                    // For rests, use the last note position for this channel (or middle of staff)
+                    let y;
+                    if (note.isRest) {
+                        y = lastNoteY[ch] !== null ? lastNoteY[ch] : STAFF_HEIGHT / 2;
+                    } else {
+                        y = pitchToStaffY(note.pitch);
+                        lastNoteY[ch] = y; // Track last note position for rest placement
+                    }
+
+                    if (x > -50 && x < staffWidth + 50) {
+                        createNoteElement(staffArea, note, ch, x, y, noteIndex);
+                    }
+                }
+            }
+
+            slotPos = noteEndSlot;
+            noteIndex++;
+        }
+    }
+}
+
+function pitchToStaffY(pitch) {
+    // Map pitch to Y position on staff
+    // GM uses 3 staves as one continuous system spanning G1 to G6 (5 octaves)
+    // Each line/space is a diatonic position (natural note)
+    // Sharps sit on the same line/space as their natural, just marked with #
+    //
+    // Chromatic to diatonic mapping (semitones from G to diatonic steps from G):
+    // G=0, G#=0, A=1, A#=1, B=2, C=3, C#=3, D=4, D#=4, E=5, F=6, F#=6
+    const chromaticToDiatonicFromG = [0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 6, 6];
+
+    const REAL_PITCH_G1 = 0x00; // 0 = G0 (bottom line of bottom staff)
+    const semitonesFromG1 = pitch - REAL_PITCH_G1;
+
+    // Calculate octave and semitone within octave (G-based)
+    const octave = Math.floor(semitonesFromG1 / 12);
+    const semitoneInOctave = ((semitonesFromG1 % 12) + 12) % 12;
+    const diatonicInOctave = chromaticToDiatonicFromG[semitoneInOctave];
+
+    // Total diatonic steps from G1
+    const diatonicFromG1 = octave * 7 + diatonicInOctave;
+
+    // Using 18-line model: G1 is on line 0 (bottom)
+    // Line 0 Y position = topMargin + (TOTAL_LINES - 1) * LINE_SPACING
+    const totalHeight = (TOTAL_LINES - 1) * LINE_SPACING;
+    const topMargin = (STAFF_HEIGHT - totalHeight) / 2 - 8; // Shift up by 8px from center
+    const g1LineY = topMargin + (TOTAL_LINES - 1) * LINE_SPACING; // Line 0 is at the bottom
+
+    // Each diatonic step moves up by half the line spacing
+    // (a line spacing covers 2 diatonic steps: line->space->line)
+    // Shift up by one diatonic step so G sits ON line 0, not below it
+    const y = g1LineY - ((diatonicFromG1 + 1) * LINE_SPACING / 2);
+
+    return y;
+}
+
+function staffYToPitch(y, allowSharp = true) {
+    // Inverse of pitchToStaffY
+    // Convert Y position back to chromatic pitch
+    // If allowSharp is true, positions between natural notes return sharps
+
+    // Diatonic to chromatic mapping (diatonic steps from G to semitones from G):
+    // G=0, A=2, B=4, C=5, D=7, E=9, F=11
+    const diatonicToSemitone = [0, 2, 4, 5, 7, 9, 11];
+
+    // Which diatonic positions from G have sharps (G, A, C, D, F - not B or E)
+    // G=0 has G#, A=1 has A#, B=2 no sharp, C=3 has C#, D=4 has D#, E=5 no sharp, F=6 has F#
+    const hasSharp = [true, true, false, true, true, false, true]; // G, A, B, C, D, E, F
+
+    const REAL_PITCH_G1 = 0x00; // 0 = G0 (bottom line of bottom staff)
+
+    // Using 18-line model: G1 is on line 0 (bottom)
+    const totalHeight = (TOTAL_LINES - 1) * LINE_SPACING;
+    const topMargin = (STAFF_HEIGHT - totalHeight) / 2 - 8; // Shift up by 8px from center
+    const g1LineY = topMargin + (TOTAL_LINES - 1) * LINE_SPACING; // Line 0 is at the bottom
+
+    // Calculate exact diatonic position
+    // Subtract 1 to account for the +1 offset in pitchToStaffY (which shifts notes up so G sits ON line 0)
+    // Clamp to 0 minimum - can't go below G on the bottom line
+    const exactDiatonicFromG1 = Math.max(0, (g1LineY - y) / (LINE_SPACING / 2) - 1);
+
+    // Check if we're in the upper half of a diatonic position (for sharp detection)
+    // Each diatonic position spans 0.5 LINE_SPACING
+    // Lower half (0.0-0.5 of position) = natural note
+    // Upper half (0.5-1.0 of position) = sharp (if available), else next natural
+    const fractional = exactDiatonicFromG1 - Math.floor(exactDiatonicFromG1);
+    const isUpperHalf = fractional >= 0.5;
+
+    // Base diatonic position (floor, not round)
+    let diatonicFromG1 = Math.floor(exactDiatonicFromG1);
+
+    // Convert to octave and diatonic position within G-based octave
+    let octave = Math.floor(diatonicFromG1 / 7);
+    let diatonicInOctave = ((diatonicFromG1 % 7) + 7) % 7;
+
+    // Convert to semitones from G1
+    let semitonesFromG1 = octave * 12 + diatonicToSemitone[diatonicInOctave];
+
+    // If in upper half of position:
+    // - If this note has a sharp, return the sharp
+    // - If no sharp (B or E), advance to next natural note
+    if (isUpperHalf) {
+        if (allowSharp && hasSharp[diatonicInOctave]) {
+            semitonesFromG1 += 1; // Add one semitone for sharp
+        } else {
+            // No sharp available (B->C or E->F), advance to next natural
+            semitonesFromG1 += 1;
+        }
+    }
+
+    // Convert to pitch
+    const pitch = semitonesFromG1 + REAL_PITCH_G1;
+
+    // Clamp to valid range
+    return Math.max(REAL_PITCH_G1, Math.min(REAL_PITCH_G1 + 60, pitch));
+}
+
+function createNoteElement(container, note, channel, x, y, noteIndex) {
+    const color = getChannelColor(channel);
+    const baseDuration = note.durationByte & 0x1F; // Strip tie/rest flags
+    const isDotted = [0x05, 0x0B, 0x17].includes(baseDuration);
+
+    // Check if note is sharp (G-based semitone positions)
+    // From G: G=0, G#=1, A=2, A#=3, B=4, C=5, C#=6, D=7, D#=8, E=9, F=10, F#=11
+    // Sharps are at positions 1, 3, 6, 8, 11 (G#, A#, C#, D#, F#)
+    const REAL_PITCH_G1 = 0x00; // 0 = G0 (bottom line of bottom staff)
+    const semitonesFromG1 = note.pitch - REAL_PITCH_G1;
+    const semitoneInOctave = ((semitonesFromG1 % 12) + 12) % 12;
+    const isSharp = [1, 3, 6, 8, 11].includes(semitoneInOctave); // G#, A#, C#, D#, F#
+
+    if (note.isRest) {
+        // Render rest symbol
+        const restEl = document.createElement('div');
+        restEl.className = `note rest channel-${channel}`;
+        restEl.style.left = (x - 20) + 'px';
+        restEl.style.top = (y - 30) + 'px';
+        restEl.style.width = '50px';
+        restEl.style.height = '70px';
+        restEl.innerHTML = getRestSvg(baseDuration, color, isDotted);
+        container.appendChild(restEl);
+        return;
+    }
+
+    // Create note container - sized to just the notehead for precise hit detection
+    const noteEl = document.createElement('div');
+    noteEl.className = `note channel-${channel}`;
+    noteEl.style.left = (x - 4) + 'px';   // Center notehead horizontally
+    noteEl.style.top = (y) + 'px';        // Center notehead vertically
+    noteEl.style.width = '32px';          // Notehead width
+    noteEl.style.height = '24px';         // Notehead height
+    noteEl.style.overflow = 'visible';
+
+    // Store note data for dragging
+    noteEl.dataset.channel = channel;
+    noteEl.dataset.noteIndex = noteIndex;
+    noteEl.dataset.originalX = x;
+
+    // Build SVG for note - position so notehead is centered in container
+    const stemUp = y > getStemFlipY();
+    const isTied = (note.durationByte & 0x20) !== 0;
+    const svgContent = getNoteSvg(baseDuration, color, isDotted, stemUp, isSharp, isTied);
+    // Wrap SVG with adjusted positioning to center notehead in smaller container
+    noteEl.innerHTML = `<div style="position:absolute;left:-36px;top:-30px;width:80px;height:140px;pointer-events:none">${svgContent}</div>`;
+
+    // Add drag handlers
+    noteEl.addEventListener('mousedown', startNoteDrag);
+    noteEl.addEventListener('mouseenter', onNoteHover);
+    noteEl.addEventListener('mouseleave', onNoteLeave);
+
+    container.appendChild(noteEl);
+}
+
+function getNoteSvg(baseDuration, color, isDotted, stemUp, isSharp, isTied = false) {
+    // Determine note head style: filled (quarter and shorter) vs hollow (half and whole)
+    // Bytes: 0x0F=half, 0x0B=dotted-quarter, 0x07=quarter, etc.
+    const isFilled = baseDuration < 0x0F; // quarter, dotted-quarter, and shorter
+    const hasWhole = baseDuration === 0x1F;
+    const hasStem = baseDuration < 0x1F; // everything except whole note
+
+    // Determine flags: 0 for quarter/half, 1 for eighth, 2 for sixteenth, 3 for 32nd
+    // Bytes: 0x05=dotted-eighth, 0x03=eighth, 0x01=sixteenth, 0x00=32nd
+    let flags = 0;
+    if (baseDuration <= 0x05) flags = 1; // eighth or dotted-eighth
+    if (baseDuration <= 0x01) flags = 2; // sixteenth
+    if (baseDuration === 0x00) flags = 3; // 32nd
+
+    // Double-sized viewBox for bigger notes
+    let svg = `<svg viewBox="-45 -30 100 140" style="overflow:visible">`;
+
+    // Sharp symbol if needed - positioned close to note, slightly up and left like GM
+    if (isSharp) {
+        // Draw sharp as lines - compact, positioned up-left of note head
+        // Horizontal lines (slightly angled)
+        svg += `<line x1="-6" y1="10" x2="6" y2="8" stroke="${color}" stroke-width="2"/>`;
+        svg += `<line x1="-6" y1="18" x2="6" y2="16" stroke="${color}" stroke-width="2"/>`;
+        // Vertical lines
+        svg += `<line x1="-2" y1="4" x2="-2" y2="22" stroke="${color}" stroke-width="2"/>`;
+        svg += `<line x1="2" y1="2" x2="2" y2="20" stroke="${color}" stroke-width="2"/>`;
+    }
+
+    // Note head - doubled size
+    if (hasWhole) {
+        svg += `<ellipse cx="20" cy="25" rx="18" ry="12" fill="none" stroke="${color}" stroke-width="2.5"/>`;
+    } else if (isFilled) {
+        svg += `<ellipse cx="20" cy="25" rx="16" ry="12" fill="${color}"/>`;
+    } else {
+        svg += `<ellipse cx="20" cy="25" rx="16" ry="12" fill="none" stroke="${color}" stroke-width="2.5"/>`;
+    }
+
+    // Stem - doubled height
+    if (hasStem) {
+        if (stemUp) {
+            svg += `<line x1="36" y1="25" x2="36" y2="-45" stroke="${color}" stroke-width="2.5"/>`;
+            // Flags for stemUp - more spacing between flags
+            for (let f = 0; f < flags; f++) {
+                svg += `<path d="M36 ${-45 + f * 18} Q56 ${-35 + f * 18} 48 ${-22 + f * 18}" stroke="${color}" stroke-width="2.5" fill="none"/>`;
+            }
+        } else {
+            svg += `<line x1="4" y1="25" x2="4" y2="95" stroke="${color}" stroke-width="2.5"/>`;
+            // Flags for stemDown - more spacing between flags
+            for (let f = 0; f < flags; f++) {
+                svg += `<path d="M4 ${95 - f * 18} Q24 ${85 - f * 18} 16 ${72 - f * 18}" stroke="${color}" stroke-width="2.5" fill="none"/>`;
+            }
+        }
+    }
+
+    // Tie arc - northwest quadrant of circle, offset from note
+    // Arc goes from bottom (42, 38) curving up and right to (54, 26)
+    // Center of implied circle would be at (54, 38)
+    if (isTied) {
+        svg += `<path d="M42 38 Q42 26 54 26" stroke="${color}" stroke-width="2" fill="none"/>`;
+    }
+
+    // Dot for dotted notes - at center of implied circle when tied, else to right of note
+    if (isDotted) {
+        if (isTied) {
+            svg += `<circle cx="54" cy="38" r="4" fill="${color}"/>`;
+        } else {
+            svg += `<circle cx="42" cy="30" r="4" fill="${color}"/>`;
+        }
+    }
+
+    svg += `</svg>`;
+    return svg;
+}
+
+function getRestSvg(baseDuration, color, isDotted) {
+    // Doubled viewBox for bigger rests
+    let svg = `<svg viewBox="0 0 50 70" style="overflow:visible">`;
+
+    // Different rest symbols based on duration - doubled size
+    if (baseDuration === 0x1F || baseDuration === 0x17) {
+        // Whole/dotted half rest - rectangle hanging from line
+        svg += `<rect x="8" y="18" width="28" height="10" fill="${color}"/>`;
+    } else if (baseDuration === 0x0F || baseDuration === 0x0B) {
+        // Half rest - rectangle sitting on line
+        svg += `<rect x="8" y="30" width="28" height="10" fill="${color}"/>`;
+    } else if (baseDuration === 0x07 || baseDuration === 0x05) {
+        // Quarter rest - squiggly
+        svg += `<path d="M20 10 L32 22 L20 34 L32 46 L20 58" stroke="${color}" stroke-width="2.5" fill="none"/>`;
+    } else if (baseDuration === 0x03) {
+        // Eighth rest
+        svg += `<circle cx="24" cy="20" r="7" fill="${color}"/>`;
+        svg += `<line x1="24" y1="20" x2="36" y2="52" stroke="${color}" stroke-width="2.5"/>`;
+    } else if (baseDuration === 0x01) {
+        // Sixteenth rest - more spacing
+        svg += `<circle cx="16" cy="14" r="6" fill="${color}"/>`;
+        svg += `<circle cx="24" cy="32" r="6" fill="${color}"/>`;
+        svg += `<line x1="24" y1="14" x2="36" y2="58" stroke="${color}" stroke-width="2.5"/>`;
+    } else {
+        // 32nd rest - more spacing
+        svg += `<circle cx="12" cy="10" r="5" fill="${color}"/>`;
+        svg += `<circle cx="18" cy="26" r="5" fill="${color}"/>`;
+        svg += `<circle cx="24" cy="42" r="5" fill="${color}"/>`;
+        svg += `<line x1="18" y1="10" x2="36" y2="62" stroke="${color}" stroke-width="2.5"/>`;
+    }
+
+    // Dot for dotted rests
+    if (isDotted) {
+        svg += `<circle cx="42" cy="35" r="5" fill="${color}"/>`;
+    }
+
+    svg += `</svg>`;
+    return svg;
+}
+
+function getChannelColor(channel) {
+    const colors = ['#AA0000', '#00AA00', '#5555FF'];
+    return colors[channel] || '#000';
+}
+
+// === NOTE ENTRY ===
+
+function enterNoteFromPiano(pitch) {
+    enterNote(pitch, restMode);
+}
+
+function enterNoteFromStaff(event) {
+    // Use the preview pitch which has already been calculated
+    if (previewPitch !== null) {
+        enterNote(previewPitch, restMode);
+    }
+}
+
+function enterNote(pitch, isRest) {
+    if (!currentSong) return;
+
+    // Use REST_DURATIONS when entering rests, DURATIONS for notes
+    const durationsArray = isRest ? REST_DURATIONS : DURATIONS;
+    const duration = durationsArray[currentDuration] || durationsArray[0];
+    const durationByte = duration.byte | (tieEnabled ? 0x20 : 0) | (isRest ? 0x40 : 0);
+
+    const note = {
+        durationByte: durationByte,
+        pitch: pitch,
+        isRest: isRest,
+        isTied: tieEnabled,
+        duration: duration.beats
+    };
+
+    // Find position to insert/replace
+    const channel = currentSong.channels[currentChannel];
+    let beatPos = 0;
+    let insertIndex = 0;
+
+    for (let i = 0; i < channel.length; i++) {
+        if (beatPos >= playheadBeat) break;
+        beatPos += channel[i].duration;
+        insertIndex = i + 1;
+    }
+
+    // Check if we'll actually place a note (not just advance)
+    // This pre-check lets us save undo state only when needed
+    const existingNotePreCheck = (insertIndex < channel.length && Math.abs(beatPos - playheadBeat) < 0.001) ? channel[insertIndex] : null;
+    const wouldBeSameNote = existingNotePreCheck &&
+        existingNotePreCheck.pitch === pitch &&
+        existingNotePreCheck.isRest === isRest &&
+        existingNotePreCheck.durationByte === durationByte;
+
+    if (!wouldBeSameNote) {
+        // We're going to modify - save undo state
+        saveUndoState();
+    }
+
+    // Fill gap with null slots if playhead is beyond existing notes
+    // GM allows non-contiguous note entry - gaps are filled with invisible 32nd-note spacers
+    if (beatPos < playheadBeat) {
+        const gap = playheadBeat - beatPos;
+        const nullSlotDuration = 0.125; // 32nd note
+        const numNullSlots = Math.round(gap / nullSlotDuration);
+
+        for (let i = 0; i < numNullSlots; i++) {
+            const nullSlot = {
+                durationByte: 0x40,  // rest flag + duration index 0 (32nd note)
+                pitch: 0x3C,         // hidden rest marker (not displayed)
+                isRest: true,
+                isNullSlot: true,
+                isTied: false,
+                duration: nullSlotDuration
+            };
+            channel.splice(insertIndex, 0, nullSlot);
+            insertIndex++;
+        }
+        beatPos = playheadBeat;  // Now we're at the playhead
+    }
+
+    // Check if clicking on the same note that's already there
+    // If so, just advance (GM-style "confirm and move on")
+    // Use tolerance for floating-point comparison (playheadBeat may have drift after playback)
+    const existingNote = (insertIndex < channel.length && Math.abs(beatPos - playheadBeat) < 0.001) ? channel[insertIndex] : null;
+    const isSameNote = existingNote &&
+        existingNote.pitch === pitch &&
+        existingNote.isRest === isRest &&
+        existingNote.durationByte === durationByte;
+
+    if (isSameNote) {
+        // Same note clicked again - advance to next position
+        animateScrollTo(playheadBeat + duration.beats);
+        return;
+    }
+
+    // Place/replace the note
+    if (insMode) {
+        // Insert mode: push everything right
+        channel.splice(insertIndex, 0, note);
+    } else {
+        // Replace mode: replace note at current position if exists
+        if (existingNote) {
+            // Check if we're replacing null slots - consume as many as fit the new note
+            if (isNullSlot(existingNote)) {
+                // Count consecutive null slots up to the new note's duration
+                let nullSlotsToRemove = 0;
+                let nullSlotsDuration = 0;
+                for (let i = insertIndex; i < channel.length; i++) {
+                    if (isNullSlot(channel[i]) && nullSlotsDuration < duration.beats - 0.001) {
+                        nullSlotsDuration += channel[i].duration;
+                        nullSlotsToRemove++;
+                    } else {
+                        break;
+                    }
+                }
+                // Remove consumed null slots and insert new note
+                channel.splice(insertIndex, nullSlotsToRemove, note);
+            } else {
+                // Regular note replacement
+                channel[insertIndex] = note;
+            }
+        } else {
+            channel.splice(insertIndex, 0, note);
+        }
+    }
+
+    // Don't advance - let user click again to confirm and move on
+    renderStaff();
+
+    // Play the note and highlight piano key with channel color
+    if (!isRest) {
+        highlightPianoKey(pitch, true, currentChannel);
+
+        // Play the note sound using the channel's instrument
+        const instrument = currentSong.instruments[currentChannel];
+        if (instrument > 0) { // Don't play if instrument is 'off'
+            playNotePreview(pitch, instrument, duration.beats);
+        }
+
+        setTimeout(() => highlightPianoKey(pitch, false), Math.max(200, duration.beats * currentSong.quarterNoteDuration * 1000));
+    }
+}
+
+// Play a single note for preview
+function playNotePreview(pitch, instrumentIndex, beats) {
+    if (!currentSong) return;
+
+    // Apply instrument transpose (e.g., +24 semitones for snare/cymbal)
+    const config = gmMusic.INSTRUMENTS[instrumentIndex] || gmMusic.INSTRUMENTS[0];
+    const transposedPitch = pitch + (config.transpose || 0);
+
+    // Convert pitch to frequency
+    const A440_PITCH = 0x26; // 38 = A4
+    const semitonesFromA4 = transposedPitch - A440_PITCH;
+    const frequency = 440 * Math.pow(2, semitonesFromA4 / 12);
+
+    // Duration in seconds
+    const durationSec = beats * currentSong.quarterNoteDuration;
+
+    // Get or create audio context
+    if (!window.previewAudioCtx) {
+        window.previewAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    const ctx = window.previewAudioCtx;
+
+    // Create gain node for volume control
+    const gainNode = ctx.createGain();
+    gainNode.gain.value = 0.3;
+    gainNode.connect(ctx.destination);
+
+    // Use gmMusic's playPreviewNote for proper instrument sound
+    currentSong.playPreviewNote(ctx, gainNode, instrumentIndex, frequency, durationSec);
+}
+
+// === PLAYHEAD NAVIGATION ===
+
+// Check if a note is a null slot (invisible spacer)
+function isNullSlot(note) {
+    return note.isNullSlot || (note.isRest && note.pitch === 0x3C);
+}
+
+// Get navigation positions for a channel (start and end of real notes only)
+function getChannelNotePositions(channel) {
+    const positions = new Set([0]);
+    let beatPos = 0;
+    for (const note of channel) {
+        const noteStart = beatPos;
+        beatPos += note.duration;
+        // Only include positions for real notes, not null slots
+        if (!isNullSlot(note)) {
+            positions.add(noteStart);
+            positions.add(beatPos);
+        }
+    }
+    return Array.from(positions).sort((a, b) => a - b);
+}
+
+function movePlayhead(direction) {
+    if (!currentSong) return;
+
+    // Get positions for current channel (real notes only)
+    const currentPositions = getChannelNotePositions(currentSong.channels[currentChannel]);
+
+    // Try to find next/prev position in current channel
+    let targetPos = null;
+
+    if (direction > 0) {
+        for (const pos of currentPositions) {
+            if (pos > playheadBeat + 0.001) {
+                targetPos = pos;
+                break;
+            }
+        }
+    } else {
+        for (let i = currentPositions.length - 1; i >= 0; i--) {
+            if (currentPositions[i] < playheadBeat - 0.001) {
+                targetPos = currentPositions[i];
+                break;
+            }
+        }
+    }
+
+    // If found in current channel, use it
+    if (targetPos !== null) {
+        animateScrollTo(targetPos);
+        return;
+    }
+
+    // Otherwise, look across all channels for the next note position
+    const allPositions = new Set([0]);
+    for (let ch = 0; ch < 3; ch++) {
+        for (const pos of getChannelNotePositions(currentSong.channels[ch])) {
+            allPositions.add(pos);
+        }
+    }
+    const sortedPositions = Array.from(allPositions).sort((a, b) => a - b);
+
+    if (direction > 0) {
+        for (const pos of sortedPositions) {
+            if (pos > playheadBeat + 0.001) {
+                animateScrollTo(pos);
+                return;
+            }
+        }
+        // No more notes forward - stay put
+    } else {
+        for (let i = sortedPositions.length - 1; i >= 0; i--) {
+            if (sortedPositions[i] < playheadBeat - 0.001) {
+                animateScrollTo(sortedPositions[i]);
+                return;
+            }
+        }
+        // No more notes back - go to start
+        animateScrollTo(0);
+    }
+}
+
+function goToTop() {
+    animateScrollTo(0);
+}
+
+function animateScrollTo(targetBeat) {
+    // Cancel any existing animation
+    if (scrollAnimationId) {
+        cancelAnimationFrame(scrollAnimationId);
+    }
+
+    playheadBeat = targetBeat;
+    const startBeat = visualBeat;
+    const startTime = performance.now();
+    const duration = 150; // Animation duration in ms
+
+    function animate(currentTime) {
+        const elapsed = currentTime - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+
+        // Ease-out curve for smooth deceleration
+        const eased = 1 - Math.pow(1 - progress, 3);
+
+        visualBeat = startBeat + (targetBeat - startBeat) * eased;
+        renderStaff();
+
+        if (progress < 1) {
+            scrollAnimationId = requestAnimationFrame(animate);
+        } else {
+            scrollAnimationId = null;
+            visualBeat = targetBeat;
+        }
+    }
+
+    scrollAnimationId = requestAnimationFrame(animate);
+
+    // Flash piano keys for notes at the target position (navigation feedback)
+    if (!isPlaying) {
+        flashNotesAtBeat(targetBeat);
+    }
+}
+
+// Flash piano keys briefly for notes at a given beat position (used during navigation)
+let navFlashTimeout = null;
+
+function flashNotesAtBeat(beat) {
+    // Clear any pending flash timeout and all highlights
+    if (navFlashTimeout) {
+        clearTimeout(navFlashTimeout);
+        navFlashTimeout = null;
+    }
+    clearAllPianoHighlights();
+
+    if (!currentSong) return;
+
+    // Find notes that start at this beat position
+    let foundNotes = false;
+    for (let ch = 0; ch < 3; ch++) {
+        let beatPos = 0;
+        for (const note of currentSong.channels[ch]) {
+            const noteStart = beatPos;
+            const noteEnd = beatPos + note.duration;
+
+            // Flash if this beat is at the start of a real note
+            if (Math.abs(noteStart - beat) < 0.001 && !note.isRest && !isNullSlot(note)) {
+                highlightPianoKey(note.pitch, true, ch);
+                foundNotes = true;
+            }
+
+            beatPos = noteEnd;
+            if (beatPos > beat + 0.001) break; // Past the target, stop searching
+        }
+    }
+
+    // Schedule clearing all highlights after 250ms
+    if (foundNotes) {
+        navFlashTimeout = setTimeout(() => {
+            clearAllPianoHighlights();
+            navFlashTimeout = null;
+        }, 250);
+    }
+}
+
+// === PLAYBACK ===
+
+function togglePlay() {
+    if (isPlaying) {
+        stopSong();
+    } else {
+        playSong();
+    }
+}
+
+function playSong() {
+    if (!currentSong || isPlaying) return;
+
+    // Stop any preview audio that might be playing
+    if (window.previewAudioCtx) {
+        window.previewAudioCtx.close();
+        window.previewAudioCtx = null;
+    }
+
+    // Ensure any previous playback is fully stopped
+    if (currentSong.isPlaying) {
+        currentSong.stop();
+    }
+
+    isPlaying = true;
+    const btnPlay = document.getElementById('btnPlay');
+    btnPlay.classList.add('active');
+    btnPlay.textContent = 'stop';
+    document.getElementById('tempoPanel').classList.add('disabled');
+
+    // Calculate total song length and build note timeline for piano highlighting
+    let maxBeats = 0;
+    activePlaybackNotes = []; // Clear previous
+
+    for (let ch = 0; ch < 3; ch++) {
+        let beatPos = 0;
+        for (const note of currentSong.channels[ch]) {
+            if (!note.isRest) {
+                // Tied notes (legato) play full duration
+                // Untied notes (staccato) play half duration
+                const isTied = (note.durationByte & 0x20) !== 0;
+                const playDuration = isTied ? note.duration : note.duration / 2;
+
+                activePlaybackNotes.push({
+                    channel: ch,
+                    pitch: note.pitch,
+                    startBeat: beatPos,
+                    endBeat: beatPos + playDuration
+                });
+            }
+            beatPos += note.duration;
+            maxBeats = Math.max(maxBeats, beatPos);
+        }
+    }
+
+    // Start from current playhead position
+    playbackStartBeat = playheadBeat;
+
+    // Start audio playback from current position
+    currentSong.play(playheadBeat);
+
+    // Sync visual timing to audio context (audio starts at currentTime + 0.1s)
+    const audioCtx = currentSong.audioCtx;
+    const audioStartTime = audioCtx.currentTime + 0.1; // Same delay as gmMusic.play()
+
+    // Capture tempo at playback start - audio is pre-scheduled so we must match it
+    const playbackQuarterNoteDuration = currentSong.quarterNoteDuration;
+
+    // Animate playhead and piano highlights
+    function animate() {
+        if (!isPlaying) return;
+
+        // Check if audio context was closed (gmMusic auto-stops when done)
+        if (audioCtx.state === 'closed') {
+            stopSong();
+            return;
+        }
+
+        // Use audioContext.currentTime for perfect sync with audio
+        // Use captured tempo, not current (audio can't change mid-playback)
+        const elapsed = audioCtx.currentTime - audioStartTime;
+        const currentBeat = playbackStartBeat + elapsed / playbackQuarterNoteDuration;
+
+        playheadBeat = currentBeat;
+        renderStaff();
+        updatePianoHighlights(currentBeat);
+
+        if (currentBeat < maxBeats) {
+            playbackAnimId = requestAnimationFrame(animate);
+        } else {
+            stopSong();
+        }
+    }
+
+    playbackAnimId = requestAnimationFrame(animate);
+}
+
+function updatePianoHighlights(currentBeat) {
+    // Clear all highlights first
+    clearAllPianoHighlights();
+
+    // Highlight notes that are currently playing
+    for (const noteInfo of activePlaybackNotes) {
+        if (currentBeat >= noteInfo.startBeat && currentBeat < noteInfo.endBeat) {
+            highlightPianoKey(noteInfo.pitch, true, noteInfo.channel);
+        }
+    }
+}
+
+function stopSong() {
+    isPlaying = false;
+    visualBeat = playheadBeat; // Sync visual position when stopping
+    const btnPlay = document.getElementById('btnPlay');
+    btnPlay.classList.remove('active');
+    btnPlay.textContent = 'play';
+    document.getElementById('tempoPanel').classList.remove('disabled');
+
+    if (playbackAnimId) {
+        cancelAnimationFrame(playbackAnimId);
+        playbackAnimId = null;
+    }
+
+    if (currentSong) {
+        currentSong.stop();
+    }
+
+    clearAllPianoHighlights();
+    activePlaybackNotes = [];
+}
+
+// === UNDO SYSTEM ===
+
+function saveUndoState() {
+    if (!currentSong) return;
+
+    // Deep copy the channel data
+    const state = {
+        channels: currentSong.channels.map(ch =>
+            ch.map(note => ({ ...note }))
+        ),
+        playheadBeat: playheadBeat
+    };
+
+    undoHistory.push(state);
+
+    // Limit history size
+    if (undoHistory.length > MAX_UNDO_HISTORY) {
+        undoHistory.shift();
+    }
+
+    updateUndoButton();
+}
+
+function undo() {
+    if (!currentSong || undoHistory.length === 0) return;
+
+    const state = undoHistory.pop();
+
+    // Restore channel data
+    currentSong.channels = state.channels.map(ch =>
+        ch.map(note => ({ ...note }))
+    );
+
+    // Restore playhead position
+    playheadBeat = state.playheadBeat;
+    visualBeat = playheadBeat;
+
+    updateUndoButton();
+    renderStaff();
+}
+
+function updateUndoButton() {
+    const btn = document.getElementById('btnUndo');
+    if (btn) {
+        btn.disabled = undoHistory.length === 0;
+        btn.style.opacity = undoHistory.length === 0 ? '0.5' : '1';
+    }
+}
+
+function clearUndoHistory() {
+    undoHistory = [];
+    updateUndoButton();
+}
+
+// === EDITING OPERATIONS ===
+
+function toggleInsMode() {
+    insMode = !insMode;
+    document.getElementById('btnIns').classList.toggle('flashing', insMode);
+}
+
+function toggleTie() {
+    tieEnabled = !tieEnabled;
+    document.getElementById('tieButton').classList.toggle('active', tieEnabled);
+    // Re-render duration selector to show tie on notes
+    createDurationSelector();
+}
+
+let deleteNoteIndex = -1; // Track which note to delete
+
+function deleteNote() {
+    if (!currentSong) return;
+
+    const channel = currentSong.channels[currentChannel];
+    if (channel.length === 0) return;
+
+    // Find note at playhead
+    let beatPos = 0;
+    let noteIndex = -1;
+
+    for (let i = 0; i < channel.length; i++) {
+        if (Math.abs(beatPos - playheadBeat) < 0.01) {
+            noteIndex = i;
+            break;
+        }
+        beatPos += channel[i].duration;
+        if (beatPos > playheadBeat) break;
+    }
+
+    if (noteIndex === -1) return;
+
+    const note = channel[noteIndex];
+
+    // If it's a null slot, delete all consecutive null slots
+    if (isNullSlot(note)) {
+        saveUndoState();
+        let numToDelete = 0;
+        for (let i = noteIndex; i < channel.length; i++) {
+            if (isNullSlot(channel[i])) {
+                numToDelete++;
+            } else {
+                break;
+            }
+        }
+        channel.splice(noteIndex, numToDelete);
+        renderStaff();
+        return;
+    }
+
+    // Regular note - show delete dialog with count input
+    deleteNoteIndex = noteIndex;
+    document.getElementById('deleteCount').value = '1';
+    document.getElementById('deleteChannel').textContent = currentChannel + 1;
+    document.getElementById('deleteDialog').classList.add('open');
+    document.getElementById('deleteCount').focus();
+    document.getElementById('deleteCount').select();
+}
+
+function confirmDelete() {
+    const channel = currentSong.channels[currentChannel];
+    let count = parseInt(document.getElementById('deleteCount').value) || 1;
+    count = Math.max(1, Math.min(100, count)); // Clamp to 1-100
+
+    // Count real notes available from deleteNoteIndex
+    let realNotesAvailable = 0;
+    for (let i = deleteNoteIndex; i < channel.length; i++) {
+        if (!isNullSlot(channel[i])) {
+            realNotesAvailable++;
+        }
+    }
+    count = Math.min(count, realNotesAvailable);
+
+    if (count > 0) {
+        saveUndoState();
+
+        // Delete 'count' real notes AND any null slots between them
+        let deleted = 0;
+        while (deleted < count && deleteNoteIndex < channel.length) {
+            const note = channel[deleteNoteIndex];
+            if (isNullSlot(note)) {
+                // Delete null slots that are between notes being deleted
+                channel.splice(deleteNoteIndex, 1);
+            } else {
+                // Delete the real note
+                channel.splice(deleteNoteIndex, 1);
+                deleted++;
+            }
+        }
+
+        // Also delete any trailing null slots up to the next real note
+        while (deleteNoteIndex < channel.length && isNullSlot(channel[deleteNoteIndex])) {
+            channel.splice(deleteNoteIndex, 1);
+        }
+
+        renderStaff();
+    }
+
+    document.getElementById('deleteDialog').classList.remove('open');
+    deleteNoteIndex = -1;
+}
+
+function cancelDelete() {
+    document.getElementById('deleteDialog').classList.remove('open');
+    deleteNoteIndex = -1;
+}
+
+function clearSong() {
+    showConfirm('clear song?', () => {
+        newSong();
+    });
+}
+
+// === CONFIRMATION DIALOG ===
+
+function showConfirm(message, callback) {
+    document.getElementById('confirmText').textContent = message;
+    document.getElementById('confirmDialog').classList.add('open');
+    confirmCallback = callback;
+}
+
+function confirmYes() {
+    document.getElementById('confirmDialog').classList.remove('open');
+    if (confirmCallback) {
+        confirmCallback();
+        confirmCallback = null;
+    }
+}
+
+function confirmNo() {
+    document.getElementById('confirmDialog').classList.remove('open');
+    confirmCallback = null;
+}
+
+// === CHANNEL/INSTRUMENT ===
+
+function selectChannel(channel) {
+    currentChannel = channel;
+    document.querySelectorAll('.channel-row').forEach((el, i) => {
+        el.classList.toggle('selected', i === channel);
+    });
+}
+
+function showInstrumentPicker(channel) {
+    const dropdown = document.getElementById('instDropdown');
+    dropdown.innerHTML = '';
+
+    INSTRUMENTS.forEach((name, index) => {
+        const option = document.createElement('div');
+        option.className = 'inst-option';
+        option.textContent = name;
+        option.onclick = () => {
+            setChannelInstrument(channel, index);
+            dropdown.classList.remove('open');
+        };
+        dropdown.appendChild(option);
+    });
+
+    // Position near the channel row
+    const row = document.querySelector(`.channel-row[data-channel="${channel}"]`);
+    const rect = row.getBoundingClientRect();
+    const screenRect = document.getElementById('screen').getBoundingClientRect();
+
+    dropdown.style.left = (rect.right - screenRect.left + 5) + 'px';
+    dropdown.style.top = (rect.top - screenRect.top) + 'px';
+    dropdown.classList.add('open');
+}
+
+function setChannelInstrument(channel, instrumentIndex) {
+    if (!currentSong) return;
+
+    currentSong.instruments[channel] = instrumentIndex;
+    updateChannelDisplay();
+}
+
+function updateChannelDisplay() {
+    if (!currentSong) return;
+
+    const rows = document.querySelectorAll('.channel-row');
+    rows.forEach((row, ch) => {
+        const instSpan = row.querySelector('.channel-inst');
+        instSpan.textContent = INSTRUMENTS[currentSong.instruments[ch]];
+    });
+}
+
+// === TEMPO ===
+
+function setupTempoControl() {
+    const tempoEl = document.getElementById('tempoValue');
+    let dragging = false;
+    let startY, startTempo;
+
+    tempoEl.addEventListener('mousedown', (e) => {
+        if (isPlaying) return; // Can't change tempo while playing
+        dragging = true;
+        startY = e.clientY;
+        startTempo = currentSong ? currentSong.tempo : 80;
+        e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!dragging || !currentSong || isPlaying) return;
+
+        const delta = startY - e.clientY;
+        const newTempo = Math.max(1, Math.min(255, startTempo + Math.round(delta / 2)));
+        currentSong.tempo = newTempo;
+        currentSong.bpm = (newTempo / 80) * 132;
+        currentSong.quarterNoteDuration = 60 / currentSong.bpm;
+        updateTempoDisplay();
+    });
+
+    document.addEventListener('mouseup', () => {
+        dragging = false;
+    });
+}
+
+function updateTempoDisplay() {
+    if (!currentSong) return;
+    document.getElementById('tempoValue').textContent =
+        currentSong.tempo.toString().padStart(3, '0');
+}
+
+// === SONG NAME ===
+
+function updateSongNameDisplay() {
+    const name = currentSong ? currentSong.name.trim() : '';
+    // Blank when there's no real name yet (default 'NEW' placeholder or empty).
+    // innerHTML with &nbsp; keeps the panel height stable so the menu below
+    // doesn't shift up when a name is added/removed. Without this the empty
+    // text node would collapse to zero height.
+    const el = document.getElementById('songName');
+    if (!name || name === 'NEW') {
+        el.innerHTML = '&nbsp;';
+    } else {
+        el.textContent = name;
+    }
+}
+
+// === FILE OPERATIONS ===
+
+// GMDisk instance
+const disk = new GMDisk();
+disk.autoLoad();
+
+function showFilePopup() {
+    disk.showPopup({
+        fileType: GMDisk.FILE_TYPES.MUSIC,
+        showSave: true,
+        suggestedSaveName: () => currentSongFileName || '',
+        onSave: saveToFile,
+        onSelect: loadSongFromDisk,
+        customButtons: [
+            { label: 'Import MIDI…', onClick: showMidiImport },
+            { label: 'Export MIDI…', onClick: showMidiExport }
+        ]
+    });
+}
+
+// Load song from disk (called by GMDisk popup)
+function loadSongFromDisk(fileName, fileData) {
+    if (currentSong && isPlaying) {
+        stopSong();
+    }
+
+    currentSong = new gmMusic(fileData);
+    currentSongFileName = fileName;
+    playheadBeat = 0;
+    visualBeat = 0;
+    clearUndoHistory();
+    updateSongNameDisplay();
+    updateChannelDisplay();
+    updateTempoDisplay();
+    renderStaff();
+}
+
+// Save current song to disk. Returns true on success so the d64 popup can
+// auto-close (gmDisk._doSave); false leaves it open so the info-bar error
+// message stays visible.
+function saveToFile(fileName) {
+    if (!currentSong) {
+        disk.showInfoMessage('No song to save');
+        return false;
+    }
+
+    // Adopt the typed filename as the song's internal name so it persists in
+    // the saved file and appears in the song-title panel after save.
+    currentSong.name = fileName.replace(/\/SNG$/i, '').padEnd(6, ' ').substring(0, 6);
+
+    const data = currentSong.serialize();
+    if (disk.saveFile(fileName, data)) {
+        currentSongFileName = fileName;
+        updateSongNameDisplay();
+        return true;
+    }
+    disk.showInfoMessage('Failed to save. Disk may be full.');
+    return false;
+}
+
+function quitEditor() {
+    GMTools.quitMenu.show();
+}
+
+// === MIDI EXPORT ===
+
+function showMidiExport() {
+    if (!currentSong) {
+        alert('No song to export');
+        return;
+    }
+
+    // Show song info
+    const noteCount = currentSong.channels.reduce((sum, ch) =>
+        sum + ch.filter(n => !n.isRest).length, 0);
+    const instruments = currentSong.instruments.map(i => INSTRUMENTS[i]).join(', ');
+
+    document.getElementById('midiExportInfo').innerHTML =
+        `<strong>${currentSong.name.trim() || 'Untitled'}</strong><br>` +
+        `${noteCount} notes<br>` +
+        `Tempo: ${currentSong.tempo}<br>` +
+        `Instruments: ${instruments}`;
+
+    document.getElementById('midiExportDialog').classList.add('open');
+}
+
+function closeMidiExportDialog() {
+    document.getElementById('midiExportDialog').classList.remove('open');
+}
+
+function doMidiExport() {
+    if (!currentSong) return;
+
+    const mapping = document.querySelector('input[name="midiMapping"]:checked').value;
+
+    try {
+        const midiData = MidiExport.export(currentSong, { mapping });
+
+        // Create download link
+        const blob = new Blob([midiData], { type: 'audio/midi' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = (currentSong.name.trim() || 'song') + '.mid';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        closeMidiExportDialog();
+        disk.closePopup();
+    } catch (err) {
+        alert('Export failed: ' + err.message);
+    }
+}
+
+// === MIDI IMPORT ===
+
+let midiImporter = null;
+
+function showMidiImport() {
+    document.getElementById('midiDialog').classList.add('open');
+    document.getElementById('midiFileName').textContent = 'No file selected';
+    document.getElementById('midiTrackSection').style.display = 'none';
+    document.getElementById('midiImportBtn').disabled = true;
+    document.getElementById('midiStatus').textContent = '';
+    midiImporter = null;
+}
+
+function closeMidiDialog() {
+    document.getElementById('midiDialog').classList.remove('open');
+    midiImporter = null;
+}
+
+// Handle file selection
+document.getElementById('midiFileInput').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    document.getElementById('midiFileName').textContent = file.name;
+    document.getElementById('midiStatus').textContent = 'Loading...';
+
+    try {
+        const arrayBuffer = await file.arrayBuffer();
+        midiImporter = new MidiImport(arrayBuffer);
+        midiImporter.parse();
+
+        // Get track info and populate dropdowns
+        const trackInfo = midiImporter.getTrackInfo();
+        populateTrackDropdowns(trackInfo);
+
+        document.getElementById('midiTrackSection').style.display = 'block';
+        document.getElementById('midiImportBtn').disabled = false;
+        document.getElementById('midiStatus').textContent =
+            `Found ${trackInfo.length} track(s), ${trackInfo.filter(t => t.hasNotes).length} with notes`;
+    } catch (err) {
+        document.getElementById('midiStatus').textContent = 'Error: ' + err.message;
+        document.getElementById('midiImportBtn').disabled = true;
+    }
+});
+
+function populateTrackDropdowns(trackInfo) {
+    const dropdowns = [
+        document.getElementById('midiTrack1'),
+        document.getElementById('midiTrack2'),
+        document.getElementById('midiTrack3')
+    ];
+
+    // Find tracks with notes, sorted by note count (most notes first)
+    const tracksWithNotes = trackInfo
+        .filter(t => t.hasNotes)
+        .sort((a, b) => b.noteCount - a.noteCount);
+
+    dropdowns.forEach((dropdown, chIndex) => {
+        dropdown.innerHTML = '<option value="-1">(none)</option>';
+
+        trackInfo.forEach((track, index) => {
+            const option = document.createElement('option');
+            option.value = index;
+
+            // Build descriptive label
+            let label = track.name || `Track ${index + 1}`;
+            if (track.hasNotes) {
+                const lowNote = MidiImport.midiNoteToName(track.minNote);
+                const highNote = MidiImport.midiNoteToName(track.maxNote);
+                label += ` (${track.noteCount} notes, ${lowNote}-${highNote})`;
+            } else {
+                label += ' (no notes)';
+            }
+            option.textContent = label;
+
+            dropdown.appendChild(option);
+        });
+
+        // Auto-select: assign first 3 tracks with notes to channels
+        if (chIndex < tracksWithNotes.length) {
+            dropdown.value = tracksWithNotes[chIndex].index;
+        }
+    });
+}
+
+function doMidiImport() {
+    if (!midiImporter) return;
+
+    const trackMap = [
+        parseInt(document.getElementById('midiTrack1').value),
+        parseInt(document.getElementById('midiTrack2').value),
+        parseInt(document.getElementById('midiTrack3').value)
+    ];
+
+    const quantize = document.getElementById('midiQuantize').value;
+    const voiceSeparation = document.getElementById('midiVoiceSep').checked;
+
+    try {
+        const gmData = midiImporter.convertToGM(trackMap, { quantize, voiceSeparation });
+
+        // Create new song with imported data
+        currentSong = gmMusic.createBlank({ name: 'IMPORT' });
+        currentSong.channels = gmData.channels;
+        currentSong.instruments = gmData.instruments;
+
+        // Reset playhead
+        playheadBeat = 0;
+        visualBeat = 0;
+
+        // Update display
+        updateSongNameDisplay();
+        updateChannelDisplay();
+        updateTempoDisplay();
+        renderStaff();
+
+        closeMidiDialog();
+        disk.closePopup();
+
+        // Count total notes imported
+        const totalNotes = gmData.channels.reduce((sum, ch) =>
+            sum + ch.filter(n => !n.isRest).length, 0);
+        document.getElementById('midiStatus').textContent = '';
+        alert(`Imported ${totalNotes} notes from MIDI`);
+    } catch (err) {
+        document.getElementById('midiStatus').textContent = 'Import failed: ' + err.message;
+    }
+}
+
+// === KEYBOARD SHORTCUTS ===
+
+function setupKeyboardShortcuts() {
+    document.addEventListener('keydown', (e) => {
+        // Close dialogs on escape
+        if (e.key === 'Escape') {
+            document.getElementById('instDropdown').classList.remove('open');
+            document.getElementById('confirmDialog').classList.remove('open');
+            cancelDelete();
+            closeMidiDialog();
+            closeMidiExportDialog();
+        }
+
+        // Enter confirms delete dialog if open
+        if (e.key === 'Enter' && document.getElementById('deleteDialog').classList.contains('open')) {
+            confirmDelete();
+            e.preventDefault();
+        }
+
+        // Quit with Q
+        if (e.key === 'q' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+            // Don't trigger if typing in an input
+            if (document.activeElement.tagName !== 'INPUT' &&
+                document.activeElement.tagName !== 'SELECT') {
+                quitEditor();
+                e.preventDefault();
+            }
+        }
+
+        // Undo with Ctrl+Z or Cmd+Z
+        if (e.key === 'z' && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
+            undo();
+            e.preventDefault();
+        }
+
+        // Navigation arrows - handled by setupNavButtons for repeat support
+        if (e.key === 'ArrowLeft' && !e.repeat) {
+            startNavRepeat(-1);
+            e.preventDefault();
+        } else if (e.key === 'ArrowRight' && !e.repeat) {
+            startNavRepeat(1);
+            e.preventDefault();
+        }
+
+        // Play/stop with space. Skip when the user is typing in a text input
+        // (otherwise the save-dialog filename can't contain spaces).
+        if (e.key === ' ' && document.activeElement.tagName !== 'INPUT') {
+            if (isPlaying) {
+                stopSong();
+            } else {
+                playSong();
+            }
+            e.preventDefault();
+        }
+    });
+
+    document.addEventListener('keyup', (e) => {
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+            stopNavRepeat();
+        }
+    });
+}
+
+// === NAV BUTTON AUTO-REPEAT ===
+
+let navRepeatTimeout = null;
+let navRepeatInterval = null;
+
+function startNavRepeat(direction) {
+    // Stop playback if playing
+    if (isPlaying) {
+        stopSong();
+    }
+
+    // Immediate action
+    movePlayhead(direction);
+
+    // After initial delay, start repeating
+    navRepeatTimeout = setTimeout(() => {
+        navRepeatInterval = setInterval(() => {
+            movePlayhead(direction);
+        }, 100); // Repeat every 100ms
+    }, 400); // Initial delay before repeat starts
+}
+
+function stopNavRepeat() {
+    if (navRepeatTimeout) {
+        clearTimeout(navRepeatTimeout);
+        navRepeatTimeout = null;
+    }
+    if (navRepeatInterval) {
+        clearInterval(navRepeatInterval);
+        navRepeatInterval = null;
+    }
+}
+
+function setupNavButtons() {
+    const btnBack = document.getElementById('btnBack');
+    const btnForward = document.getElementById('btnForward');
+
+    // Back button
+    btnBack.addEventListener('mousedown', () => startNavRepeat(-1));
+    btnBack.addEventListener('mouseup', stopNavRepeat);
+    btnBack.addEventListener('mouseleave', stopNavRepeat);
+
+    // Forward button
+    btnForward.addEventListener('mousedown', () => startNavRepeat(1));
+    btnForward.addEventListener('mouseup', stopNavRepeat);
+    btnForward.addEventListener('mouseleave', stopNavRepeat);
+}
+
+// === STAFF MOUSE HANDLERS ===
+
+const staffArea = document.getElementById('staffArea');
+const previewNote = document.getElementById('previewNote');
+let previewPitch = null;
+
+staffArea.addEventListener('click', enterNoteFromStaff);
+
+staffArea.addEventListener('mousemove', (event) => {
+    if (isPlaying || draggingNote || hoveringOverNote) {
+        previewNote.style.display = 'none';
+        if (!draggingNote && !hoveringOverNote) clearGhostHighlight();
+        return;
+    }
+
+    const rect = staffArea.getBoundingClientRect();
+    const y = event.clientY - rect.top;
+    const x = rect.width * 0.75; // Position at playhead (75% across)
+
+    // Get the pitch for this Y position
+    const pitch = staffYToPitch(y);
+    previewPitch = pitch;
+
+    // Show ghost highlight on piano key
+    if (!restMode) {
+        ghostHighlightPianoKey(pitch, currentChannel);
+    } else {
+        clearGhostHighlight();
+    }
+
+    // Get the snapped Y position for this pitch
+    const snappedY = pitchToStaffY(pitch);
+
+    // Check if this pitch is a sharp (G-based)
+    // From G: G=0, G#=1, A=2, A#=3, B=4, C=5, C#=6, D=7, D#=8, E=9, F=10, F#=11
+    const REAL_PITCH_G1 = 0x00; // 0 = G0 (bottom line of bottom staff)
+    const semitonesFromG1 = pitch - REAL_PITCH_G1;
+    const semitoneInOctave = ((semitonesFromG1 % 12) + 12) % 12;
+    const isSharp = [1, 3, 6, 8, 11].includes(semitoneInOctave); // G#, A#, C#, D#, F#
+
+    // Get current duration info
+    const durationsArray = restMode ? REST_DURATIONS : DURATIONS;
+    const duration = durationsArray[currentDuration] || durationsArray[0];
+    const baseDuration = duration.byte;
+    const isDotted = duration.dotted || false;
+
+    // Determine stem direction based on position
+    const stemUp = snappedY > getStemFlipY();
+
+    // Get channel color
+    const color = getChannelColor(currentChannel);
+
+    // Render preview - use same positioning as createNoteElement
+    if (restMode) {
+        previewNote.innerHTML = getRestSvg(baseDuration, color, isDotted);
+        previewNote.style.left = (x - 20) + 'px';
+        previewNote.style.top = (snappedY - 30) + 'px';
+        previewNote.style.width = '50px';
+        previewNote.style.height = '70px';
+    } else {
+        // Match createNoteElement: container at x-4 with inner div at -36px = x-40 effective
+        const svgContent = getNoteSvg(baseDuration, color, isDotted, stemUp, isSharp, tieEnabled);
+        previewNote.innerHTML = `<div style="position:absolute;left:-36px;top:-30px;width:80px;height:140px;pointer-events:none">${svgContent}</div>`;
+        previewNote.style.left = (x - 4) + 'px';
+        previewNote.style.top = snappedY + 'px';
+        previewNote.style.width = '32px';
+        previewNote.style.height = '24px';
+    }
+
+    previewNote.style.display = 'block';
+});
+
+staffArea.addEventListener('mouseleave', () => {
+    previewNote.style.display = 'none';
+    previewPitch = null;
+    clearGhostHighlight();
+});
+
+// === INITIALIZE ===
+
+document.addEventListener('DOMContentLoaded', () => {
+    initApp();
+});
+
+// Close dropdowns when clicking outside
+document.addEventListener('click', (e) => {
+    const dropdown = document.getElementById('instDropdown');
+    if (!e.target.closest('.channel-row') && !e.target.closest('.inst-dropdown')) {
+        dropdown.classList.remove('open');
+    }
+});
+
+</script>
+</body>
+</html>

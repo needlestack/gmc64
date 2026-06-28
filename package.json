@@ -1,0 +1,15 @@
+{
+  "name": "gmc64",
+  "version": "1.0.0",
+  "description": "JavaScript re-implementation of a 1985 C64 game-creation tool",
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-vm-modules node_modules/vitest/vitest.mjs run",
+    "test:watch": "node --experimental-vm-modules node_modules/vitest/vitest.mjs",
+    "generate-golden": "node tests/generate-golden.js && node tests/generate-golden-sprites.js && node tests/generate-golden-scenes.js && node tests/generate-golden-sounds.js && node tests/generate-golden-music.js && node tests/generate-golden-programs.js && node tests/generate-golden-runtime.js"
+  },
+  "devDependencies": {
+    "puppeteer": "^24.34.0",
+    "vitest": "^2.0.0"
+  }
+}

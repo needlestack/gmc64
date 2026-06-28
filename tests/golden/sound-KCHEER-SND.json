@@ -1,0 +1,47 @@
+{
+  "originalSize": 51,
+  "name": "kcheer",
+  "repeatCount": 0,
+  "repeatDelay": 0,
+  "speed": 254,
+  "eqOn": false,
+  "volume": 15,
+  "frames": [
+    {
+      "index": 0,
+      "wave": 128,
+      "att": 0,
+      "dec": 2,
+      "sus": 0,
+      "rel": 0,
+      "freqHi": 6,
+      "freqLo": 0,
+      "spd": 0,
+      "pulseHi": 0,
+      "pulseLo": 0,
+      "dur": 25,
+      "eqLowPass": 0,
+      "eqBandPass": 0,
+      "eqHighPass": 0,
+      "tie": true
+    },
+    {
+      "index": 1,
+      "wave": 128,
+      "att": 10,
+      "dec": 0,
+      "sus": 15,
+      "rel": 10,
+      "freqHi": 14,
+      "freqLo": 0,
+      "spd": 0,
+      "pulseHi": 0,
+      "pulseLo": 0,
+      "dur": 20,
+      "eqLowPass": 0,
+      "eqBandPass": 0,
+      "eqHighPass": 0,
+      "tie": true
+    }
+  ]
+}

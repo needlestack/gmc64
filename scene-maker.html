@@ -1,0 +1,2491 @@
+<!DOCTYPE html>
+<!--
+  GMC64 Scene Editor
+  ==================
+  Creates and edits .PIC scene/background files for GMC64.
+
+  ARCHITECTURE DECISION: Separate HTML Pages
+  ------------------------------------------
+  This app uses separate HTML pages per editor rather than a single-page app.
+  Rationale:
+  - Simpler state management (each editor owns its state)
+  - Browser handles cleanup on navigation (no manual teardown of canvases/intervals)
+  - URL navigation works naturally (bookmarks, back/forward)
+  - Matches the on-disk format's separate screens
+  - Shared disk state via localStorage (d64lib.js)
+
+  COORDINATE SYSTEM
+  -----------------
+  Scene: 160×200 "fat pixels" (C64 multicolor bitmap mode, 4 colors)
+  Canvas: 160×200 native pixels (matches scene dimensions)
+  Display: 480×400 CSS pixels (3x width, 2x height) - gives correct 3:2 aspect ratio
+
+  Mouse coordinate conversion:
+    fatPixelX = (clientX - rect.left) / 3   (480 CSS px / 160 fat px = 3)
+    fatPixelY = (clientY - rect.top) / 2    (400 CSS px / 200 px = 2)
+
+  TOOLS
+  -----
+  - draw: Freehand drawing, or bucket fill when fill toggle active
+  - line/box/circle: Click-drag shapes with pulsing preview
+  - fill: Toggle that affects box/circle (filled vs outline) and draw (bucket fill)
+  - copy: Two-stage - drag to select region, then click to paste (centered)
+  - text: Click to place cursor, type GM font chars, Shift+Enter commits
+  - zoom: Fat-pixel editor (18×12 grid) for precise editing
+
+  MESSAGE SYSTEM
+  --------------
+  Messages are modal and persist until user interaction. No auto-disappearing
+  timeouts. This avoids Safari-specific bugs with timer throttling and provides
+  predictable behavior. Messages cleared on canvas mousedown.
+
+  DEPENDENCIES
+  ------------
+  - js/d64lib.js: D64 disk image loading/saving
+  - js/c64lib.js: C64 color palette
+  - js/gmScene.js: Scene file parsing/saving, indexed pixel buffer
+  - js/gmCharset.js: Text rendering with GM font
+
+  KEY STATE VARIABLES
+  -------------------
+  - currentScene: gmScene instance (indexed pixel buffer + palette)
+  - currentTool: 'draw'|'line'|'box'|'circle'|'copy'|'zoom'|'text'
+  - drawingColor: 0-3 (palette index to draw with)
+  - fillMode: boolean toggle for filled shapes / bucket fill
+  - undoStack: array of Uint8Array snapshots (max 20)
+
+  See STATUS.md "Scene Editor" section for full documentation.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>C64 GameMaker Scene Editor 2</title>
+<link rel="stylesheet" href="css/gm-ui.css">
+<style>
+/* Page-specific styles */
+
+#screen {
+    background: var(--c64-black);
+    min-width: 600px;
+    width: fit-content;
+    margin: 0 auto;
+    position: relative;
+}
+
+/* Scene canvas area - 320x200 native, CSS scales to 480x400 (same as program-runner) */
+#sceneContainer {
+    position: relative;
+    width: 480px;
+    height: 400px;
+    margin: 0 auto;
+    overflow: hidden;
+}
+
+#sceneCanvas {
+    width: 480px;  /* 1.5x width for correct aspect ratio */
+    height: 400px; /* 2x height */
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    display: block;
+}
+
+/* Zoom highlight rectangle on scene */
+#zoomHighlight {
+    position: absolute;
+    border: 2px solid var(--c64-green);
+    pointer-events: none;
+    display: none;
+}
+
+/* Menu overlay - flexbox layout */
+#menuOverlay {
+    height: 145px;
+    background: var(--c64-gray1);
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 10px;
+}
+
+/* Button grids - uses default button styles from gm-ui.css */
+.btn-grid {
+    display: grid;
+    gap: 3px;
+}
+
+#toolButtons {
+    grid-template-columns: repeat(3, 1fr);
+    margin-right: 48px;
+}
+
+#toolButtons button {
+    padding: 4px 6px;
+    margin: 0;
+}
+
+#toolButtons button.active {
+    background: var(--c64-lt-green);
+}
+
+#actionButtons {
+    grid-template-columns: repeat(2, 1fr);
+}
+
+#actionButtons button {
+    padding: 0 4px;
+    margin: 0;
+    /* Preserve literal spaces in labels so " disk " / "  ok  " hold their width
+       (HTML normally collapses whitespace in text nodes). This is how the grid
+       cells stay the same size when labels swap between normal and file-menu mode. */
+    white-space: pre;
+}
+
+/* File-menu mode: action buttons show in red while sub-mode is active */
+#actionButtons button.cmd-mode {
+    color: var(--c64-red);
+}
+
+/* Blanked sub-mode buttons should stay visually identical to a normal button
+   (same gray3 bg) — just empty and non-interactive. The global :disabled rule
+   darkens the bg to gray2; override here so they don't visually change. */
+#actionButtons button:disabled,
+#actionButtons button:disabled:hover {
+    background: var(--c64-gray3);
+    color: var(--c64-gray3);
+    cursor: default;
+}
+
+/* Color palette - middle section */
+#palette {
+    border-spacing: 0px;
+    border-collapse: collapse;
+}
+
+#palette td {
+    padding: 2px 5px;
+    cursor: pointer;
+    color: var(--c64-yellow);
+}
+
+#palette tr:hover {
+    background: var(--c64-gray1);
+}
+
+.colorSelected {
+    background-color: var(--c64-blue) !important;
+}
+
+/* Color picker styles from gm-ui.css */
+
+/* Zoom fatbit editor - 18x12 fat pixels as table */
+#zoomEditor {
+    background: var(--c64-black);
+    display: none;
+    border-collapse: collapse;
+    table-layout: fixed;
+    /* Pull flush to top-left edge, with right margin for palette gap */
+    margin: -10px 10px 0 -10px;
+    /* Grid border on right and bottom edges only */
+    border-right: 1px solid var(--c64-gray1);
+    border-bottom: 1px solid var(--c64-gray1);
+}
+
+#zoomEditor td {
+    /* Fat pixel: 3:2 ratio, using 18x12 px */
+    width: 18px;
+    height: 12px;
+    min-width: 18px;
+    min-height: 12px;
+    padding: 0;
+    border: 1px solid var(--c64-gray1);
+}
+
+/* Zoom mode adjustments */
+#screen.zoom-mode #toolButtons {
+    display: none;
+}
+
+#screen.zoom-mode #zoomEditor {
+    display: block;
+}
+
+/* Right section - nested flexbox */
+#rightSection {
+    display: flex;
+    flex-direction: column;
+}
+
+#rightSection .top-row {
+    display: flex;
+    gap: 15px;
+}
+
+/* Message area - spans below palette and action buttons */
+#message {
+    color: var(--c64-yellow);
+    min-height: 36px;
+    margin-top: 5px;
+    text-align: center;
+    line-height: 1.4;
+}
+
+/* Import-image dialog. z-index above .popup-overlay (1000) so it stacks
+   on top of the disk popup it was launched from. */
+#importImageOverlay { z-index: 1002; }
+.import-image-dialog {
+    width: 380px;
+    color: var(--c64-white);
+}
+.import-row {
+    margin: 6px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.import-section-header {
+    margin: 14px 0 6px;
+    color: var(--c64-yellow);
+}
+.import-fit-options {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.import-actions {
+    justify-content: flex-end;
+    gap: 6px;
+    margin-top: 12px;
+}
+.import-preview {
+    display: block;
+    width: 320px;
+    height: 200px;
+    margin: 6px auto 0;
+    image-rendering: pixelated;
+    background: var(--c64-blue);
+    border: 2px solid var(--c64-black);
+}
+
+#message .action-btn {
+    background: var(--c64-blue);
+    color: var(--c64-white);
+    cursor: pointer;
+    padding: 0 4px;
+}
+
+#message .action-btn:hover {
+    background: var(--c64-lt-blue);
+}
+
+/* Custom cursors */
+#sceneContainer.pencil-cursor {
+    cursor: crosshair;
+}
+
+/* GMDisk popup uses styles from gm-ui.css */
+
+</style>
+</head>
+<body>
+
+<div id="screen">
+    <!-- Menu bar -->
+    <div id="menuOverlay">
+        <!-- Left section: tool buttons OR zoom editor -->
+        <div id="leftSection">
+            <!-- Tool buttons - 3x3 grid -->
+            <div id="toolButtons" class="btn-grid">
+                <button id="btnZoom" onclick="setTool('zoom')">zoom</button>
+                <button id="btnCopy" onclick="setTool('copy')">copy</button>
+                <button id="btnFill" onclick="setTool('fill')">fill</button>
+                <button id="btnCircle" onclick="setTool('circle')">circl</button>
+                <button id="btnLine" onclick="setTool('line')">line</button>
+                <button id="btnBox" onclick="setTool('box')">box</button>
+                <button id="btnDraw" onclick="setTool('draw')">draw</button>
+                <button id="btnText" onclick="setTool('text')">text</button>
+                <span></span>
+            </div>
+            <!-- Zoom editor (shown in zoom mode, replaces tool buttons) -->
+            <table id="zoomEditor"></table>
+        </div>
+
+        <!-- Right section: palette + buttons on top, message below -->
+        <div id="rightSection">
+            <div class="top-row">
+                <!-- Color palette - vertical rows -->
+                <table id="palette">
+                    <tr id="color1Row"><td onclick="selectColorSlot(1)">1</td><td onclick="selectColorSlot(1)" id="color1Name">---</td><td id="color1Swatch" onclick="selectColor(1, event)">&#9608;&#9608;</td></tr>
+                    <tr id="color2Row"><td onclick="selectColorSlot(2)">2</td><td onclick="selectColorSlot(2)" id="color2Name">---</td><td id="color2Swatch" onclick="selectColor(2, event)">&#9608;&#9608;</td></tr>
+                    <tr id="color3Row"><td onclick="selectColorSlot(3)">3</td><td onclick="selectColorSlot(3)" id="color3Name">---</td><td id="color3Swatch" onclick="selectColor(3, event)">&#9608;&#9608;</td></tr>
+                    <tr id="color0Row"><td onclick="selectColorSlot(0)">b</td><td onclick="selectColorSlot(0)" id="color0Name">---</td><td id="color0Swatch" onclick="selectColor(0, event)">&#9608;&#9608;</td></tr>
+                </table>
+
+                <!-- Action buttons. IDs let the file menu mode swap labels/handlers.
+                     Labels are padded with spaces (and CSS sets white-space: pre)
+                     so swapping in disk/ok/load/save doesn't resize the grid. -->
+                <div id="actionButtons" class="btn-grid">
+                    <button id="actionBtn1" onclick="actionBtn1Click()"> file </button>
+                    <button id="actionBtn2" onclick="actionBtn2Click()"> menu </button>
+                    <button id="actionBtn3" onclick="actionBtn3Click()"> undo </button>
+                    <button id="actionBtn4" onclick="actionBtn4Click()">clear </button>
+                </div>
+            </div>
+
+            <!-- Message area spanning below palette and buttons -->
+            <div id="message"></div>
+        </div>
+    </div>
+
+    <!-- Scene canvas -->
+    <div id="sceneContainer" class="pencil-cursor">
+        <canvas id="sceneCanvas" width="160" height="200"></canvas>
+        <div id="zoomHighlight"></div>
+    </div>
+</div>
+
+<!-- Color picker created dynamically by GMTools -->
+
+<!-- Disk popup handled by GMDisk -->
+
+<!-- Image import dialog -->
+<div id="importImageOverlay" class="popup-overlay" style="display:none">
+    <div class="popup-dialog import-image-dialog">
+        <button class="popup-close-x import-cancel">X</button>
+        <div class="popup-title">Import Image</div>
+
+        <div class="import-row">
+            <input type="file" id="importImageFile" accept="image/png,image/jpeg">
+        </div>
+
+        <div class="import-section-header">options</div>
+
+        <div class="import-row">
+            <label><input type="checkbox" id="importDither" checked> dither</label>
+        </div>
+
+        <div class="import-row" style="margin-top:10px">
+            <span>fit:</span>
+            <div class="import-fit-options">
+                <label><input type="radio" name="importFit" value="stretch" checked> stretch</label>
+                <label><input type="radio" name="importFit" value="crop"> center crop</label>
+            </div>
+        </div>
+
+        <div class="import-row import-actions">
+            <button class="import-go" disabled>Import</button>
+            <button class="import-cancel">Cancel</button>
+        </div>
+
+        <canvas id="importPreview" width="160" height="200" class="import-preview"></canvas>
+    </div>
+</div>
+
+<script src="js/d64lib.js"></script>
+<script src="js/gmDisk.js"></script>
+<script src="js/c64lib.js"></script>
+<script src="js/gmTools.js"></script>
+<script src="js/gmScene.js"></script>
+<script src="js/gmCharset.js"></script>
+
+<script>
+
+// === STATE ===
+let currentScene = null;
+let currentTool = 'draw';
+let selectedColorSlot = 0; // 0=bg, 1=color1, 2=color2, 3=color3
+let drawingColor = 0; // Color index to draw with (0-3)
+
+// Scene colors (C64 palette indices 0-15)
+let sceneColors = {
+    bg: 6,     // blue
+    color1: 1, // white
+    color2: 9, // brown
+    color3: 0  // black
+};
+
+// Undo stack
+let undoStack = [];
+const MAX_UNDO = 20;
+
+// Zoom state
+let zoomMode = false;
+let zoomPlaced = false; // Has zoom been placed by clicking? If false, follows pointer
+let zoomX = 0; // Top-left corner of zoom area (in fat pixels 0-159)
+let zoomY = 0; // Top-left corner of zoom area (in pixels 0-199)
+const ZOOM_WIDTH = 18;  // Fat pixels shown in zoom view
+const ZOOM_HEIGHT = 12; // Pixels shown in zoom view
+
+// Drawing state
+let isDrawing = false;
+let lastX = -1;
+let lastY = -1;
+let shapeStartX = -1;
+let shapeStartY = -1;
+let previewX = -1;  // Current preview endpoint
+let previewY = -1;
+let flashPhase = 0;      // 0 to 1, fades green to black and back
+let flashDir = 1;        // Direction of fade
+let fillMode = false;    // Fill toggle for box/circle, bucket fill for draw
+let fillPulse = 0;       // For pulsing fill button
+
+// Copy tool state
+let copyBuffer = null; // { width, height, pixels: Uint8Array, rgbaCache: Uint8Array }
+let copyStage = 0; // 0 = selecting source region, 1 = placing copy
+let copyPreviewX = -1; // Current mouse position for copy preview
+let copyPreviewY = -1;
+
+// Confirmation modes
+let clearMode = { active: false };
+
+// Text tool state
+let textMode = {
+    active: false,
+    startX: 0,      // Starting X position (pixel coords)
+    startY: 0,      // Starting Y position (pixel coords)
+    cursorX: 0,     // Current cursor X (character column from start)
+    cursorY: 0,     // Current cursor Y (character row from start)
+    chars: [],      // Array of {col, row, gmIndex} for typed characters
+    previewX: -1,   // Preview cursor position before clicking (pixel coords)
+    previewY: -1
+};
+let charset = null; // gmCharset instance
+
+// Canvas refs
+let sceneCanvas, sceneCtx;
+let zoomTable;
+
+// C64 color names - use c64ColorNames from c64lib.js
+
+// === INITIALIZATION ===
+function init() {
+    sceneCanvas = document.getElementById('sceneCanvas');
+    sceneCtx = sceneCanvas.getContext('2d');
+    sceneCtx.imageSmoothingEnabled = false;
+
+    zoomTable = document.getElementById('zoomEditor');
+    buildZoomTable();
+
+    // Initialize charset for text tool
+    charset = new gmCharset();
+
+    // Create blank scene
+    currentScene = new gmScene();
+    currentScene.bgColor = sceneColors.bg;
+    currentScene.color1 = sceneColors.color1;
+    currentScene.color2 = sceneColors.color2;
+    currentScene.color3 = sceneColors.color3;
+    currentScene.clear();
+
+    // Update color display
+    updatePaletteDisplay();
+
+    // Set up event listeners
+    setupEventListeners();
+
+    // Restore prior session (if any) before first render so we paint the
+    // restored scene instead of the blank one.
+    restoreSceneSession();
+
+    // Initial render
+    renderScene();
+    setTool('draw');
+    selectColorSlot(1); // Start with color 1 selected
+
+    // Start flash timer (fades between green and black)
+    setInterval(() => {
+        flashPhase += 0.32 * flashDir;
+        if (flashPhase >= 1) { flashPhase = 1; flashDir = -1; }
+        if (flashPhase <= 0) { flashPhase = 0; flashDir = 1; }
+
+        // Render preview for shapes and copy selection
+        if (isDrawing && (currentTool === 'line' || currentTool === 'box' || currentTool === 'circle' || currentTool === 'copy')) {
+            renderScene();
+        }
+        // Render for text tool (preview cursor and active cursor)
+        if (currentTool === 'text' && (textMode.active || textMode.previewX >= 0)) {
+            renderScene();
+        }
+        // Fade fill button when active (lt-green ↔ white)
+        if (fillMode) {
+            const btnFill = document.getElementById('btnFill');
+            btnFill.style.backgroundColor = fillButtonColor();
+        }
+        // Fade zoom highlight
+        if (zoomMode) {
+            const highlight = document.getElementById('zoomHighlight');
+            highlight.style.borderColor = flashColor();
+        }
+    }, 50);
+
+}
+
+// Helper to interpolate between green and black based on flashPhase
+function flashColor() {
+    const green = c64Palette.green;
+    const r = Math.round(green[0] * (1 - flashPhase));
+    const g = Math.round(green[1] * (1 - flashPhase));
+    const b = Math.round(green[2] * (1 - flashPhase));
+    return `rgb(${r}, ${g}, ${b})`;
+}
+
+// Helper to get flash RGB array for canvas drawing
+function flashRGB() {
+    const green = c64Palette.green;
+    return [
+        Math.round(green[0] * (1 - flashPhase)),
+        Math.round(green[1] * (1 - flashPhase)),
+        Math.round(green[2] * (1 - flashPhase))
+    ];
+}
+
+// Helper to interpolate between lt-green and gray2 for fill button
+function fillButtonColor() {
+    const ltGreen = c64Palette.ltGreen;
+    const gray2 = c64Palette.gray2;
+    const r = Math.round(ltGreen[0] + (gray2[0] - ltGreen[0]) * flashPhase);
+    const g = Math.round(ltGreen[1] + (gray2[1] - ltGreen[1]) * flashPhase);
+    const b = Math.round(ltGreen[2] + (gray2[2] - ltGreen[2]) * flashPhase);
+    return `rgb(${r}, ${g}, ${b})`;
+}
+
+// Helper to convert c64Palette entry to CSS color string
+function paletteToCSS(colorIndex) {
+    const rgba = c64Palette[colorIndex];
+    if (!rgba) return '#000000'; // c64-black fallback
+    return `rgb(${rgba[0]}, ${rgba[1]}, ${rgba[2]})`;
+}
+
+function updatePaletteDisplay() {
+    // Update each color row's swatch and name
+    const colors = [sceneColors.bg, sceneColors.color1, sceneColors.color2, sceneColors.color3];
+
+    for (let slot = 0; slot < 4; slot++) {
+        const c64Index = colors[slot];
+        const swatchEl = document.getElementById(`color${slot}Swatch`);
+        const nameEl = document.getElementById(`color${slot}Name`);
+
+        if (swatchEl) swatchEl.style.color = paletteToCSS(c64Index);
+        if (nameEl) {
+            // Pad to 6 chars with non-breaking spaces for consistent width
+            const name = c64ColorNames[c64Index].padEnd(6, '\u00A0');
+            nameEl.textContent = name;
+        }
+    }
+}
+
+function setupEventListeners() {
+    const container = document.getElementById('sceneContainer');
+
+    container.addEventListener('mousedown', onMouseDown);
+    container.addEventListener('mousemove', onMouseMove);
+    container.addEventListener('mouseup', onMouseUp);
+    container.addEventListener('mouseleave', onCanvasLeave);
+
+    // Zoom table events
+    zoomTable.addEventListener('mousedown', onZoomMouseDown);
+    zoomTable.addEventListener('mousemove', onZoomMouseMove);
+    zoomTable.addEventListener('mouseup', onZoomMouseUp);
+
+    // Click on menu overlay (but not interactive elements) exits zoom/copy mode
+    document.getElementById('menuOverlay').addEventListener('click', (e) => {
+        // Don't exit if clicking on buttons, palette, or zoom editor cells
+        if (e.target.closest('button, #palette, #zoomEditor')) return;
+
+        if (zoomMode) {
+            setTool('draw');
+        } else if (currentTool === 'copy' && copyStage === 1) {
+            exitCopyMode();
+        }
+    });
+
+    // Clicking anywhere outside the screen clears copy mode without pasting
+    document.addEventListener('click', (e) => {
+        if (currentTool === 'copy' && copyStage === 1) {
+            const screen = document.getElementById('screen');
+            if (!screen.contains(e.target)) {
+                // Clicked outside screen area - clear copy without pasting
+                exitCopyMode();
+            }
+        }
+    });
+
+    // Keyboard shortcuts - use capture phase to intercept before d64lib
+    document.addEventListener('keydown', onKeyDown, true);
+}
+
+// === COORDINATE CONVERSION ===
+// Convert screen coordinates to scene fat pixel coordinates
+function screenToScene(clientX, clientY) {
+    const container = document.getElementById('sceneContainer');
+    const rect = container.getBoundingClientRect();
+
+    // Scene is 480x400 CSS (1.5x width, 2x height) showing 160x200 fat pixels
+    // Each fat pixel is 3px wide (480/160) and 2px tall (400/200)
+    const x = (clientX - rect.left) / 3; // 3px per fat pixel
+    const y = (clientY - rect.top) / 2;  // 2px per pixel
+
+    return {
+        x: Math.floor(x),
+        y: Math.floor(y)
+    };
+}
+
+function zoomToScene(e) {
+    // Get cell from event target
+    const cell = e.target.closest('td');
+    if (!cell) return null;
+
+    const localX = cell.cellIndex;
+    const localY = cell.parentElement.rowIndex;
+
+    return {
+        x: zoomX + localX,
+        y: zoomY + localY
+    };
+}
+
+// === SESSION PERSISTENCE ===
+// Snapshots the in-progress scene to localStorage so navigating away and back
+// to the editor doesn't drop unsaved work. See GMTools.session.
+
+const saveSceneSession = GMTools.session.debouncedSaver('scene-maker', () => {
+    if (!currentScene) return null;
+    // Sync UI colours into the scene so the serialised bytes carry them
+    currentScene.bgColor = sceneColors.bg;
+    currentScene.color1  = sceneColors.color1;
+    currentScene.color2  = sceneColors.color2;
+    currentScene.color3  = sceneColors.color3;
+    return {
+        bytes: GMTools.session.bytesToBase64(currentScene.save()),
+        fileName: currentSceneFileName
+    };
+});
+
+function restoreSceneSession() {
+    const s = GMTools.session.load('scene-maker');
+    if (!s || !s.bytes) return;
+    try {
+        const bytes = GMTools.session.base64ToBytes(s.bytes);
+        currentScene = new gmScene(bytes);
+        currentSceneFileName = s.fileName || null;
+        sceneColors.bg     = currentScene.bgColor;
+        sceneColors.color1 = currentScene.color1;
+        sceneColors.color2 = currentScene.color2;
+        sceneColors.color3 = currentScene.color3;
+        updatePaletteDisplay();
+    } catch (e) {
+        console.warn('scene-maker: failed to restore session, starting fresh:', e.message);
+    }
+}
+
+// === RENDERING ===
+function renderScene() {
+    if (!currentScene) return;
+
+    // Persist current state to localStorage (debounced)
+    saveSceneSession();
+
+    // Update scene colors from our state
+    currentScene.bgColor = sceneColors.bg;
+    currentScene.color1 = sceneColors.color1;
+    currentScene.color2 = sceneColors.color2;
+    currentScene.color3 = sceneColors.color3;
+
+    // Add canvas border when bg matches surrounding colors
+    const container = document.getElementById('sceneContainer');
+    if (sceneColors.bg === 0) {
+        // Black bg - gray1 border on sides and bottom only
+        container.style.borderTop = 'none';
+        container.style.borderLeft = '1px solid var(--c64-gray1)';
+        container.style.borderRight = '1px solid var(--c64-gray1)';
+        container.style.borderBottom = '1px solid var(--c64-gray1)';
+    } else if (sceneColors.bg === 11) {
+        // Gray1 bg - black border on top only
+        container.style.borderTop = '1px solid var(--c64-black)';
+        container.style.borderLeft = 'none';
+        container.style.borderRight = 'none';
+        container.style.borderBottom = 'none';
+    } else {
+        container.style.border = 'none';
+    }
+
+    // Get RGBA data from scene
+    if (currentScene.dirty) {
+        currentScene._renderToRgbaCache();
+    }
+
+    // Create ImageData and draw to canvas
+    const imageData = new ImageData(
+        new Uint8ClampedArray(currentScene.rgbaCache),
+        320, 200
+    );
+
+    // Scale down to 160x200 for the canvas (it will be CSS scaled to 480x600)
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = 320;
+    tempCanvas.height = 200;
+    const tempCtx = tempCanvas.getContext('2d');
+    tempCtx.putImageData(imageData, 0, 0);
+
+    // Draw preview shape if active (fading green/black for copy, solid for other tools)
+    if (isDrawing) {
+        const previewPixels = getPreviewPixels();
+        if (previewPixels.length > 0) {
+            // Use fading green for copy selection, drawing color for other tools
+            let rgb;
+            if (currentTool === 'copy' && copyStage === 0) {
+                rgb = flashRGB();
+            } else {
+                const c64Color = [sceneColors.bg, sceneColors.color1, sceneColors.color2, sceneColors.color3][drawingColor];
+                rgb = c64Palette[c64Color];
+            }
+            tempCtx.fillStyle = `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
+            for (const p of previewPixels) {
+                if (p.x >= 0 && p.x < 160 && p.y >= 0 && p.y < 200) {
+                    // Fat pixel: 2 pixels wide in 320-space
+                    tempCtx.fillRect(p.x * 2, p.y, 2, 1);
+                }
+            }
+        }
+    }
+
+    // Draw copy buffer preview when in placement stage (solid, no pulse)
+    if (currentTool === 'copy' && copyStage === 1 && copyBuffer && copyPreviewX >= 0) {
+        const colors = [sceneColors.bg, sceneColors.color1, sceneColors.color2, sceneColors.color3];
+        // Center the copy buffer on the cursor
+        const offsetX = copyPreviewX - Math.floor(copyBuffer.width / 2);
+        const offsetY = copyPreviewY - Math.floor(copyBuffer.height / 2);
+
+        for (let y = 0; y < copyBuffer.height; y++) {
+            for (let x = 0; x < copyBuffer.width; x++) {
+                const px = offsetX + x;
+                const py = offsetY + y;
+                if (px >= 0 && px < 160 && py >= 0 && py < 200) {
+                    const colorIndex = copyBuffer.pixels[y * copyBuffer.width + x];
+                    const c64Color = colors[colorIndex];
+                    const rgb = c64Palette[c64Color];
+                    tempCtx.fillStyle = `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
+                    tempCtx.fillRect(px * 2, py, 2, 1);
+                }
+            }
+        }
+    }
+
+    // Draw text preview cursor when hovering (before clicking) - fades green/black
+    if (currentTool === 'text' && !textMode.active && textMode.previewX >= 0) {
+        // Snap to character grid
+        const snapX = Math.floor(textMode.previewX / 8) * 8;
+        const snapY = Math.floor(textMode.previewY / 8) * 8;
+        tempCtx.fillStyle = flashColor();
+        tempCtx.fillRect(snapX * 2, snapY, 16, 8);
+    }
+
+    // Draw text and cursor when in text mode
+    if (textMode.active) {
+        const c64Color = [sceneColors.bg, sceneColors.color1, sceneColors.color2, sceneColors.color3][drawingColor];
+        const rgb = c64Palette[c64Color];
+
+        // Draw typed characters (solid color)
+        for (const ch of textMode.chars) {
+            const px = textMode.startX + ch.col * 8;
+            const py = textMode.startY + ch.row * 8;
+            drawCharToTemp(tempCtx, ch.gmIndex, px, py, rgb, 1.0);
+        }
+
+        // Draw fading green/black cursor
+        const cursorPx = textMode.startX + textMode.cursorX * 8;
+        const cursorPy = textMode.startY + textMode.cursorY * 8;
+        tempCtx.fillStyle = flashColor();
+        tempCtx.fillRect(cursorPx * 2, cursorPy, 16, 8);
+    }
+
+    // Draw to main canvas (which is 160x200, CSS scaled to 480x600)
+    sceneCtx.drawImage(tempCanvas, 0, 0, 160, 200);
+
+    // Update zoom view if in zoom mode
+    if (zoomMode) {
+        renderZoom();
+        updateZoomHighlight();
+    }
+}
+
+function buildZoomTable() {
+    zoomTable.innerHTML = '';
+    for (let y = 0; y < ZOOM_HEIGHT; y++) {
+        const row = document.createElement('tr');
+        for (let x = 0; x < ZOOM_WIDTH; x++) {
+            const cell = document.createElement('td');
+            row.appendChild(cell);
+        }
+        zoomTable.appendChild(row);
+    }
+}
+
+function renderZoom() {
+    if (!currentScene) return;
+
+    const rows = zoomTable.getElementsByTagName('tr');
+    for (let y = 0; y < ZOOM_HEIGHT; y++) {
+        const cells = rows[y].getElementsByTagName('td');
+        for (let x = 0; x < ZOOM_WIDTH; x++) {
+            const sceneX = zoomX + x;
+            const sceneY = zoomY + y;
+
+            let color = '#000000'; // c64-black fallback
+            if (sceneX >= 0 && sceneX < 160 && sceneY >= 0 && sceneY < 200) {
+                const colorIndex = currentScene.getPixel(sceneX, sceneY);
+                const c64Color = [sceneColors.bg, sceneColors.color1, sceneColors.color2, sceneColors.color3][colorIndex];
+                color = paletteToCSS(c64Color);
+            }
+            cells[x].style.backgroundColor = color;
+        }
+    }
+}
+
+function updateZoomHighlight() {
+    const highlight = document.getElementById('zoomHighlight');
+    if (!zoomMode) {
+        highlight.style.display = 'none';
+        return;
+    }
+
+    highlight.style.display = 'block';
+    // Convert zoom area to screen coordinates (1.5x width, 2x height)
+    // Enlarge by 1 fat pixel on each side so edge pixels are visible
+    highlight.style.left = ((zoomX - 1) * 3) + 'px'; // fat pixels are 3px wide
+    highlight.style.top = ((zoomY - 1) * 2) + 'px';
+    highlight.style.width = ((ZOOM_WIDTH + 2) * 3) + 'px';
+    highlight.style.height = ((ZOOM_HEIGHT + 2) * 2) + 'px';
+}
+
+// === TOOLS ===
+function exitCopyMode() {
+    copyStage = 0;
+    copyBuffer = null;
+    copyPreviewX = -1;
+    copyPreviewY = -1;
+    setTool('draw');
+    clearMessage();
+    renderScene();
+}
+
+// Text tool functions
+function enterTextMode(x, y) {
+    // Snap to character grid (8x8)
+    textMode.startX = Math.floor(x / 8) * 8;
+    textMode.startY = Math.floor(y / 8) * 8;
+    textMode.cursorX = 0;
+    textMode.cursorY = 0;
+    textMode.chars = [];
+    textMode.active = true;
+    textMode.previewX = -1; // Clear preview cursor
+    textMode.previewY = -1;
+    saveUndoState();
+    const msgEl = document.getElementById('message');
+    msgEl.innerHTML = '';
+    msgEl.appendChild(document.createTextNode('esc to cancel'));
+    msgEl.appendChild(document.createElement('br'));
+    msgEl.appendChild(document.createTextNode('shift-enter to accept'));
+}
+
+function exitTextMode(commit) {
+    if (commit && textMode.chars.length > 0) {
+        // Commit text to scene
+        for (const ch of textMode.chars) {
+            const px = textMode.startX + ch.col * 8;
+            const py = textMode.startY + ch.row * 8;
+            charset.drawCharToScene(currentScene, ch.gmIndex, px, py, drawingColor, -1);
+        }
+        currentScene.dirty = true;
+    }
+    textMode.active = false;
+    textMode.chars = [];
+    textMode.previewX = -1;
+    textMode.previewY = -1;
+    clearMessage();
+    renderScene();
+}
+
+function asciiToGmIndex(ascii) {
+    if (ascii === 32) return 0;  // space
+    if (ascii >= 65 && ascii <= 90) return ascii - 64;  // A-Z -> 1-26
+    if (ascii >= 97 && ascii <= 122) return ascii - 96; // a-z -> 1-26
+    if (ascii >= 48 && ascii <= 57) return ascii - 48 + 48; // 0-9 -> 48-57
+    // Special characters
+    if (ascii === 46) return 34;  // .
+    if (ascii === 63) return 38;  // ?
+    if (ascii === 39) return 39;  // '
+    if (ascii === 43) return 43;  // +
+    if (ascii === 45) return 45;  // -
+    if (ascii === 47) return 47;  // /
+    if (ascii === 61) return 28;  // =
+    if (ascii === 60) return 31;  // <
+    if (ascii === 62) return 30;  // >
+    if (ascii === 91) return 27;  // [
+    if (ascii === 93) return 29;  // ]
+    return -1; // Unknown character
+}
+
+function handleTextKey(e) {
+    if (!textMode.active) return false;
+
+    // Shift+Enter commits text
+    if (e.key === 'Enter' && e.shiftKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        exitTextMode(true);
+        return true;
+    }
+
+    // Enter goes to next line
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        textMode.cursorX = 0;
+        textMode.cursorY++;
+        renderScene();
+        return true;
+    }
+
+    // Escape cancels
+    if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        exitTextMode(false);
+        return true;
+    }
+
+    // Backspace deletes
+    if (e.key === 'Backspace') {
+        e.preventDefault();
+        e.stopPropagation();
+        if (textMode.cursorX > 0) {
+            textMode.cursorX--;
+            // Remove character at cursor position
+            textMode.chars = textMode.chars.filter(ch =>
+                !(ch.col === textMode.cursorX && ch.row === textMode.cursorY)
+            );
+        } else if (textMode.cursorY > 0) {
+            // Go to end of previous line
+            textMode.cursorY--;
+            // Find rightmost character on this line
+            let maxCol = 0;
+            for (const ch of textMode.chars) {
+                if (ch.row === textMode.cursorY && ch.col >= maxCol) {
+                    maxCol = ch.col + 1;
+                }
+            }
+            textMode.cursorX = maxCol;
+        }
+        renderScene();
+        return true;
+    }
+
+    // Arrow keys move cursor
+    if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        e.stopPropagation();
+        if (textMode.cursorX > 0) textMode.cursorX--;
+        renderScene();
+        return true;
+    }
+    if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        e.stopPropagation();
+        textMode.cursorX++;
+        renderScene();
+        return true;
+    }
+    if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        e.stopPropagation();
+        if (textMode.cursorY > 0) textMode.cursorY--;
+        renderScene();
+        return true;
+    }
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        e.stopPropagation();
+        textMode.cursorY++;
+        renderScene();
+        return true;
+    }
+
+    // Regular character input
+    if (e.key.length === 1) {
+        const gmIndex = asciiToGmIndex(e.key.charCodeAt(0));
+        if (gmIndex >= 0) {
+            e.preventDefault();
+            e.stopPropagation();
+            // Remove any existing char at this position
+            textMode.chars = textMode.chars.filter(ch =>
+                !(ch.col === textMode.cursorX && ch.row === textMode.cursorY)
+            );
+            // Add new character
+            textMode.chars.push({
+                col: textMode.cursorX,
+                row: textMode.cursorY,
+                gmIndex: gmIndex
+            });
+            textMode.cursorX++;
+            renderScene();
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function toggleFill() {
+    fillMode = !fillMode;
+    const btn = document.getElementById('btnFill');
+    if (!fillMode) {
+        // Reset button to normal state
+        btn.style.backgroundColor = '';
+    }
+}
+
+function setTool(tool) {
+    // Clicking any tool on the left consumes the click to exit a file sub-mode.
+    if (maybeExitFileMenu()) return;
+    // Fill is a toggle, not a tool
+    if (tool === 'fill') {
+        toggleFill();
+        return;
+    }
+
+    currentTool = tool;
+
+    // Reset copy state when switching tools
+    if (tool !== 'copy') {
+        copyStage = 0;
+        copyBuffer = null;
+        copyPreviewX = -1;
+        copyPreviewY = -1;
+    }
+
+    // Exit text mode when switching tools (commit any text)
+    if (tool !== 'text' && textMode.active) {
+        exitTextMode(true);
+    }
+
+    // Reset text preview when switching tools
+    if (tool !== 'text') {
+        textMode.previewX = -1;
+        textMode.previewY = -1;
+    }
+
+    // Update button states (exclude fill button - it's handled separately)
+    document.querySelectorAll('#toolButtons button').forEach(btn => {
+        if (btn.id !== 'btnFill') {
+            btn.classList.remove('active');
+        }
+    });
+
+    const btnId = 'btn' + tool.charAt(0).toUpperCase() + tool.slice(1);
+    const btn = document.getElementById(btnId);
+    if (btn) btn.classList.add('active');
+
+    // Handle zoom mode
+    if (tool === 'zoom') {
+        enterZoomMode();
+    } else if (zoomMode && tool !== 'zoom') {
+        exitZoomMode();
+    }
+
+    // Show tool-specific messages or clear message
+    if (tool === 'copy') {
+        showMessage('drag to select region');
+    } else {
+        showMessage('');
+    }
+}
+
+function enterZoomMode() {
+    zoomMode = true;
+    zoomPlaced = false; // Zoom follows pointer until first click
+    document.getElementById('screen').classList.add('zoom-mode');
+    renderZoom();
+    updateZoomHighlight();
+}
+
+function exitZoomMode() {
+    zoomMode = false;
+    document.getElementById('screen').classList.remove('zoom-mode');
+    document.getElementById('zoomHighlight').style.display = 'none';
+}
+
+// === COLOR SELECTION ===
+
+// Select a color slot for drawing (without opening picker)
+function selectColorSlot(slot) {
+    if (maybeExitFileMenu()) return;
+    selectedColorSlot = slot;
+    drawingColor = slot; // 0=bg, 1=color1, 2=color2, 3=color3
+
+    // Update UI - highlight selected row
+    for (let i = 0; i < 4; i++) {
+        const row = document.getElementById(`color${i}Row`);
+        if (row) {
+            row.classList.toggle('colorSelected', i === slot);
+        }
+    }
+}
+
+// Select and open color picker (for mouse clicks on swatch)
+function selectColor(slot, event) {
+    if (maybeExitFileMenu()) return;
+    selectColorSlot(slot);
+
+    // Open color picker at click position
+    GMTools.colorPicker.show({
+        x: event.clientX,
+        y: event.clientY,
+        onSelect: (c64Index) => {
+            // Set the selected slot to this C64 color
+            switch (slot) {
+                case 0: sceneColors.bg = c64Index; break;
+                case 1: sceneColors.color1 = c64Index; break;
+                case 2: sceneColors.color2 = c64Index; break;
+                case 3: sceneColors.color3 = c64Index; break;
+            }
+            updatePaletteDisplay();
+            currentScene.dirty = true;
+            renderScene();
+        }
+    });
+}
+
+
+// === UNDO ===
+function saveUndoState() {
+    // Save a copy of the pixel buffer
+    const state = new Uint8Array(currentScene.pixelBuffer);
+    undoStack.push(state);
+
+    if (undoStack.length > MAX_UNDO) {
+        undoStack.shift();
+    }
+}
+
+function undo() {
+    if (undoStack.length === 0) return;
+
+    const state = undoStack.pop();
+    currentScene.pixelBuffer.set(state);
+    currentScene.dirty = true;
+    renderScene();
+}
+
+// === DRAWING ===
+function drawPixel(x, y) {
+    if (x >= 0 && x < 160 && y >= 0 && y < 200) {
+        currentScene.setPixel(x, y, drawingColor);
+    }
+}
+
+function drawLine(x0, y0, x1, y1) {
+    // Bresenham's line algorithm
+    const dx = Math.abs(x1 - x0);
+    const dy = Math.abs(y1 - y0);
+    const sx = x0 < x1 ? 1 : -1;
+    const sy = y0 < y1 ? 1 : -1;
+    let err = dx - dy;
+
+    while (true) {
+        drawPixel(x0, y0);
+
+        if (x0 === x1 && y0 === y1) break;
+
+        const e2 = 2 * err;
+        if (e2 > -dy) {
+            err -= dy;
+            x0 += sx;
+        }
+        if (e2 < dx) {
+            err += dx;
+            y0 += sy;
+        }
+    }
+}
+
+function drawBox(x0, y0, x1, y1, filled = false) {
+    const minX = Math.min(x0, x1);
+    const maxX = Math.max(x0, x1);
+    const minY = Math.min(y0, y1);
+    const maxY = Math.max(y0, y1);
+
+    if (filled) {
+        for (let y = minY; y <= maxY; y++) {
+            for (let x = minX; x <= maxX; x++) {
+                drawPixel(x, y);
+            }
+        }
+    } else {
+        // Top and bottom edges
+        for (let x = minX; x <= maxX; x++) {
+            drawPixel(x, minY);
+            drawPixel(x, maxY);
+        }
+        // Left and right edges
+        for (let y = minY; y <= maxY; y++) {
+            drawPixel(minX, y);
+            drawPixel(maxX, y);
+        }
+    }
+}
+
+function drawEllipse(x0, y0, x1, y1, filled = false) {
+    // Draw ellipse using the same algorithm as preview
+    const pixels = getEllipsePixels(x0, y0, x1, y1, filled);
+    for (const p of pixels) {
+        drawPixel(p.x, p.y);
+    }
+}
+
+// Draw a character to temp canvas (for preview)
+function drawCharToTemp(ctx, gmIndex, x, y, rgb, alpha) {
+    if (!charset || gmIndex < 0 || gmIndex >= 64) return;
+
+    const bitmap = charset.getCharBitmap(gmIndex);
+    if (!bitmap) return;
+
+    ctx.fillStyle = `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alpha})`;
+    for (let row = 0; row < 8; row++) {
+        for (let col = 0; col < 8; col++) {
+            if (bitmap[row][col] === 1) {
+                // Fat pixel: x is in 160-space, need to double for 320-space
+                ctx.fillRect((x + col) * 2, y + row, 2, 1);
+            }
+        }
+    }
+}
+
+function floodFill(startX, startY) {
+    if (startX < 0 || startX >= 160 || startY < 0 || startY >= 200) return;
+
+    const targetColor = currentScene.getPixel(startX, startY);
+    if (targetColor === drawingColor) return; // Already the fill color
+
+    const stack = [[startX, startY]];
+    const visited = new Set();
+
+    while (stack.length > 0) {
+        const [x, y] = stack.pop();
+        const key = `${x},${y}`;
+
+        if (visited.has(key)) continue;
+        if (x < 0 || x >= 160 || y < 0 || y >= 200) continue;
+        if (currentScene.getPixel(x, y) !== targetColor) continue;
+
+        visited.add(key);
+        currentScene.setPixel(x, y, drawingColor);
+
+        stack.push([x + 1, y]);
+        stack.push([x - 1, y]);
+        stack.push([x, y + 1]);
+        stack.push([x, y - 1]);
+    }
+}
+
+// === PREVIEW PIXELS ===
+// Get array of {x, y} for preview shapes (doesn't modify scene)
+function getLinePixels(x0, y0, x1, y1) {
+    const pixels = [];
+    const dx = Math.abs(x1 - x0);
+    const dy = Math.abs(y1 - y0);
+    const sx = x0 < x1 ? 1 : -1;
+    const sy = y0 < y1 ? 1 : -1;
+    let err = dx - dy;
+
+    while (true) {
+        pixels.push({ x: x0, y: y0 });
+        if (x0 === x1 && y0 === y1) break;
+        const e2 = 2 * err;
+        if (e2 > -dy) { err -= dy; x0 += sx; }
+        if (e2 < dx) { err += dx; y0 += sy; }
+    }
+    return pixels;
+}
+
+function getBoxPixels(x0, y0, x1, y1, filled = false) {
+    const pixels = [];
+    const minX = Math.min(x0, x1);
+    const maxX = Math.max(x0, x1);
+    const minY = Math.min(y0, y1);
+    const maxY = Math.max(y0, y1);
+
+    if (filled) {
+        for (let y = minY; y <= maxY; y++) {
+            for (let x = minX; x <= maxX; x++) {
+                pixels.push({ x, y });
+            }
+        }
+    } else {
+        for (let x = minX; x <= maxX; x++) {
+            pixels.push({ x, y: minY });
+            pixels.push({ x, y: maxY });
+        }
+        for (let y = minY + 1; y < maxY; y++) {
+            pixels.push({ x: minX, y });
+            pixels.push({ x: maxX, y });
+        }
+    }
+    return pixels;
+}
+
+function getEllipsePixels(x0, y0, x1, y1, filled = false) {
+    const pixels = [];
+    const minX = Math.min(x0, x1);
+    const maxX = Math.max(x0, x1);
+    const minY = Math.min(y0, y1);
+    const maxY = Math.max(y0, y1);
+
+    const a = (maxX - minX) / 2; // semi-major axis (horizontal)
+    const b = (maxY - minY) / 2; // semi-minor axis (vertical)
+    const cx = minX + a;         // center x
+    const cy = minY + b;         // center y
+
+    if (a < 0.5 || b < 0.5) {
+        // Degenerate case - just draw a line or point
+        if (a < 0.5 && b < 0.5) {
+            pixels.push({ x: Math.round(cx), y: Math.round(cy) });
+        } else if (a < 0.5) {
+            for (let y = minY; y <= maxY; y++) pixels.push({ x: Math.round(cx), y });
+        } else {
+            for (let x = minX; x <= maxX; x++) pixels.push({ x, y: Math.round(cy) });
+        }
+        return pixels;
+    }
+
+    if (filled) {
+        // Filled ellipse: scan each row and fill from left edge to right edge
+        for (let py = minY; py <= maxY; py++) {
+            const dy = py - cy;
+            // Solve for x: (x-cx)^2/a^2 + (y-cy)^2/b^2 = 1
+            // x = cx ± a * sqrt(1 - dy^2/b^2)
+            const discriminant = 1 - (dy * dy) / (b * b);
+            if (discriminant >= 0) {
+                const dx = a * Math.sqrt(discriminant);
+                const leftX = Math.round(cx - dx);
+                const rightX = Math.round(cx + dx);
+                for (let px = leftX; px <= rightX; px++) {
+                    pixels.push({ x: px, y: py });
+                }
+            }
+        }
+        return pixels;
+    }
+
+    // Outline: Midpoint ellipse algorithm
+    const a2 = a * a;
+    const b2 = b * b;
+
+    // Region 1
+    let x = 0;
+    let y = b;
+    let d1 = b2 - a2 * b + 0.25 * a2;
+
+    while (b2 * x < a2 * y) {
+        pixels.push({ x: Math.round(cx + x), y: Math.round(cy + y) });
+        pixels.push({ x: Math.round(cx - x), y: Math.round(cy + y) });
+        pixels.push({ x: Math.round(cx + x), y: Math.round(cy - y) });
+        pixels.push({ x: Math.round(cx - x), y: Math.round(cy - y) });
+
+        x++;
+        if (d1 < 0) {
+            d1 += b2 * (2 * x + 1);
+        } else {
+            y--;
+            d1 += b2 * (2 * x + 1) - 2 * a2 * y;
+        }
+    }
+
+    // Region 2
+    let d2 = b2 * (x + 0.5) * (x + 0.5) + a2 * (y - 1) * (y - 1) - a2 * b2;
+
+    while (y >= 0) {
+        pixels.push({ x: Math.round(cx + x), y: Math.round(cy + y) });
+        pixels.push({ x: Math.round(cx - x), y: Math.round(cy + y) });
+        pixels.push({ x: Math.round(cx + x), y: Math.round(cy - y) });
+        pixels.push({ x: Math.round(cx - x), y: Math.round(cy - y) });
+
+        y--;
+        if (d2 > 0) {
+            d2 -= a2 * (2 * y + 1);
+        } else {
+            x++;
+            d2 += 2 * b2 * x - a2 * (2 * y + 1);
+        }
+    }
+
+    return pixels;
+}
+
+function getPreviewPixels() {
+    if (!isDrawing || previewX < 0) return [];
+
+    switch (currentTool) {
+        case 'line': return getLinePixels(shapeStartX, shapeStartY, previewX, previewY);
+        case 'box': return getBoxPixels(shapeStartX, shapeStartY, previewX, previewY, fillMode);
+        case 'circle': return getEllipsePixels(shapeStartX, shapeStartY, previewX, previewY, fillMode);
+        case 'copy':
+            // Selection preview - outline only (like box but unfilled)
+            if (copyStage === 0) {
+                return getBoxPixels(shapeStartX, shapeStartY, previewX, previewY, false);
+            }
+            return [];
+        default: return [];
+    }
+}
+
+// Copy a rectangular region from the scene
+function copyRegion(x0, y0, x1, y1) {
+    const minX = Math.max(0, Math.min(x0, x1));
+    const maxX = Math.min(159, Math.max(x0, x1));
+    const minY = Math.max(0, Math.min(y0, y1));
+    const maxY = Math.min(199, Math.max(y0, y1));
+
+    const width = maxX - minX + 1;
+    const height = maxY - minY + 1;
+    const pixels = new Uint8Array(width * height);
+
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            pixels[y * width + x] = currentScene.getPixel(minX + x, minY + y);
+        }
+    }
+
+    return { width, height, pixels };
+}
+
+// Paste the copy buffer at a position
+function pasteRegion(destX, destY) {
+    if (!copyBuffer) return;
+
+    for (let y = 0; y < copyBuffer.height; y++) {
+        for (let x = 0; x < copyBuffer.width; x++) {
+            const targetX = destX + x;
+            const targetY = destY + y;
+            if (targetX >= 0 && targetX < 160 && targetY >= 0 && targetY < 200) {
+                currentScene.setPixel(targetX, targetY, copyBuffer.pixels[y * copyBuffer.width + x]);
+            }
+        }
+    }
+}
+
+// === MOUSE HANDLERS ===
+function onMouseDown(e) {
+    clearMessage();
+    const pos = screenToScene(e.clientX, e.clientY);
+    if (pos.y < 0 || pos.y >= 200 || pos.x < 0 || pos.x >= 160) return;
+
+    isDrawing = true;
+    lastX = pos.x;
+    lastY = pos.y;
+    shapeStartX = pos.x;
+    shapeStartY = pos.y;
+
+    switch (currentTool) {
+        case 'draw':
+            saveUndoState();
+            if (fillMode) {
+                // Bucket fill when fill mode is active
+                floodFill(pos.x, pos.y);
+                isDrawing = false;
+            } else {
+                drawPixel(pos.x, pos.y);
+            }
+            renderScene();
+            break;
+
+        case 'zoom':
+            // Click places and sets zoom center
+            zoomPlaced = true;
+            zoomX = Math.max(0, Math.min(160 - ZOOM_WIDTH, pos.x - Math.floor(ZOOM_WIDTH / 2)));
+            zoomY = Math.max(0, Math.min(200 - ZOOM_HEIGHT, pos.y - Math.floor(ZOOM_HEIGHT / 2)));
+            renderZoom();
+            updateZoomHighlight();
+            break;
+
+        case 'line':
+        case 'box':
+        case 'circle':
+            saveUndoState();
+            break;
+
+        case 'text':
+            // If already in text mode, clicking commits and starts new
+            if (textMode.active) {
+                exitTextMode(true);
+            }
+            enterTextMode(pos.x, pos.y);
+            isDrawing = false;
+            break;
+
+        case 'copy':
+            if (copyStage === 0) {
+                // Stage 0: start selecting source region
+                // Will complete on mouseUp
+            } else {
+                // Stage 1: paste the copied region (centered on cursor)
+                saveUndoState();
+                const pasteX = pos.x - Math.floor(copyBuffer.width / 2);
+                const pasteY = pos.y - Math.floor(copyBuffer.height / 2);
+                pasteRegion(pasteX, pasteY);
+                renderScene();
+                // Stay in copyStage 1 for multiple pastes
+                isDrawing = false;
+                showMessage('click to paste<br>esc to cancel');
+            }
+            break;
+    }
+}
+
+function onMouseMove(e) {
+    const pos = screenToScene(e.clientX, e.clientY);
+
+    // Handle zoom following pointer before first click
+    if (zoomMode && !zoomPlaced && pos.x >= 0 && pos.x < 160 && pos.y >= 0 && pos.y < 200) {
+        zoomX = Math.max(0, Math.min(160 - ZOOM_WIDTH, pos.x - Math.floor(ZOOM_WIDTH / 2)));
+        zoomY = Math.max(0, Math.min(200 - ZOOM_HEIGHT, pos.y - Math.floor(ZOOM_HEIGHT / 2)));
+        renderZoom();
+        updateZoomHighlight();
+        return;
+    }
+
+    // Handle copy placement preview (doesn't require isDrawing)
+    if (currentTool === 'copy' && copyStage === 1 && copyBuffer) {
+        copyPreviewX = pos.x;
+        copyPreviewY = pos.y;
+        renderScene();
+        return;
+    }
+
+    // Handle text preview cursor (before clicking)
+    if (currentTool === 'text' && !textMode.active) {
+        if (pos.x >= 0 && pos.x < 160 && pos.y >= 0 && pos.y < 200) {
+            textMode.previewX = pos.x;
+            textMode.previewY = pos.y;
+        } else {
+            textMode.previewX = -1;
+            textMode.previewY = -1;
+        }
+        return;
+    }
+
+    if (!isDrawing) return;
+
+    if (pos.y < 0 || pos.y >= 200 || pos.x < 0 || pos.x >= 160) return;
+
+    switch (currentTool) {
+        case 'draw':
+            // Draw line from last position to current
+            drawLine(lastX, lastY, pos.x, pos.y);
+            lastX = pos.x;
+            lastY = pos.y;
+            renderScene();
+            break;
+
+        case 'line':
+        case 'box':
+        case 'circle':
+        case 'copy': // Copy selection uses same preview mechanism
+            // Update preview position
+            previewX = pos.x;
+            previewY = pos.y;
+            renderScene();
+            break;
+
+        case 'zoom':
+            // Drag zoom area
+            zoomX = Math.max(0, Math.min(160 - ZOOM_WIDTH, pos.x - Math.floor(ZOOM_WIDTH / 2)));
+            zoomY = Math.max(0, Math.min(200 - ZOOM_HEIGHT, pos.y - Math.floor(ZOOM_HEIGHT / 2)));
+            renderZoom();
+            updateZoomHighlight();
+            break;
+    }
+}
+
+function onMouseUp(e) {
+    if (!isDrawing) return;
+
+    const pos = screenToScene(e.clientX, e.clientY);
+
+    switch (currentTool) {
+        case 'line':
+            drawLine(shapeStartX, shapeStartY, pos.x, pos.y);
+            break;
+
+        case 'box':
+            drawBox(shapeStartX, shapeStartY, pos.x, pos.y, fillMode);
+            break;
+
+        case 'circle':
+            drawEllipse(shapeStartX, shapeStartY, pos.x, pos.y, fillMode);
+            break;
+
+        case 'copy':
+            if (copyStage === 0) {
+                // Finished selecting source region
+                copyBuffer = copyRegion(shapeStartX, shapeStartY, pos.x, pos.y);
+                copyStage = 1;
+                copyPreviewX = pos.x;
+                copyPreviewY = pos.y;
+                showMessage('click to paste<br>esc to cancel');
+            }
+            break;
+    }
+
+    // Clear preview state
+    isDrawing = false;
+    previewX = -1;
+    previewY = -1;
+    renderScene();
+}
+
+function onCanvasLeave(e) {
+    // Handle normal drawing mouse up
+    onMouseUp(e);
+
+    // Hide copy preview when leaving canvas
+    if (currentTool === 'copy' && copyStage === 1) {
+        copyPreviewX = -1;
+        copyPreviewY = -1;
+        renderScene();
+    }
+
+    // Hide text preview cursor when leaving canvas
+    if (currentTool === 'text' && !textMode.active) {
+        textMode.previewX = -1;
+        textMode.previewY = -1;
+        renderScene();
+    }
+}
+
+// Zoom table mouse handlers
+// Draw mode: 'draw' or 'erase' - set on mousedown based on initial cell
+let zoomDrawMode = null;
+
+function onZoomMouseDown(e) {
+    const pos = zoomToScene(e);
+    if (!pos || pos.x < 0 || pos.x >= 160 || pos.y < 0 || pos.y >= 200) return;
+
+    isDrawing = true;
+    lastX = pos.x;
+    lastY = pos.y;
+
+    saveUndoState();
+
+    // Determine draw mode based on initial click
+    const currentColor = currentScene.getPixel(pos.x, pos.y);
+    if (currentColor === drawingColor) {
+        // Same color -> erase to background
+        zoomDrawMode = 'erase';
+        currentScene.setPixel(pos.x, pos.y, 0);
+    } else {
+        // Different color (including bg) -> draw
+        zoomDrawMode = 'draw';
+        currentScene.setPixel(pos.x, pos.y, drawingColor);
+    }
+    renderScene();
+
+    // Track mouseup at document level so dragging outside table doesn't lose state
+    document.addEventListener('mouseup', onZoomMouseUp, { once: true });
+}
+
+function onZoomMouseMove(e) {
+    if (!isDrawing || !zoomDrawMode) return;
+
+    const pos = zoomToScene(e);
+    if (!pos || pos.x < 0 || pos.x >= 160 || pos.y < 0 || pos.y >= 200) return;
+
+    // Only update if we moved to a new pixel
+    if (pos.x !== lastX || pos.y !== lastY) {
+        if (zoomDrawMode === 'erase') {
+            currentScene.setPixel(pos.x, pos.y, 0);
+        } else {
+            currentScene.setPixel(pos.x, pos.y, drawingColor);
+        }
+        lastX = pos.x;
+        lastY = pos.y;
+        renderScene();
+    }
+}
+
+function onZoomMouseUp(e) {
+    isDrawing = false;
+    zoomDrawMode = null;
+}
+
+// === KEYBOARD ===
+function onKeyDown(e) {
+    // Arrow keys nudge copy position in copy placement mode
+    if (currentTool === 'copy' && copyStage === 1 && copyBuffer) {
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+            e.preventDefault();
+            e.stopPropagation();
+            if (copyPreviewX < 0) {
+                // Initialize preview position to center of canvas if not set
+                copyPreviewX = 80;
+                copyPreviewY = 100;
+            }
+            switch (e.key) {
+                case 'ArrowLeft': copyPreviewX = Math.max(0, copyPreviewX - 1); break;
+                case 'ArrowRight': copyPreviewX = Math.min(159, copyPreviewX + 1); break;
+                case 'ArrowUp': copyPreviewY = Math.max(0, copyPreviewY - 1); break;
+                case 'ArrowDown': copyPreviewY = Math.min(199, copyPreviewY + 1); break;
+            }
+            renderScene();
+            return;
+        }
+        // Enter key pastes at current nudged position
+        if (e.key === 'Enter' && copyPreviewX >= 0) {
+            e.preventDefault();
+            e.stopPropagation();
+            saveUndoState();
+            const pasteX = copyPreviewX - Math.floor(copyBuffer.width / 2);
+            const pasteY = copyPreviewY - Math.floor(copyBuffer.height / 2);
+            pasteRegion(pasteX, pasteY);
+            renderScene();
+            return;
+        }
+        // Escape exits copy mode
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            exitCopyMode();
+            return;
+        }
+    }
+
+    // Handle text mode input
+    if (handleTextKey(e)) {
+        return;
+    }
+
+    // Exit zoom mode with Escape
+    if (e.key === 'Escape' && zoomMode) {
+        setTool('draw');
+    }
+
+    // Number keys select colors (but not in text mode)
+    if (!textMode.active) {
+        if (e.key >= '1' && e.key <= '3') {
+            selectColorSlot(parseInt(e.key));
+        }
+        if (e.key === 'b' || e.key === 'B') {
+            selectColorSlot(0);
+        }
+    }
+
+    // Ctrl+Z for undo
+    if (e.ctrlKey && e.key === 'z') {
+        undo();
+        e.preventDefault();
+    }
+}
+
+// === FILE OPERATIONS ===
+
+// GMDisk instance
+const disk = new GMDisk();
+disk.autoLoad();
+
+let currentSceneFileName = null;
+
+// File menu mode — clicking 'file' swaps the 4 action buttons to: disk, ok, load, save
+let fileMenuMode = { active: false };
+let saveMode = { active: false, fileName: '', confirmingOverwrite: false };
+
+// Each action button has a stable click dispatcher so we can swap behaviour
+// when entering/exiting file menu mode without rebuilding the DOM. Once a
+// sub-mode (load/save) is active, disk/load/save are locked out so you can't
+// trample one sub-mode by entering another — only 'ok' stays interactive.
+function _subModeActive() {
+    return GMTools.previewLoader.isActive() || saveMode.active;
+}
+function actionBtn1Click() {
+    if (fileMenuMode.active) {
+        if (_subModeActive()) return;
+        showDiskFromMenu();
+    } else fileMenu();
+}
+function actionBtn2Click() { fileMenuMode.active ? exitFileMenuMode() : quitEditor(); }
+function actionBtn3Click() {
+    if (fileMenuMode.active) {
+        if (_subModeActive()) return;
+        enterLoadMode();
+    } else undo();
+}
+function actionBtn4Click() {
+    if (fileMenuMode.active) {
+        if (_subModeActive()) return;
+        enterSaveMode();
+    } else clearScene();
+}
+
+function fileMenu() {
+    if (fileMenuMode.active) exitFileMenuMode();
+    else enterFileMenuMode();
+}
+
+// Labels padded to a uniform 6-char width so the grid columns don't shrink
+// when swapping between normal and file-menu mode (requires white-space: pre).
+const ACTION_LABELS_NORMAL = [' file ', ' menu ', ' undo ', 'clear '];
+const ACTION_LABELS_FILE   = [' disk ', '  ok  ', ' load ', ' save '];
+
+function enterFileMenuMode() {
+    fileMenuMode.active = true;
+    for (let i = 0; i < 4; i++) {
+        const b = document.getElementById('actionBtn' + (i + 1));
+        b.textContent = ACTION_LABELS_FILE[i];
+        b.classList.add('cmd-mode');
+    }
+}
+
+function exitFileMenuMode() {
+    // If a sub-mode is active, cancel it first so its UI clears cleanly.
+    if (GMTools.previewLoader.isActive()) {
+        GMTools.previewLoader.cancel();
+        return; // previewLoader.cancel → onExit → recursive exitFileMenuMode
+    }
+    if (saveMode.active) {
+        cancelSave();
+        return; // cancelSave → recursive exitFileMenuMode
+    }
+
+    fileMenuMode.active = false;
+    _restoreActionButtons();
+}
+
+function _restoreActionButtons() {
+    for (let i = 0; i < 4; i++) {
+        const b = document.getElementById('actionBtn' + (i + 1));
+        b.textContent = ACTION_LABELS_NORMAL[i];
+        b.classList.remove('cmd-mode');
+        b.disabled = false;
+    }
+    // Prevent the click that exited file menu from also triggering 'quit'
+    GMTools.armClickCooldown(document.getElementById('actionBtn2'));
+}
+
+// 'disk' button inside file menu — open d64 popup and drop the menu state
+function showDiskFromMenu() {
+    exitFileMenuMode();
+    showDiskPopup();
+}
+
+// Helper used by tool/color clicks: bail out of any file-menu sub-mode.
+// Returns true if the click should be consumed (i.e. we were in a sub-mode).
+function maybeExitFileMenu() {
+    if (GMTools.previewLoader.isActive() || saveMode.active || fileMenuMode.active) {
+        exitFileMenuMode();
+        return true;
+    }
+    return false;
+}
+
+function showDiskPopup() {
+    disk.showPopup({
+        fileType: GMDisk.FILE_TYPES.SCENE,
+        showSave: true,
+        suggestedSaveName: () => currentSceneFileName || '',
+        onSave: saveScene,
+        onSelect: loadSceneFromDisk,
+        customButtons: [
+            { label: 'Import Image…', onClick: showImportImageDialog },
+            { label: 'Export PNG',    onClick: exportPng }
+        ]
+    });
+}
+
+function exportPng() {
+    // Create canvas matching display size: 480x400
+    const exportCanvas = document.createElement('canvas');
+    exportCanvas.width = 480;
+    exportCanvas.height = 400;
+    const exportCtx = exportCanvas.getContext('2d');
+    exportCtx.imageSmoothingEnabled = false;
+
+    // Draw the scene canvas scaled to match display aspect
+    exportCtx.drawImage(sceneCanvas, 0, 0, 480, 400);
+
+    // Generate filename
+    const baseName = currentSceneFileName || 'scene';
+    const pngName = baseName.replace(/\/pic$/i, '') + '.png';
+
+    // Download
+    const link = document.createElement('a');
+    link.download = pngName;
+    link.href = exportCanvas.toDataURL('image/png');
+    link.click();
+}
+
+// Load scene from disk (called by GMDisk popup)
+function loadSceneFromDisk(fileName, fileData) {
+    currentSceneFileName = fileName;
+    loadScene(fileData, fileName);
+}
+
+function loadScene(data, filename) {
+    try {
+        currentScene = new gmScene(data);
+
+        // Update our color state from scene
+        sceneColors.bg = currentScene.bgColor;
+        sceneColors.color1 = currentScene.color1;
+        sceneColors.color2 = currentScene.color2;
+        sceneColors.color3 = currentScene.color3;
+
+        updatePaletteDisplay();
+        undoStack = [];
+        renderScene();
+    } catch (err) {
+        showMessage('Error loading scene');
+        console.error('Error loading scene:', err);
+    }
+}
+
+
+function saveScene(fileName) {
+    if (!currentScene) {
+        disk.showInfoMessage('No scene to save');
+        return false;
+    }
+
+    // Update scene colors from our state
+    currentScene.bgColor = sceneColors.bg;
+    currentScene.color1 = sceneColors.color1;
+    currentScene.color2 = sceneColors.color2;
+    currentScene.color3 = sceneColors.color3;
+    currentScene.name = fileName.substring(0, 6).toUpperCase();
+
+    const data = currentScene.save();
+    if (disk.saveFile(fileName, data)) {
+        currentSceneFileName = fileName;
+        return true;
+    }
+    disk.showInfoMessage('Failed to save. Disk may be full.');
+    return false;
+}
+
+// ==================== LOAD MODE (GM-style in-app preview loader) ====================
+// Delegates the cycling/UI/keyboard framework to GMTools.previewLoader and
+// plugs in scene-specific rendering and state save/restore.
+
+function enterLoadMode() {
+    const snapshot = {
+        scene: currentScene,
+        fileName: currentSceneFileName,
+        colors: { ...sceneColors },
+        undoStack: [...undoStack]
+    };
+
+    const entered = GMTools.previewLoader.enter({
+        disk,
+        fileType: GMDisk.FILE_TYPES.SCENE,
+        messageArea: document.getElementById('message'),
+        emptyMessage: 'no scenes on disk',
+        saveState: () => snapshot,
+        onPreview: (fileName, fileData) => {
+            loadScene(fileData, fileName);
+            currentSceneFileName = fileName;
+        },
+        onConfirm: (fileName) => {
+            currentSceneFileName = fileName;
+        },
+        onCancel: (saved) => {
+            currentScene = saved.scene;
+            currentSceneFileName = saved.fileName;
+            sceneColors.bg = saved.colors.bg;
+            sceneColors.color1 = saved.colors.color1;
+            sceneColors.color2 = saved.colors.color2;
+            sceneColors.color3 = saved.colors.color3;
+            undoStack = saved.undoStack;
+            updatePaletteDisplay();
+            renderScene();
+        },
+        onExit: () => {
+            // previewLoader has cleared its UI; now drop the file-menu mode.
+            fileMenuMode.active = false;
+            _restoreActionButtons();
+        }
+    });
+
+    // entered === false means empty disk; the framework has flashed the message
+    // and we want the user to dismiss it. Stay in file menu mode.
+    if (!entered) return;
+
+    // Only the active mode label ('load') stays visible. disk/ok/save get
+    // blanked — yes/no in the message area and Enter/Esc keys handle the exit,
+    // so a separate 'ok' button is redundant (mirrors sprite-maker's pattern).
+    _blankAndDisable(document.getElementById('actionBtn1'));
+    _blankAndDisable(document.getElementById('actionBtn2'));
+    _blankAndDisable(document.getElementById('actionBtn4'));
+}
+
+function _blankAndDisable(btn) {
+    // 6 spaces match the padded label width so the button keeps its grid cell width.
+    btn.textContent = '      ';
+    btn.disabled = true;
+    // Drop the red cmd-mode color — blanked buttons should look neutrally
+    // disabled, not still part of the active menu palette.
+    btn.classList.remove('cmd-mode');
+}
+
+// ==================== SAVE MODE (GM-style in-app save with overwrite prompt) ====================
+
+function enterSaveMode() {
+    if (!currentScene) {
+        GMTools.flashingMessage.show(document.getElementById('message'), 'no scene to save');
+        const dismiss = () => {
+            GMTools.flashingMessage.hide();
+            document.getElementById('message').innerHTML = '';
+            document.removeEventListener('click', dismiss, true);
+        };
+        document.addEventListener('click', dismiss, true);
+        return;
+    }
+
+    saveMode.active = true;
+    saveMode.confirmingOverwrite = false;
+
+    // Only the active mode label ('save') stays visible — yes/no in the
+    // message area and Enter/Esc handle the exit.
+    _blankAndDisable(document.getElementById('actionBtn1'));
+    _blankAndDisable(document.getElementById('actionBtn2'));
+    _blankAndDisable(document.getElementById('actionBtn3'));
+
+    GMTools.saveDialog.enter({
+        disk,
+        fileType: GMDisk.FILE_TYPES.SCENE,
+        messageArea: document.getElementById('message'),
+        suggestedName: currentSceneFileName
+            ? currentSceneFileName.replace(/\/PIC$/i, '').trim()
+            : '',
+        onSave: (fullName) => {
+            // saveScene handles colour sync and the disk write
+            saveScene(fullName);
+            return true;
+        },
+        onExit: () => {
+            saveMode.active = false;
+            saveMode.confirmingOverwrite = false;
+            exitFileMenuMode();
+        }
+    });
+}
+
+// cancelSave is called from exitFileMenuMode when bailing out of a sub-mode.
+// confirmSave is used by tests to drive the save flow programmatically.
+function cancelSave()   { GMTools.saveDialog.cancel(); }
+function confirmSave()  {
+    GMTools.saveDialog.confirm();
+    saveMode.confirmingOverwrite = GMTools.saveDialog.confirmingOverwrite();
+}
+
+function clearScene() {
+    if (clearMode.active || GMTools.quitMenu.isOpen()) return;
+    showClearConfirmation();
+}
+
+function showClearConfirmation() {
+    clearMode.active = true;
+    const html = `clear the picture?<br>` +
+                 `<span class="action-btn" onclick="confirmClear(true)">yes</span> ` +
+                 `<span class="action-btn" onclick="confirmClear(false)">no</span>`;
+    document.getElementById('message').innerHTML = html;
+    document.addEventListener('keydown', clearKeyHandler);
+}
+
+function confirmClear(doIt) {
+    clearMode.active = false;
+    document.removeEventListener('keydown', clearKeyHandler);
+
+    if (doIt) {
+        saveUndoState();
+        currentScene.clear();
+        renderScene();
+    }
+    clearMessage();
+}
+
+function clearKeyHandler(e) {
+    if (e.key === 'Enter' || e.key === 'Escape') {
+        confirmClear(false);
+        e.preventDefault();
+    } else if (e.key === 'y' || e.key === 'Y') {
+        confirmClear(true);
+        e.preventDefault();
+    } else if (e.key === 'n' || e.key === 'N') {
+        confirmClear(false);
+        e.preventDefault();
+    }
+}
+
+function quitEditor() {
+    if (clearMode.active || GMTools.quitMenu.isOpen()) return;
+    GMTools.quitMenu.show();
+}
+
+// === UTILITY ===
+function showMessage(text) {
+    _setMessage(text);
+}
+
+function clearMessage() {
+    _setMessage('');
+}
+
+// Safari (as of 2026) leaves stale glyph pixels behind after clearing innerHTML
+// on a multi-node message — text remains visible until something else forces a
+// repaint (resize, click outside the window). Toggling display:none briefly
+// removes the element from layout, so Safari has no box to leave pixels in.
+// The void offsetHeight read between the toggles forces the intermediate
+// display:none to actually commit; without it Safari coalesces the two style
+// writes and the workaround is a no-op.
+function _setMessage(text) {
+    const el = document.getElementById('message');
+    el.innerHTML = text;
+    el.style.display = 'none';
+    void el.offsetHeight;
+    el.style.display = '';
+}
+
+// ==================== IMAGE IMPORT ====================
+//
+// Pipeline: file → Image → 160×200 canvas (stretch or crop) → quantize to 4
+// C64 colors chosen greedily in CIE L*a*b* space → optional Floyd-Steinberg
+// dithering → build a gmScene and replace the current one.
+//
+// CIE L*a*b* over RGB-Euclidean because RGB distances don't match perception —
+// e.g. green→yellow vs. blue→cyan have the same RGB distance but read very
+// differently. Lab also implicitly down-weights hue near gray (low chroma →
+// small a/b → distance dominated by L), which is exactly what we want.
+
+const IMPORT_PALETTE_SIZE = 4;
+
+function showImportImageDialog() {
+    const overlay = document.getElementById('importImageOverlay');
+    const file    = document.getElementById('importImageFile');
+    const dither  = document.getElementById('importDither');
+    const goBtn   = overlay.querySelector('.import-go');
+    const preview = document.getElementById('importPreview');
+
+    // Reset state on every open
+    file.value = '';
+    dither.checked = true;
+    overlay.querySelector('input[name="importFit"][value="stretch"]').checked = true;
+    goBtn.disabled = true;
+    preview.getContext('2d').clearRect(0, 0, preview.width, preview.height);
+
+    overlay.style.display = 'flex';
+
+    // Live preview when settings change (only after a file is picked)
+    let currentImage = null;
+    const refresh = () => {
+        if (!currentImage) return;
+        const opts = _readImportOptions();
+        _renderImportPreview(currentImage, opts);
+    };
+
+    file.onchange = (e) => {
+        const f = e.target.files[0];
+        if (!f) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            const img = new Image();
+            img.onload = () => {
+                currentImage = img;
+                goBtn.disabled = false;
+                refresh();
+            };
+            img.onerror = () => alert('Failed to load image');
+            img.src = ev.target.result;
+        };
+        reader.readAsDataURL(f);
+    };
+
+    dither.onchange = refresh;
+    overlay.querySelectorAll('input[name="importFit"]').forEach(r => r.onchange = refresh);
+
+    goBtn.onclick = () => {
+        if (!currentImage) return;
+        const opts = _readImportOptions();
+        const scene = _buildSceneFromImage(currentImage, opts);
+        currentScene = scene;
+        currentSceneFileName = null;
+        sceneColors.bg     = scene.bgColor;
+        sceneColors.color1 = scene.color1;
+        sceneColors.color2 = scene.color2;
+        sceneColors.color3 = scene.color3;
+        undoStack = [];
+        updatePaletteDisplay();
+        renderScene();
+        closeImportImageDialog();
+        disk.closePopup();
+    };
+
+    overlay.querySelectorAll('.import-cancel').forEach(b => b.onclick = closeImportImageDialog);
+    overlay.onclick = (e) => { if (e.target === overlay) closeImportImageDialog(); };
+}
+
+function closeImportImageDialog() {
+    document.getElementById('importImageOverlay').style.display = 'none';
+}
+
+function _readImportOptions() {
+    const overlay = document.getElementById('importImageOverlay');
+    return {
+        dither: overlay.querySelector('#importDither').checked,
+        fit:    overlay.querySelector('input[name="importFit"]:checked').value
+    };
+}
+
+function _renderImportPreview(img, opts) {
+    const scene = _buildSceneFromImage(img, opts);
+    const canvas = document.getElementById('importPreview');
+    const ctx = canvas.getContext('2d');
+    const out = ctx.createImageData(160, 200);
+
+    const palette = [scene.bgColor, scene.color1, scene.color2, scene.color3];
+    for (let i = 0; i < 160 * 200; i++) {
+        const idx = scene.pixelBuffer[i];
+        const rgba = c64Palette[palette[idx]];
+        const o = i * 4;
+        out.data[o]     = rgba[0];
+        out.data[o + 1] = rgba[1];
+        out.data[o + 2] = rgba[2];
+        out.data[o + 3] = 255;
+    }
+    ctx.putImageData(out, 0, 0);
+}
+
+/**
+ * Draw the source image into a 160×200 ImageData, respecting fit mode.
+ * 'stretch' fills the buffer regardless of source aspect.
+ * 'crop' preserves source aspect using a centered "cover" crop sized to the
+ * C64 display aspect (320×200 = 1.6:1).
+ */
+function _drawToBuffer(img, fit) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 160;
+    canvas.height = 200;
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+
+    if (fit === 'crop') {
+        // The C64 displays at 320×200 (each storage pixel is 2 display px wide),
+        // so target aspect for cropping is 320/200 = 1.6, not 160/200 = 0.8.
+        const targetAspect = 320 / 200;
+        const srcAspect = img.width / img.height;
+        let sx = 0, sy = 0, sw = img.width, sh = img.height;
+        if (srcAspect > targetAspect) {
+            sw = img.height * targetAspect;
+            sx = (img.width - sw) / 2;
+        } else if (srcAspect < targetAspect) {
+            sh = img.width / targetAspect;
+            sy = (img.height - sh) / 2;
+        }
+        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, 160, 200);
+    } else {
+        ctx.drawImage(img, 0, 0, 160, 200);
+    }
+
+    return ctx.getImageData(0, 0, 160, 200);
+}
+
+// --- sRGB ↔ Lab ---
+// Standard transforms: sRGB → linear → XYZ (D65) → Lab. See https://en.wikipedia.org/wiki/CIELAB_color_space
+
+function _srgbToLinear(c) {
+    c /= 255;
+    return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+
+function _rgbToLab(r, g, b) {
+    const lr = _srgbToLinear(r);
+    const lg = _srgbToLinear(g);
+    const lb = _srgbToLinear(b);
+    // sRGB → XYZ (D65)
+    const x = lr * 0.4124564 + lg * 0.3575761 + lb * 0.1804375;
+    const y = lr * 0.2126729 + lg * 0.7151522 + lb * 0.0721750;
+    const z = lr * 0.0193339 + lg * 0.1191920 + lb * 0.9503041;
+    // XYZ → Lab, normalised against D65 white
+    const xn = x / 0.95047, yn = y / 1.00000, zn = z / 1.08883;
+    const f = t => t > 0.008856 ? Math.cbrt(t) : (7.787 * t + 16 / 116);
+    const fx = f(xn), fy = f(yn), fz = f(zn);
+    return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+}
+
+// Precompute Lab for the 16 C64 colors once
+const _c64Lab = (() => {
+    const out = [];
+    for (let i = 0; i < 16; i++) {
+        const c = c64Palette[i];
+        out.push(_rgbToLab(c[0], c[1], c[2]));
+    }
+    return out;
+})();
+
+function _labDistSq(a, b) {
+    const dl = a[0] - b[0], da = a[1] - b[1], db = a[2] - b[2];
+    return dl * dl + da * da + db * db;
+}
+
+/**
+ * Greedy palette selection: pick the 4 C64 colors that minimise total
+ * squared Lab error across all pixels. Each iteration picks the candidate
+ * that, combined with already-chosen colors, lowers total error the most.
+ */
+function _selectPalette(pixelsLab) {
+    const chosen = [];
+    const bestDist = new Float64Array(pixelsLab.length);
+    bestDist.fill(Infinity);
+
+    for (let step = 0; step < IMPORT_PALETTE_SIZE; step++) {
+        let bestCandidate = -1;
+        let bestTotal = Infinity;
+
+        for (let c = 0; c < 16; c++) {
+            if (chosen.includes(c)) continue;
+            const cLab = _c64Lab[c];
+            let total = 0;
+            for (let i = 0; i < pixelsLab.length; i++) {
+                const d = _labDistSq(pixelsLab[i], cLab);
+                total += d < bestDist[i] ? d : bestDist[i];
+                // Prune if already worse than current best total
+                if (total >= bestTotal) break;
+            }
+            if (total < bestTotal) {
+                bestTotal = total;
+                bestCandidate = c;
+            }
+        }
+
+        chosen.push(bestCandidate);
+        const cLab = _c64Lab[bestCandidate];
+        for (let i = 0; i < pixelsLab.length; i++) {
+            const d = _labDistSq(pixelsLab[i], cLab);
+            if (d < bestDist[i]) bestDist[i] = d;
+        }
+    }
+    return chosen;
+}
+
+/**
+ * Find which of the 4 chosen palette colors is closest (in sRGB Euclidean) to
+ * the given pixel — used per-pixel during quantization. RGB is fine here
+ * because we're choosing from just 4 colors; perceptual nuance from Lab was
+ * already spent in the palette-selection step.
+ */
+function _nearestPaletteIndex(r, g, b, paletteRGB) {
+    let bestI = 0, bestD = Infinity;
+    for (let i = 0; i < paletteRGB.length; i++) {
+        const p = paletteRGB[i];
+        const dr = r - p[0], dg = g - p[1], db = b - p[2];
+        const d = dr * dr + dg * dg + db * db;
+        if (d < bestD) { bestD = d; bestI = i; }
+    }
+    return bestI;
+}
+
+/**
+ * Quantize the source image to indices into the 4-color palette, optionally
+ * applying Floyd-Steinberg error diffusion. Returns a Uint8Array length 32000.
+ */
+function _quantize(imageData, paletteC64Indices, useDither) {
+    const w = 160, h = 200;
+    const src = imageData.data;
+    const paletteRGB = paletteC64Indices.map(i => c64Palette[i]);
+    const out = new Uint8Array(w * h);
+
+    if (!useDither) {
+        for (let i = 0; i < w * h; i++) {
+            const o = i * 4;
+            out[i] = _nearestPaletteIndex(src[o], src[o + 1], src[o + 2], paletteRGB);
+        }
+        return out;
+    }
+
+    // Floyd-Steinberg in sRGB. We mutate a working buffer of floats so error
+    // accumulates correctly; the input ImageData is untouched.
+    const work = new Float32Array(w * h * 3);
+    for (let i = 0; i < w * h; i++) {
+        const o = i * 4, p = i * 3;
+        work[p]     = src[o];
+        work[p + 1] = src[o + 1];
+        work[p + 2] = src[o + 2];
+    }
+
+    const push = (i, dr, dg, db, factor) => {
+        const p = i * 3;
+        work[p]     = Math.max(0, Math.min(255, work[p]     + dr * factor));
+        work[p + 1] = Math.max(0, Math.min(255, work[p + 1] + dg * factor));
+        work[p + 2] = Math.max(0, Math.min(255, work[p + 2] + db * factor));
+    };
+
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            const i = y * w + x;
+            const p = i * 3;
+            const r = work[p], g = work[p + 1], b = work[p + 2];
+            const idx = _nearestPaletteIndex(r, g, b, paletteRGB);
+            out[i] = idx;
+            const chosen = paletteRGB[idx];
+            const er = r - chosen[0];
+            const eg = g - chosen[1];
+            const eb = b - chosen[2];
+
+            if (x + 1 < w)            push(i + 1,     er, eg, eb, 7 / 16);
+            if (y + 1 < h && x > 0)   push(i + w - 1, er, eg, eb, 3 / 16);
+            if (y + 1 < h)            push(i + w,     er, eg, eb, 5 / 16);
+            if (y + 1 < h && x + 1 < w) push(i + w + 1, er, eg, eb, 1 / 16);
+        }
+    }
+    return out;
+}
+
+function _buildSceneFromImage(img, opts) {
+    const imageData = _drawToBuffer(img, opts.fit);
+    const src = imageData.data;
+    const n = 160 * 200;
+
+    // Pixel Lab values for palette selection
+    const pixelsLab = new Array(n);
+    for (let i = 0; i < n; i++) {
+        const o = i * 4;
+        pixelsLab[i] = _rgbToLab(src[o], src[o + 1], src[o + 2]);
+    }
+
+    const chosen = _selectPalette(pixelsLab);
+
+    // Re-order so the most-used color becomes the background. Background is the
+    // "default" slot in scenes; making it the dominant color minimises later
+    // re-rendering noise and matches user intuition.
+    const provisional = _quantize(imageData, chosen, false);
+    const counts = [0, 0, 0, 0];
+    for (let i = 0; i < n; i++) counts[provisional[i]]++;
+    const order = [0, 1, 2, 3].sort((a, b) => counts[b] - counts[a]);
+    const reordered = order.map(i => chosen[i]);
+    // Map old index → new index for re-quantization
+    const indexMap = new Array(4);
+    order.forEach((oldIdx, newIdx) => { indexMap[oldIdx] = newIdx; });
+
+    // Final quantization with the reordered palette (so 0=bg, 1/2/3 by frequency)
+    const finalPixels = _quantize(imageData, reordered, opts.dither);
+
+    const scene = gmScene.createBlank(reordered[0], reordered[1], reordered[2], reordered[3]);
+    scene.pixelBuffer.set(finalPixels);
+    scene.dirty = true;
+    return scene;
+}
+
+// === START ===
+init();
+
+</script>
+</body>
+</html>

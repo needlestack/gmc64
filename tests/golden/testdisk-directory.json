@@ -1,0 +1,128 @@
+[
+  {
+    "fileName": "GMC64I/PRG",
+    "fileType": "PRG",
+    "fileSize": 52,
+    "startTrack": 1,
+    "startSector": 10
+  },
+  {
+    "fileName": "PLAYER/SPR",
+    "fileType": "PRG",
+    "fileSize": 3,
+    "startTrack": 3,
+    "startSector": 1
+  },
+  {
+    "fileName": "ALIENS/SPR",
+    "fileType": "PRG",
+    "fileSize": 4,
+    "startTrack": 3,
+    "startSector": 3
+  },
+  {
+    "fileName": "JET R /SPR",
+    "fileType": "PRG",
+    "fileSize": 3,
+    "startTrack": 3,
+    "startSector": 5
+  },
+  {
+    "fileName": "MINUTE/SNG",
+    "fileType": "PRG",
+    "fileSize": 11,
+    "startTrack": 3,
+    "startSector": 16
+  },
+  {
+    "fileName": "ENGINE/SND",
+    "fileType": "PRG",
+    "fileSize": 1,
+    "startTrack": 4,
+    "startSector": 1
+  },
+  {
+    "fileName": "KCHEER/SND",
+    "fileType": "PRG",
+    "fileSize": 1,
+    "startTrack": 4,
+    "startSector": 2
+  },
+  {
+    "fileName": "ALIENS/PRG",
+    "fileType": "PRG",
+    "fileSize": 17,
+    "startTrack": 4,
+    "startSector": 3
+  },
+  {
+    "fileName": "SHIP  /SPR",
+    "fileType": "PRG",
+    "fileSize": 1,
+    "startTrack": 5,
+    "startSector": 1
+  },
+  {
+    "fileName": "PBULL /SPR",
+    "fileType": "PRG",
+    "fileSize": 1,
+    "startTrack": 5,
+    "startSector": 2
+  },
+  {
+    "fileName": "EBULL /SPR",
+    "fileType": "PRG",
+    "fileSize": 1,
+    "startTrack": 5,
+    "startSector": 3
+  },
+  {
+    "fileName": "PAIR  /SPR",
+    "fileType": "PRG",
+    "fileSize": 1,
+    "startTrack": 5,
+    "startSector": 4
+  },
+  {
+    "fileName": "LEFT  /SPR",
+    "fileType": "PRG",
+    "fileSize": 1,
+    "startTrack": 5,
+    "startSector": 5
+  },
+  {
+    "fileName": "RIGHT /SPR",
+    "fileType": "PRG",
+    "fileSize": 1,
+    "startTrack": 5,
+    "startSector": 6
+  },
+  {
+    "fileName": "ZAP   /SND",
+    "fileType": "PRG",
+    "fileSize": 1,
+    "startTrack": 5,
+    "startSector": 11
+  },
+  {
+    "fileName": "BOOM  /SND",
+    "fileType": "PRG",
+    "fileSize": 1,
+    "startTrack": 5,
+    "startSector": 12
+  },
+  {
+    "fileName": "STARS /PIC",
+    "fileType": "PRG",
+    "fileSize": 1,
+    "startTrack": 5,
+    "startSector": 13
+  },
+  {
+    "fileName": "MEADOW/PIC",
+    "fileType": "PRG",
+    "fileSize": 4,
+    "startTrack": 5,
+    "startSector": 14
+  }
+]

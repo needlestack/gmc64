@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+tools/node_modules/
+tools/font-env/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/
+
+# Backup files
+*.bak
+
+# Generated files
+screenshot.png
+tools/test-frame-*.png
+tools/golden-frame-*.png
+
+# Local-only working notes
+CLAUDE.md
+TODO.md
+
+# ---------------------------------------------------------------------------
+# C64 binary content: belt-and-suspenders.
+# Blanket-block every .d64 and .prg in the tree, then explicitly whitelist
+# the few that are safe to ship. This means an accidental `git add .` from
+# the repo root with a stray .d64 sitting anywhere will refuse to add it
+# instead of leaking it.
+# ---------------------------------------------------------------------------
+*.d64
+*.prg
+
+# Test fixtures (frozen content, edited via tests only)
+!tests/disks/BlankDisk.d64
+!tests/disks/gmc64-test.d64
+
+# Public-facing demo disks (curated content, may evolve over time)
+!disks/
+!disks/**
