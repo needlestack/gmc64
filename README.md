@@ -4,7 +4,7 @@ A faithful, browser-based recreation of the 1985 Commodore 64 game-creation tool
 
 <table>
   <tr>
-    <td align="center"><a href="https://gmc64.com/?play_demo=1"><img src="docs/screenshots/01-intro.png" width="320"></a><br><sub>Intro demo</sub></td>
+    <td align="center"><a href="https://gmc64.com/editor.html?play_demo=1"><img src="docs/screenshots/01-intro.png" width="320"></a><br><sub>Intro demo</sub></td>
     <td align="center"><a href="https://gmc64.com/sprite-maker.html"><img src="docs/screenshots/02-sprite-maker.png" width="320"></a><br><sub>Sprite maker</sub></td>
     <td align="center"><a href="https://gmc64.com/scene-maker.html"><img src="docs/screenshots/03-scene-maker.png" width="320"></a><br><sub>Scene maker</sub></td>
   </tr>
