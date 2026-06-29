@@ -469,6 +469,7 @@ body.kbd-active .program-line .instruction:hover {
 #gameBorder {
     padding: 50px;
     background: rgb(0, 0, 0);  /* Default black, updated by runtime */
+    position: relative;          /* Anchor point for the audio indicator */
 }
 
 #gameCanvas {
@@ -620,6 +621,7 @@ body.kbd-active .program-line .instruction:hover {
 <script src="js/gmParser.js"></script>
 <script src="js/gmRuntime.js"></script>
 <script src="js/gmEditor.js"></script>
+<script src="js/gmAudioIndicator.js"></script>
 <!-- Runtime source text, exposed as window._runtimeSource. Used by the
      "Download Game" export to inline the runtime into the standalone
      HTML without depending on fetch() (which file:// blocks). Generated
@@ -747,6 +749,10 @@ let currentOpsPerFrame = 0;
 let audioContext = null;
 let masterGain = null;
 
+// Speaker-icon button mounted inside the play-area border. Shows + toggles
+// audio state. Bound in initApp; refreshed any time audio state changes.
+let audioIndicator = null;
+
 function initAudio() {
     if (!audioContext) {
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -757,6 +763,9 @@ function initAudio() {
     if (audioContext.state === 'suspended') {
         audioContext.resume();
     }
+    // First call creates the context; let the indicator lazy-attach its
+    // statechange listener and pick up the new state.
+    if (audioIndicator) audioIndicator.refresh();
 }
 
 // Runtime flags
@@ -872,6 +881,33 @@ function initApp() {
 
     updateStatusInfo();
 
+    // Mount the audio indicator inside the game border so it overlays the
+    // bottom-right corner of the play area whenever the game runs.
+    // setMuted keeps the sidebar checkbox in sync; onUnlock restarts any
+    // song whose schedule window was missed during AudioContext suspension.
+    audioIndicator = new GMAudioIndicator(document.getElementById('gameBorder'));
+    audioIndicator.bind({
+        getMuted: () => audioMuted,
+        setMuted: (muted) => {
+            audioMuted = muted;
+            const checkbox = document.getElementById('muteToggle');
+            if (checkbox) checkbox.checked = muted;
+            if (vm) vm.setConfig({ audioMuted: muted });
+        },
+        getAudioContext: () => audioContext,
+        onUnlock: () => {
+            if (vm && vm.currentSong) {
+                try {
+                    vm.currentSong.stop();
+                    vm.currentSong.play();
+                    vm.currentSong.setVolume(vm.songVolume);
+                } catch (e) {
+                    console.warn('Failed to restart song after audio unlock:', e.message);
+                }
+            }
+        }
+    });
+
     // Opt-in welcome demo: visitors who hit `?play_demo=1` (or `?play_demo`)
     // get the demo disk inserted and the intro running, mirroring the
     // original GameMaker startup. Useful for landing-page "▶ Try the demo"
@@ -902,6 +938,15 @@ async function autoLoadDemo() {
         if (!prgBytes) return;
         loadProgramData('GMC64I/PRG', prgBytes);
         runProgram();
+
+        // The browser autoplay policy keeps AudioContext suspended until
+        // the user actively gestures. The audio indicator (mounted in
+        // initApp) is the canonical unlock target — visitors see a
+        // muted-speaker icon in the play-area corner, click it, and that
+        // click both resumes the context and restarts the song via the
+        // indicator's onUnlock callback. No need for opportunistic
+        // window-level listeners here; the icon IS the affordance.
+        if (audioIndicator) audioIndicator.refresh();
     } catch (e) {
         console.warn('Demo auto-load failed:', e.message);
     }
@@ -4400,6 +4445,7 @@ function stepFrame() {
 function toggleMute() {
     audioMuted = document.getElementById('muteToggle').checked;
     if (vm) vm.setConfig({ audioMuted });
+    if (audioIndicator) audioIndicator.refresh();
 }
 
 function toggleSkipPauses() {

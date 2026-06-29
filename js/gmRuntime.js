@@ -88,10 +88,16 @@ class gmVM {
         const seedChanged = 'rngSeed' in updates &&
             updates.rngSeed !== this.config.rngSeed;
         Object.assign(this.config, updates);
-        // Honor a freshly-set mute by silencing in-flight audio. Unmute
-        // only restores future play() calls — already-stopped sounds stay
-        // stopped (matches the editor's prior behavior).
-        if (updates.audioMuted === true) this.stopAllAudio();
+        // User mute = ramp the current song's gain to zero, not stopAllAudio.
+        // Notes keep being scheduled underneath so unmute is instant (no
+        // restart, no jump-to-top). Sound effects use the gate at their
+        // play site (transient one-shots — no point playing them silently
+        // just so they can finish during a mute window).
+        if (typeof updates.audioMuted === 'boolean' && this.currentSong) {
+            try {
+                this.currentSong.setVolume(updates.audioMuted ? 0 : this.songVolume);
+            } catch (e) { /* gmMusic may be mid-teardown — ignore */ }
+        }
         if (seedChanged) this._installRng();
     }
 
@@ -847,11 +853,12 @@ class gmVM {
                         this.currentSong = music;
                         this.currentSongIndex = dataIndex;
 
-                        if (!this.config.audioMuted) {
-                            music.play();
-                            // Apply current volume setting
-                            music.setVolume(this.songVolume);
-                        }
+                        // Always start the song; gate audibility via volume.
+                        // A song that begins under mute keeps advancing
+                        // silently — unmute later becomes instantly audible
+                        // from the right position, no restart required.
+                        music.play();
+                        music.setVolume(this.config.audioMuted ? 0 : this.songVolume);
                     } else {
                     }
                 }

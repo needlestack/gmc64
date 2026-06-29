@@ -723,3 +723,44 @@ body.draggable-dragging [data-draggable]:not(.is-interacting) {
 .quit-menu-box a:hover {
     color: var(--c64-red);
 }
+
+/* ==========================================================================
+   GM AUDIO INDICATOR (speaker icon button)
+   Shared across editor.html, headless game exports, embed iframes.
+   The host page positions it inside whatever container makes sense
+   (typically the play-area / game canvas wrapper, with the parent set to
+   position: relative so the bottom/right offsets here land correctly).
+   ========================================================================== */
+
+.gm-audio-indicator {
+    position: absolute;
+    bottom: 10px;
+    right: 10px;
+    width: 32px;
+    height: 32px;
+    background: rgba(0, 0, 0, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 4px;
+    cursor: pointer;
+    color: rgba(255, 255, 255, 0.9);
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+    transition: background 0.1s, opacity 0.1s;
+}
+
+.gm-audio-indicator:hover {
+    background: rgba(0, 0, 0, 0.75);
+}
+
+.gm-audio-indicator.muted {
+    opacity: 0.65;
+}
+
+.gm-audio-indicator svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
