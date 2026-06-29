@@ -6,7 +6,7 @@
   "scripts": {
     "test": "node --experimental-vm-modules node_modules/vitest/vitest.mjs run",
     "test:watch": "node --experimental-vm-modules node_modules/vitest/vitest.mjs",
-    "generate-golden": "node tests/generate-golden.js && node tests/generate-golden-sprites.js && node tests/generate-golden-scenes.js && node tests/generate-golden-sounds.js && node tests/generate-golden-music.js && node tests/generate-golden-programs.js && node tests/generate-golden-runtime.js"
+    "generate-golden": "node ../tests/generate-golden.js && node ../tests/generate-golden-sprites.js && node ../tests/generate-golden-scenes.js && node ../tests/generate-golden-sounds.js && node ../tests/generate-golden-music.js && node ../tests/generate-golden-programs.js && node ../tests/generate-golden-runtime.js"
   },
   "devDependencies": {
     "puppeteer": "^24.34.0",

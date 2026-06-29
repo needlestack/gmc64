@@ -1,4 +1,4 @@
-# GMC64
+# gmc64
 
 A faithful, browser-based recreation of the 1985 Commodore 64 game-creation tool by Garry Kitchen.
 
@@ -71,7 +71,21 @@ node tools/bundle-runtime.js
 
 This regenerates `js/runtime-source.js`, which is what the "Download Game" export inlines into the standalone HTML.
 
-**To run the test suite:** `npm install` once, then `npm test`. This pulls in vitest (test runner) and puppeteer (headless browser). Only contributors need this.
+**To run the test suite:** the test tooling lives in `dev/` (kept out of the project root so static hosts don't mistake this for a Node project). One-time setup:
+
+```
+cd dev
+npm install
+```
+
+Then from `dev/`:
+
+```
+npm test                 # run the full suite
+npm run generate-golden  # regenerate golden files after intentional changes
+```
+
+This pulls in vitest (test runner) and puppeteer (headless browser). Only contributors need this.
 
 ## Status
 
