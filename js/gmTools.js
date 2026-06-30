@@ -1356,22 +1356,39 @@ const GMTools = {
         // fallback — silent failure makes URL bugs invisible to debug.
         const msg = (text) => { if (showMessage) showMessage(text); else console.warn(text); };
         try {
-            const response = await fetch(diskUrl);
-            if (!response.ok) {
-                msg(`couldn't load disk (HTTP ${response.status})`);
-                return false;
+            let bytes;
+            let displayName;
+
+            // Magic alias: `?disk=demo` lazy-loads the bundled demo disk
+            // (js/demo-disk-source.js) via dynamic <script> injection,
+            // letting any editor honor the alias without preloading the
+            // ~228KB bundle at page-init. Works on file:// too (script
+            // tags don't have fetch's CORS restriction).
+            if (diskUrl === 'demo') {
+                bytes = await GMTools.getDemoDiskBytes();
+                if (!bytes) {
+                    msg(`couldn't load demo disk bundle`);
+                    return false;
+                }
+                displayName = 'GMC64-DEMO.d64';
+            } else {
+                const response = await fetch(diskUrl);
+                if (!response.ok) {
+                    msg(`couldn't load disk (HTTP ${response.status})`);
+                    return false;
+                }
+                bytes = new Uint8Array(await response.arrayBuffer());
+                try {
+                    displayName = new URL(diskUrl, location.href).pathname.split('/').pop() || 'remote.d64';
+                } catch (e) {
+                    displayName = 'remote.d64';
+                }
             }
-            const bytes = new Uint8Array(await response.arrayBuffer());
+
             // Standard D64 sizes: 35-track (174,848) or 40-track (196,608).
             if (bytes.length !== 174848 && bytes.length !== 196608) {
                 msg(`not a valid disk image (${bytes.length} bytes)`);
                 return false;
-            }
-            let displayName;
-            try {
-                displayName = new URL(diskUrl, location.href).pathname.split('/').pop() || 'remote.d64';
-            } catch (e) {
-                displayName = 'remote.d64';
             }
             const id = await GMDisk.addToPool(bytes, displayName);
             if (!disk.selectDisk(id)) {
@@ -1383,6 +1400,44 @@ const GMTools = {
             msg(`couldn't load disk: ${e.message}`);
             return false;
         }
+    },
+
+    // Lazy loader for the bundled demo disk. The script is injected the
+    // first time it's needed and the promise is cached, so concurrent
+    // callers share one fetch and subsequent calls short-circuit.
+    // Returns Uint8Array of disk bytes (or null if the bundle failed).
+    _demoDiskPromise: null,
+    getDemoDiskBytes() {
+        if (globalThis._demoDiskBase64) {
+            return Promise.resolve(GMTools._decodeBase64ToBytes(globalThis._demoDiskBase64));
+        }
+        if (!GMTools._demoDiskPromise) {
+            GMTools._demoDiskPromise = new Promise((resolve, reject) => {
+                const s = document.createElement('script');
+                s.src = 'js/demo-disk-source.js';
+                s.onload = () => {
+                    if (globalThis._demoDiskBase64) {
+                        resolve(GMTools._decodeBase64ToBytes(globalThis._demoDiskBase64));
+                    } else {
+                        GMTools._demoDiskPromise = null; // allow retry
+                        reject(new Error('demo bundle loaded but _demoDiskBase64 missing'));
+                    }
+                };
+                s.onerror = () => {
+                    GMTools._demoDiskPromise = null; // allow retry
+                    reject(new Error('failed to load js/demo-disk-source.js'));
+                };
+                document.head.appendChild(s);
+            });
+        }
+        return GMTools._demoDiskPromise;
+    },
+
+    _decodeBase64ToBytes(b64) {
+        const binary = atob(b64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        return bytes;
     },
 
     /**
