@@ -486,6 +486,10 @@ function init() {
     // restored scene instead of the blank one.
     restoreSceneSession();
 
+    // URL-driven loading: ?disk=<url>&file=<name>. Fire-and-forget;
+    // GMTools.initFromUrl handles errors via showMessage.
+    initFromUrl();
+
     // Initial render
     renderScene();
     setTool('draw');
@@ -517,6 +521,12 @@ function init() {
         }
     }, 50);
 
+}
+
+async function initFromUrl() {
+    await GMTools.initFromUrl({
+        disk, showMessage, expectedExt: '/PIC', loadFile: loadSceneFromDisk
+    });
 }
 
 // Helper to interpolate between green and black based on flashPhase

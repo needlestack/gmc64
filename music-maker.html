@@ -852,6 +852,18 @@ function initApp() {
     setupKeyboardShortcuts();
     setupNavButtons();
     updateUndoButton();
+
+    // URL-driven loading: ?disk=<url>&file=<name>. Fire-and-forget;
+    // GMTools.initFromUrl handles errors via showMessage.
+    initFromUrl();
+}
+
+async function initFromUrl() {
+    // music-maker has no plain showMessage helper; GMTools.initFromUrl
+    // falls back to console.warn when one isn't provided.
+    await GMTools.initFromUrl({
+        disk, expectedExt: '/SNG', loadFile: loadSongFromDisk
+    });
 }
 
 // === SESSION PERSISTENCE ===

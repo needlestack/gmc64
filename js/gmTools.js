@@ -1334,5 +1334,117 @@ const GMTools = {
         isOpen() {
             return this._overlay !== null;
         }
+    },
+
+    // === URL-DRIVEN DISK LOADING ===
+    // Shared helpers for the `?disk=<url>&file=<name>` URL scheme that
+    // every editor page implements. Each editor wires its own
+    // file-specific load callback; the disk fetch + pool insert + case-
+    // insensitive directory lookup live here.
+
+    /**
+     * Fetch a .d64 from the given URL, validate it as a real D64 image,
+     * insert it into the shared pool, and select it on the given gmDisk.
+     *
+     * Calls showMessage with a brief user-facing string for any error
+     * along the way (CORS, 404, wrong file size, parse failure).
+     *
+     * @returns {Promise<boolean>} true if the disk was loaded + selected
+     */
+    async loadDiskFromUrl({ diskUrl, disk, showMessage }) {
+        // Editors without a visible message area still get a console
+        // fallback — silent failure makes URL bugs invisible to debug.
+        const msg = (text) => { if (showMessage) showMessage(text); else console.warn(text); };
+        try {
+            const response = await fetch(diskUrl);
+            if (!response.ok) {
+                msg(`couldn't load disk (HTTP ${response.status})`);
+                return false;
+            }
+            const bytes = new Uint8Array(await response.arrayBuffer());
+            // Standard D64 sizes: 35-track (174,848) or 40-track (196,608).
+            if (bytes.length !== 174848 && bytes.length !== 196608) {
+                msg(`not a valid disk image (${bytes.length} bytes)`);
+                return false;
+            }
+            let displayName;
+            try {
+                displayName = new URL(diskUrl, location.href).pathname.split('/').pop() || 'remote.d64';
+            } catch (e) {
+                displayName = 'remote.d64';
+            }
+            const id = await GMDisk.addToPool(bytes, displayName);
+            if (!disk.selectDisk(id)) {
+                msg(`couldn't open disk`);
+                return false;
+            }
+            return true;
+        } catch (e) {
+            msg(`couldn't load disk: ${e.message}`);
+            return false;
+        }
+    },
+
+    /**
+     * Case-insensitive file lookup against a D64 disk's directory.
+     * Returns the actual on-disk filename (preserving real case + space
+     * padding so it can be passed straight to readFile), or null.
+     */
+    findFileCaseInsensitive(disk, fileName) {
+        const target = fileName.toUpperCase();
+        for (const entry of disk.getDirectory()) {
+            if (entry.fileName.toUpperCase() === target) {
+                return entry.fileName;
+            }
+        }
+        return null;
+    },
+
+    /**
+     * Full URL-driven init for an editor page. Reads the `?disk=` /
+     * `?file=` query params, fetches the disk, validates the file's
+     * extension matches what this editor handles, then hands the loaded
+     * bytes to the editor's own loader callback.
+     *
+     * Each editor passes its own `expectedExt` (e.g. '/SPR') and
+     * `loadFile(name, bytes, params)` callback. The params object is
+     * passed through so callers can read extras like `?play=1`.
+     *
+     * No-op when `?disk=` isn't in the URL. Surfaces all errors via
+     * showMessage; nothing throws.
+     */
+    async initFromUrl({ disk, showMessage, expectedExt, loadFile }) {
+        const msg = (text) => { if (showMessage) showMessage(text); else console.warn(text); };
+        const params = new URLSearchParams(location.search);
+        if (!params.has('disk')) return;
+
+        const ok = await GMTools.loadDiskFromUrl({
+            diskUrl: params.get('disk'), disk, showMessage
+        });
+        if (!ok) return;
+
+        const fileName = params.get('file');
+        if (!fileName) return;
+
+        const actualName = GMTools.findFileCaseInsensitive(disk.disk, fileName);
+        if (!actualName) {
+            msg(`"${fileName}" not on disk`);
+            return;
+        }
+        if (!actualName.toUpperCase().endsWith(expectedExt.toUpperCase())) {
+            const ext = actualName.split('/').pop().toLowerCase();
+            const target = {
+                prg: 'editor', spr: 'sprite-maker', pic: 'scene-maker',
+                snd: 'sound-maker', sng: 'music-maker'
+            }[ext];
+            msg(target ? `"${actualName}" is a ${ext} — try ${target}.html` : `wrong file type`);
+            return;
+        }
+        const fileData = disk.disk.readFile(actualName);
+        if (!fileData) {
+            msg(`couldn't read "${actualName}"`);
+            return;
+        }
+        loadFile(actualName, fileData, params);
     }
 };

@@ -2281,6 +2281,16 @@ function initApp() {
     // Initialize with new sprite, then attempt to restore last session
     newSprite();
     restoreSpriteSession();
+
+    // URL-driven loading: ?disk=<url>&file=<name> — fetches the disk and
+    // opens the named sprite. Fire-and-forget; messages on failure.
+    initFromUrl();
+}
+
+async function initFromUrl() {
+    await GMTools.initFromUrl({
+        disk, showMessage, expectedExt: '/SPR', loadFile: loadSpriteFromDisk
+    });
 }
 
 // ==================== SESSION PERSISTENCE ====================

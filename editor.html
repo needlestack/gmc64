@@ -908,14 +908,36 @@ function initApp() {
         }
     });
 
-    // Opt-in welcome demo: visitors who hit `?play_demo=1` (or `?play_demo`)
-    // get the demo disk inserted and the intro running, mirroring the
-    // original GameMaker startup. Useful for landing-page "▶ Try the demo"
-    // buttons, social-share URLs, etc. Bare-URL visits get the regular
-    // empty editor / restored program — no autoplay ambushes.
-    if (new URLSearchParams(location.search).has('play_demo')) {
+    // URL-driven loaders, mutually exclusive (most-specific first):
+    //   ?disk=<url>&file=<name>[&play=1]  — fetch any .d64, open any file
+    //   ?play_demo[=1]                     — bundled demo + GMC64I + run
+    // Bare-URL visits get the regular empty editor / restored program —
+    // no autoplay ambushes.
+    const params = new URLSearchParams(location.search);
+    if (params.has('disk')) {
+        autoLoadFromUrl(params);
+    } else if (params.has('play_demo')) {
         autoLoadDemo();
     }
+}
+
+// URL-driven loading: `?disk=<url>&file=<name>[&play=1]`. Routes through
+// the shared GMTools.initFromUrl helper for the fetch + validation +
+// case-insensitive file lookup; this thin wrapper only wires up the
+// editor-specific "load the program, optionally run it" step.
+async function autoLoadFromUrl(params) {
+    await GMTools.initFromUrl({
+        disk: gmDisk,
+        showMessage,
+        expectedExt: '/PRG',
+        loadFile: (actualName, fileData, params) => {
+            loadProgramData(actualName, fileData);
+            if (params.has('play')) {
+                runProgram();
+                if (audioIndicator) audioIndicator.refresh();
+            }
+        }
+    });
 }
 
 // Decode the bundled demo disk, register it in the pool, load GMC64I, and
