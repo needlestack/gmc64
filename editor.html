@@ -623,7 +623,7 @@ body.kbd-active .program-line .instruction:hover {
 <script src="js/gmEditor.js"></script>
 <script src="js/gmAudioIndicator.js"></script>
 <!-- Runtime source text, exposed as window._runtimeSource. Used by the
-     "Download Game" export to inline the runtime into the standalone
+     "Export Game" flow to inline the runtime into the standalone
      HTML without depending on fetch() (which file:// blocks). Generated
      by `node tools/bundle-runtime.js`; the test suite verifies it's
      current. Inert at editor runtime — just string data sitting in
@@ -3497,7 +3497,7 @@ function showFilePopup() {
             updateStatusInfo();
         },
         customButtons: [
-            { label: 'Download Game', onClick: () => exportStandaloneGame() }
+            { label: 'Export Game', onClick: () => exportStandaloneGame() }
         ]
     });
 }

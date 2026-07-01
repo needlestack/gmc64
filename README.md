@@ -58,7 +58,7 @@ Then either:
 - **Try the demos** — `disks/GMC64-DEMO.d64` ships with the project and includes runnable programs and editable sprites, scenes, and songs
 - **Start from scratch** — author sprites, scenes, music, and a program from blank
 
-When your game is ready, hit **Download Game** to get a single HTML file that boots straight into your creation, embeddable anywhere.
+When your game is ready, hit **Export Game** to get a single HTML file that boots straight into your creation, embeddable anywhere.
 
 ## What's included
 

@@ -3,7 +3,7 @@
  * it bundles. Re-run `node tools/bundle-runtime.js` to refresh after
  * changing any of those files; this test will fail until you do.
  *
- * The bundle exists so editor.html's "Download Game" export works from
+ * The bundle exists so editor.html's "Export Game" flow works from
  * file:// — see tools/bundle-runtime.js for the rationale.
  */
 
