@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>gmc64 — player</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root {
+    --c64-black: #000;
+}
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: var(--c64-black);
+    color: #eee;
+    font-family: system-ui, -apple-system, sans-serif;
+    overflow: hidden;
+}
+
+#playArea {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+}
+
+/* Border wrapper around the canvas — mirrors editor.html's C64 border.
+   Runtime sets the background color per scene via border opcodes. */
+#gameBorder {
+    padding: min(6vmin, 40px);
+    background: rgb(0, 0, 0);
+    display: inline-block;
+    position: relative;
+    box-sizing: border-box;
+}
+
+/* Canvas scales to fit viewport while preserving the 8:5 (320×200) aspect.
+   image-rendering keeps pixels crisp at any scale. */
+#gameCanvas {
+    display: block;
+    width: min(90vw, 140vh);
+    aspect-ratio: 8 / 5;
+    height: auto;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    max-width: 960px;
+    max-height: 600px;
+}
+
+/* Full-canvas overlay with the play button. Sits above the game until the
+   user clicks — at which point the click both starts the VM and unlocks
+   the AudioContext in the same gesture (browser autoplay policy). */
+#playOverlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    cursor: pointer;
+}
+
+#playButton {
+    min-width: 96px;
+    min-height: 96px;
+    padding: 16px 24px;
+    background: rgba(255, 255, 255, 0.12);
+    border: 2px solid rgba(255, 255, 255, 0.8);
+    border-radius: 50%;
+    color: white;
+    font-size: 48px;
+    font-family: inherit;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-left: 20px;                 /* nudge triangle for optical centering */
+    transition: background 0.15s;
+}
+#playButton:hover:not(:disabled) { background: rgba(255, 255, 255, 0.22); }
+#playButton:disabled {
+    cursor: default;
+    border-radius: 8px;
+    padding: 12px 20px;
+    font-size: 14px;
+    min-width: 0;
+    min-height: 0;
+    opacity: 0.85;
+    padding-left: 20px;
+}
+
+/* Subtle attribution corner. Suppressed when ?nocredit is in the URL. */
+.credit {
+    position: fixed;
+    bottom: 8px;
+    left: 8px;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 12px;
+    text-decoration: none;
+    z-index: 50;
+    font-family: monospace;
+}
+.credit:hover { color: rgba(255, 255, 255, 0.9); }
+</style>
+</head>
+<body>
+<div id="playArea">
+    <div id="gameBorder">
+        <canvas id="gameCanvas" width="320" height="200"></canvas>
+        <!-- audio indicator mounts here on first play -->
+    </div>
+    <div id="playOverlay">
+        <button id="playButton" type="button" aria-label="Play">▶</button>
+    </div>
+</div>
+<a class="credit" href="https://gmc64.com" target="_blank" rel="noopener">gmc64.com</a>
+
+<!-- Runtime files. play.html deliberately does NOT include:
+       - editor JS (instruction picker, arg editing, save/load UI, …)
+       - runtime-source.js (only needed by editor's Export Game flow)
+       - demo-disk-source.js (only relevant to editor's demo shortcut) -->
+<script src="js/c64lib.js"></script>
+<script src="js/c64Screen.js"></script>
+<script src="js/d64lib.js"></script>
+<script src="js/gmDisk.js"></script>
+<script src="js/gmTools.js"></script>
+<script src="js/gmOpcodes.js"></script>
+<script src="js/gmSprite.js"></script>
+<script src="js/gmScene.js"></script>
+<script src="js/gmSound.js"></script>
+<script src="js/gmMusic.js"></script>
+<script src="js/gmCharset.js"></script>
+<script src="js/gmParser.js"></script>
+<script src="js/gmRuntime.js"></script>
+<script src="js/gmAudioIndicator.js"></script>
+
+<script>
+// Chrome-free game player. Loads a game from URL params, shows a play
+// button until the visitor clicks, then runs. The click serves as the
+// user gesture that unlocks the AudioContext — same solution as
+// clicking-to-play in a video embed.
+//
+// URL params:
+//   disk       .d64 URL, or the magic word `demo` for the bundled demo
+//   file       program name on the disk (case-insensitive)
+//   nocredit   any value: hides the gmc64.com corner link
+
+const disk = new GMDisk('player');
+let audioContext = null;
+let masterGain = null;
+let vm = null;
+let screen = null;
+let charset = null;
+let audioIndicator = null;
+let currentProgramData = null;
+let currentFileData = null;
+let currentFileName = null;
+let animationFrameToggle = false;
+
+// Input state read by gmRuntime. Same shape as editor.html.
+const inputState = {
+    joystick1: { up: false, down: false, left: false, right: false },
+    joystick2: { up: false, down: false, left: false, right: false },
+    button1: false,
+    button2: false
+};
+
+function decode16bit(lo, hi) { return lo + (hi << 8); }
+
+window.addEventListener('DOMContentLoaded', init);
+
+async function init() {
+    charset = new gmCharset();
+
+    if (new URLSearchParams(location.search).has('nocredit')) {
+        document.querySelector('.credit').style.display = 'none';
+    }
+
+    document.getElementById('playOverlay').addEventListener('click', startGame);
+    setupInputListeners();
+    await loadGame();
+}
+
+// Fetch the disk, find the requested file, parse it into an AST. The
+// game doesn't start playing yet — that waits for the play-button click.
+async function loadGame() {
+    const params = new URLSearchParams(location.search);
+    if (!params.has('disk')) {
+        showPlayButtonError('no game specified');
+        return;
+    }
+
+    const ok = await GMTools.loadDiskFromUrl({
+        diskUrl: params.get('disk'), disk
+    });
+    if (!ok) {
+        showPlayButtonError('couldn\'t load disk');
+        return;
+    }
+
+    const fileName = params.get('file');
+    if (!fileName) {
+        showPlayButtonError('no file specified');
+        return;
+    }
+
+    const actualName = GMTools.findFileCaseInsensitive(disk.disk, fileName);
+    if (!actualName) {
+        showPlayButtonError(`"${fileName}" not on disk`);
+        return;
+    }
+    if (!actualName.toUpperCase().endsWith('/PRG')) {
+        showPlayButtonError('only /PRG files can be played');
+        return;
+    }
+
+    const fileData = disk.disk.readFile(actualName);
+    if (!fileData) {
+        showPlayButtonError(`couldn't read ${actualName}`);
+        return;
+    }
+
+    // gmParser needs this to compose multi-part sprites that reference
+    // other files on the disk.
+    globalThis.loadFileByName = (name) => disk.disk.readFile(name);
+    currentFileName = actualName;
+    currentFileData = fileData;
+    currentProgramData = parseProgramData(fileData);
+}
+
+function showPlayButtonError(text) {
+    const btn = document.getElementById('playButton');
+    btn.textContent = text;
+    btn.disabled = true;
+    btn.setAttribute('aria-label', text);
+}
+
+// The play button is the user gesture that both starts the VM and
+// unlocks the AudioContext. Everything audio-related happens inside
+// this handler so browser autoplay policies stay satisfied.
+async function startGame() {
+    if (!currentProgramData) return;
+    document.getElementById('playOverlay').style.display = 'none';
+
+    if (!screen) screen = new c64Screen('gameCanvas');
+    if (!vm) vm = new gmVM(screen);
+
+    if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        masterGain = audioContext.createGain();
+        masterGain.gain.value = 0.3;
+        masterGain.connect(audioContext.destination);
+    }
+    if (audioContext.state === 'suspended') {
+        audioContext.resume();
+    }
+
+    if (!audioIndicator) {
+        audioIndicator = new GMAudioIndicator(document.getElementById('gameBorder'));
+        audioIndicator.bind({
+            getMuted: () => vm.config.audioMuted,
+            setMuted: (muted) => vm.setConfig({ audioMuted: muted }),
+            getAudioContext: () => audioContext,
+            onUnlock: () => {
+                if (vm && vm.currentSong) {
+                    try {
+                        vm.currentSong.stop();
+                        vm.currentSong.play();
+                        vm.currentSong.setVolume(vm.songVolume);
+                    } catch (e) {
+                        console.warn('Failed to restart song after audio unlock:', e.message);
+                    }
+                }
+            }
+        });
+    }
+
+    const ast = buildAST(currentProgramData);
+    vm.loadProgram(ast, currentFileData, { pauseEnabled: false });
+    vm.start({ opsPerFrame: 50, frameMs: 16 });
+}
+
+// Standard GM input mapping — arrows + right-Meta for joystick 1 / button 1,
+// ESDF + Space for joystick 2 / button 2. Same scheme as editor.html.
+function setupInputListeners() {
+    window.addEventListener('keydown', (e) => {
+        if (!vm || !vm.running) return;
+        switch (e.key) {
+            case 'ArrowUp':    inputState.joystick1.up    = true; e.preventDefault(); break;
+            case 'ArrowDown':  inputState.joystick1.down  = true; e.preventDefault(); break;
+            case 'ArrowLeft':  inputState.joystick1.left  = true; e.preventDefault(); break;
+            case 'ArrowRight': inputState.joystick1.right = true; e.preventDefault(); break;
+            case 'Meta':
+                if (e.location === 2) { inputState.button1 = true; e.preventDefault(); }
+                break;
+            case 'e': case 'E': inputState.joystick2.up    = true; e.preventDefault(); break;
+            case 'd': case 'D': inputState.joystick2.down  = true; e.preventDefault(); break;
+            case 's': case 'S': inputState.joystick2.left  = true; e.preventDefault(); break;
+            case 'f': case 'F': inputState.joystick2.right = true; e.preventDefault(); break;
+            case ' ': inputState.button2 = true; e.preventDefault(); break;
+        }
+    });
+
+    window.addEventListener('keyup', (e) => {
+        if (!vm || !vm.running) return;
+        switch (e.key) {
+            case 'ArrowUp':    inputState.joystick1.up    = false; break;
+            case 'ArrowDown':  inputState.joystick1.down  = false; break;
+            case 'ArrowLeft':  inputState.joystick1.left  = false; break;
+            case 'ArrowRight': inputState.joystick1.right = false; break;
+            case 'Meta':
+                if (e.location === 2) {
+                    inputState.button1 = false;
+                    // macOS often swallows arrow keyup while Meta is held,
+                    // so clear the whole j1 direction set defensively.
+                    inputState.joystick1.up = false;
+                    inputState.joystick1.down = false;
+                    inputState.joystick1.left = false;
+                    inputState.joystick1.right = false;
+                }
+                break;
+            case 'e': case 'E': inputState.joystick2.up    = false; break;
+            case 'd': case 'D': inputState.joystick2.down  = false; break;
+            case 's': case 'S': inputState.joystick2.left  = false; break;
+            case 'f': case 'F': inputState.joystick2.right = false; break;
+            case ' ': inputState.button2 = false; break;
+        }
+    });
+}
+</script>
+</body>
+</html>

@@ -21,6 +21,10 @@ const HTML_FILES = [
     'scene-maker.html',
     'sound-maker.html',
     'music-maker.html',
+    // Chrome-free player. Must load without touching any editor JS; the
+    // test catches accidental coupling (e.g. a runtime file starting to
+    // reference an editor DOM id or global) at import time.
+    'play.html',
     'tools/hex-viewer.html'
 ];
 
