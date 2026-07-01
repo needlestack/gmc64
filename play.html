@@ -64,33 +64,58 @@ html, body {
 }
 
 #playButton {
-    min-width: 96px;
-    min-height: 96px;
-    padding: 16px 24px;
+    width: 96px;
+    height: 96px;
+    padding: 0;
     background: rgba(255, 255, 255, 0.12);
     border: 2px solid rgba(255, 255, 255, 0.8);
     border-radius: 50%;
     color: white;
-    font-size: 48px;
+    font-size: 14px;
     font-family: inherit;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding-left: 20px;                 /* nudge triangle for optical centering */
     transition: background 0.15s;
 }
 #playButton:hover:not(:disabled) { background: rgba(255, 255, 255, 0.22); }
 #playButton:disabled {
     cursor: default;
+    width: auto;
+    height: auto;
     border-radius: 8px;
     padding: 12px 20px;
-    font-size: 14px;
-    min-width: 0;
-    min-height: 0;
     opacity: 0.85;
-    padding-left: 20px;
 }
+#playButton svg {
+    width: 44px;
+    height: 44px;
+}
+
+/* Speaker icon (gmAudioIndicator) — same styles as css/gm-ui.css defines,
+   inlined so play.html doesn't need to pull the full editor stylesheet. */
+.gm-audio-indicator {
+    position: absolute;
+    bottom: 10px;
+    right: 10px;
+    width: 32px;
+    height: 32px;
+    background: rgba(0, 0, 0, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 4px;
+    cursor: pointer;
+    color: rgba(255, 255, 255, 0.9);
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+    transition: background 0.1s, opacity 0.1s;
+}
+.gm-audio-indicator:hover { background: rgba(0, 0, 0, 0.75); }
+.gm-audio-indicator.muted { opacity: 0.65; }
+.gm-audio-indicator svg { width: 100%; height: 100%; display: block; }
 
 /* Subtle attribution corner. Suppressed when ?nocredit is in the URL. */
 .credit {
@@ -100,7 +125,9 @@ html, body {
     color: rgba(255, 255, 255, 0.5);
     font-size: 12px;
     text-decoration: none;
-    z-index: 50;
+    /* Above the play overlay (z-index 100) so the link is clickable even
+       before the visitor starts the game. */
+    z-index: 101;
     font-family: monospace;
 }
 .credit:hover { color: rgba(255, 255, 255, 0.9); }
@@ -113,7 +140,11 @@ html, body {
         <!-- audio indicator mounts here on first play -->
     </div>
     <div id="playOverlay">
-        <button id="playButton" type="button" aria-label="Play">▶</button>
+        <button id="playButton" type="button" aria-label="Play">
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <polygon points="9,5 21,12 9,19" fill="currentColor"/>
+            </svg>
+        </button>
     </div>
 </div>
 <a class="credit" href="https://gmc64.com" target="_blank" rel="noopener">gmc64.com</a>
@@ -175,7 +206,7 @@ window.addEventListener('DOMContentLoaded', init);
 async function init() {
     charset = new gmCharset();
 
-    if (new URLSearchParams(location.search).has('nocredit')) {
+    if (new URLSearchParams(location.search).get('nocredit') === '1') {
         document.querySelector('.credit').style.display = 'none';
     }
 
@@ -229,6 +260,10 @@ async function loadGame() {
     currentFileName = actualName;
     currentFileData = fileData;
     currentProgramData = parseProgramData(fileData);
+
+    // Kick off the preview render behind the play overlay. Fire-and-forget;
+    // a poster failure never blocks the user from starting the game.
+    generatePoster();
 }
 
 function showPlayButtonError(text) {
@@ -278,9 +313,44 @@ async function startGame() {
         });
     }
 
-    const ast = buildAST(currentProgramData);
-    vm.loadProgram(ast, currentFileData, { pauseEnabled: false });
+    // Re-parse so the real run gets a fresh mediaStore, unmutated by
+    // whatever the poster VM did.
+    const programData = parseProgramData(currentFileData);
+    const ast = buildAST(programData);
+    vm.loadProgram(ast, currentFileData);
     vm.start({ opsPerFrame: 50, frameMs: 16 });
+}
+
+// Render a preview frame ("poster") behind the play overlay by running
+// the VM silently for a few seconds of simulated playback. Anything
+// visual the game does during that window becomes the preview. Uses
+// a fresh mediaStore so the real run isn't perturbed.
+async function generatePoster() {
+    if (!currentFileData) return;
+    try {
+        if (!screen) screen = new c64Screen('gameCanvas');
+        const posterProgramData = parseProgramData(currentFileData);
+        const posterAst = buildAST(posterProgramData);
+        const posterVm = new gmVM(screen);
+        // Poster mode: no pauses (would freeze on the first `pause for`),
+        // muted (no AudioContext exists yet), no hitboxes.
+        posterVm.loadProgram(posterAst, currentFileData, {
+            pauseEnabled: false, audioMuted: true
+        });
+        posterVm.running = true;
+        // Simulate ~2 seconds of gameplay at 60fps × 50 ops.
+        const totalFrames = 120;
+        const opsPerFrame = 50;
+        for (let f = 0; f < totalFrames && posterVm.running; f++) {
+            for (let i = 0; i < opsPerFrame && posterVm.running; i++) {
+                posterVm.step();
+            }
+            posterVm.updateSpritePositions();
+        }
+        posterVm.render(false);
+    } catch (e) {
+        console.warn('poster generation failed:', e.message);
+    }
 }
 
 // Standard GM input mapping — arrows + right-Meta for joystick 1 / button 1,
