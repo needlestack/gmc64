@@ -1465,12 +1465,17 @@ const GMTools = {
      * `loadFile(name, bytes, params)` callback. The params object is
      * passed through so callers can read extras like `?play=1`.
      *
+     * `params` is optional. If omitted, we read `location.search`. Pass
+     * a synthesized URLSearchParams to dispatch a load without changing
+     * the browser URL — used by editor.html's `?play_demo=1` alias,
+     * which rewrites itself to `disk=demo&file=GMC64I/PRG&play=1&…`.
+     *
      * No-op when `?disk=` isn't in the URL. Surfaces all errors via
      * showMessage; nothing throws.
      */
-    async initFromUrl({ disk, showMessage, expectedExt, loadFile }) {
+    async initFromUrl({ disk, showMessage, expectedExt, loadFile, params }) {
         const msg = (text) => { if (showMessage) showMessage(text); else console.warn(text); };
-        const params = new URLSearchParams(location.search);
+        if (!params) params = new URLSearchParams(location.search);
         if (!params.has('disk')) return;
 
         const ok = await GMTools.loadDiskFromUrl({

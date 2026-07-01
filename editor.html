@@ -440,95 +440,224 @@ body.kbd-active .program-line .instruction:hover {
     min-width: 55px;
 }
 
-/* Game overlay */
+/* Game overlay — player chrome shown while a program is running. Mirrors
+   play.html: fluid canvas centered above a fixed-height bottom bar that
+   doubles as the C64-style bottom border and holds the runtime controls. */
+:root {
+    --game-bar-height: 44px;
+}
+
 #gameOverlay {
     display: none;
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
+    /* Fixed to viewport, not to #screen (which is fixed at 720×520 and
+       would clip both the fluid canvas and the bottom bar). The canvas
+       math below is viewport-relative — the containing block has to be
+       too or the bar ends up floating in the middle of the game. */
+    position: fixed;
+    inset: 0;
     background: var(--c64-black);
     z-index: 100;
-    justify-content: center;
+    flex-direction: column;
+}
+#gameOverlay.active { display: flex; }
+
+/* Fills all vertical space above the bar. min-height:0 lets flex shrink
+   this under the canvas's aspect-derived height on short viewports —
+   otherwise the canvas would push the bar off-screen. */
+#playArea {
+    flex: 1;
+    min-height: 0;
+    display: flex;
     align-items: center;
+    justify-content: center;
+    position: relative;
 }
 
-#gameOverlay.active {
-    display: flex;
+#bottomBar {
+    height: var(--game-bar-height);
+    flex-shrink: 0;
+    position: relative;
+    background: var(--c64-black);
 }
 
-#gameContainer {
-    display: flex;
-    gap: 15px;
-}
-
-/* Border wrapper around game canvas - simulates C64's addressable border.
-   The border color can be set per-scene via "scene X border = color" commands.
-   Defaults to black. 50px CSS padding creates the border effect. */
+/* Canvas wrapper — no padding: the bottom bar acts as the bottom border,
+   and the black body background surrounds the canvas on the other sides.
+   Runtime tints this element per-scene via border opcodes. */
 #gameBorder {
-    padding: 50px;
-    background: rgb(0, 0, 0);  /* Default black, updated by runtime */
-    position: relative;          /* Anchor point for the audio indicator */
+    display: inline-block;
+    position: relative;
+    background: rgb(0, 0, 0);
 }
 
+/* Fluid canvas: width capped by the smaller of 90vw and the width
+   derived from the available vertical space (viewport minus bar). See
+   play.html for the full rationale. */
 #gameCanvas {
-    width: 480px;
-    height: 400px;
+    display: block;
+    width: min(90vw, calc((100vh - var(--game-bar-height)) * 6 / 5));
+    aspect-ratio: 6 / 5;
+    height: auto;
     image-rendering: pixelated;
     image-rendering: crisp-edges;
-    display: block;  /* Remove inline spacing */
+    max-width: 960px;
 }
 
-#gameSidebar {
-    display: flex;
-    flex-direction: column;
-    gap: 15px;
-    padding: 10px;
-    background: var(--c64-gray1);
-    min-width: 120px;
-}
-
-#gameSidebar button {
-    width: 100%;
-    margin: 0;
-}
-
-#gameSidebar button:disabled {
-    opacity: 0.5;
-    cursor: default;
-}
-
-.sidebar-section {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-}
-
-.sidebar-section label {
-    font-size: 12px;
+/* Play-button overlay for ?play=1 / ?play_demo=1. Poster preview renders
+   on the canvas beneath; click both starts the VM and unlocks the
+   AudioContext. inset:0 tracks the canvas exactly (no more padding). */
+#playOverlay {
+    display: none;
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    align-items: center;
+    justify-content: center;
+    z-index: 5;
     cursor: pointer;
 }
+#playOverlay.active { display: flex; }
 
-.sidebar-label {
-    color: var(--c64-yellow);
-    font-size: 11px;
+#playButton {
+    width: 96px;
+    height: 96px;
+    padding: 0;
+    background: rgba(255, 255, 255, 0.12);
+    border: 2px solid rgba(255, 255, 255, 0.8);
+    border-radius: 50%;
+    color: white;
+    font-family: inherit;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s;
 }
+#playButton:hover:not(:disabled) { background: rgba(255, 255, 255, 0.22); }
+#playButton:disabled {
+    cursor: default;
+    width: auto;
+    height: auto;
+    border-radius: 8px;
+    padding: 12px 20px;
+    font-size: 14px;
+    opacity: 0.85;
+}
+#playButton svg { width: 44px; height: 44px; display: block; }
 
-#inputDisplay, #statsDisplay {
+/* Credit link, left side of the bottom bar. */
+#gameOverlay .credit {
+    position: absolute;
+    top: 50%;
+    left: 20px;
+    transform: translateY(-50%);
+    color: rgba(255, 255, 255, 0.5);
     font-size: 12px;
+    text-decoration: none;
     font-family: monospace;
 }
+#gameOverlay .credit:hover { color: rgba(255, 255, 255, 0.9); }
 
-#opsInput {
+/* Right-side control cluster. DOM order left→right: hamburger, stop,
+   pause, mute. The extra margin-right on #stopBtn creates the "space"
+   between system controls (hamburger/stop) and playback controls
+   (pause/mute). */
+#gameControls {
+    position: absolute;
+    right: 20px;
+    bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+#gameControls #stopBtn { margin-right: 8px; }
+
+#gameControls button {
+    width: 28px;
+    height: 28px;
+    background: rgba(0, 0, 0, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 4px;
+    cursor: pointer;
+    color: rgba(255, 255, 255, 0.9);
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: inherit;
+    transition: background 0.1s;
+}
+#gameControls button:hover { background: rgba(0, 0, 0, 0.75); }
+#gameControls button:disabled { opacity: 0.4; cursor: default; }
+#gameControls button svg { width: 100%; height: 100%; display: block; }
+
+/* Audio indicator sits at the end of the flex row — override the shared
+   CSS's absolute positioning so it flexes with the other icons. */
+#gameControls .gm-audio-indicator {
+    position: static;
+    bottom: auto;
+    right: auto;
+    width: 28px;
+    height: 28px;
+    padding: 4px;
+}
+
+/* Hamburger popup — opens above the bar, right-aligned, closes on
+   click-outside or Escape. Houses the dev/debug settings that don't
+   warrant a permanent slot in the bar. */
+#settingsPopup {
+    display: none;
+    position: absolute;
+    bottom: calc(var(--game-bar-height) + 4px);
+    right: 20px;
+    background: rgba(0, 0, 0, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 4px;
+    padding: 12px;
+    z-index: 10;
+    min-width: 180px;
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 12px;
+}
+#settingsPopup.active { display: block; }
+
+#settingsPopup .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+#settingsPopup .row:last-child { margin-bottom: 0; }
+
+#settingsPopup label {
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+#settingsPopup input[type="number"] {
     width: 60px;
     font-family: inherit;
     font-size: 12px;
     padding: 2px 4px;
 }
 
-#gameSidebar .exit-btn {
-    margin-top: auto;
+#settingsPopup button {
+    padding: 4px 10px;
+    font-family: inherit;
+    font-size: 12px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    color: rgba(255, 255, 255, 0.9);
+    border-radius: 3px;
+    cursor: pointer;
+}
+#settingsPopup button:disabled { opacity: 0.4; cursor: default; }
+
+#settingsPopup .stats {
+    color: rgba(255, 255, 255, 0.6);
+    font-family: monospace;
 }
 </style>
 </head>
@@ -568,39 +697,69 @@ body.kbd-active .program-line .instruction:hover {
     <div id="assetPicker"></div>
 
     <div id="gameOverlay">
-        <div id="gameContainer">
+        <div id="playArea">
             <div id="gameBorder">
                 <canvas id="gameCanvas" width="320" height="200"></canvas>
+                <!-- Only visible when the page opens via ?play=1 / ?play_demo=1.
+                     A poster preview renders on the canvas beneath; the click
+                     both starts the VM and unlocks the AudioContext. -->
+                <div id="playOverlay">
+                    <button id="playButton" type="button" aria-label="Play">
+                        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                            <path d="M7 5 L19 12 L7 19 Z"
+                                  fill="currentColor"
+                                  stroke="currentColor"
+                                  stroke-width="3"
+                                  stroke-linejoin="round"
+                                  stroke-linecap="round"/>
+                        </svg>
+                    </button>
+                </div>
             </div>
-            <div id="gameSidebar">
-                <div class="sidebar-section">
-                    <button id="pauseBtn" onclick="togglePause()">pause</button>
+        </div>
+        <!-- Bottom bar: credit on the left, controls on the right, settings
+             popup floats above the bar's right edge when the hamburger is
+             open. Visual order (left→right): hamburger, stop, [gap], pause,
+             mute (audio indicator mounts at the end from JS). -->
+        <div id="bottomBar">
+            <a class="credit" href="https://gmc64.com" target="_blank" rel="noopener">gmc64.com</a>
+            <div id="gameControls">
+                <button id="hamburgerBtn" type="button" aria-label="Settings" onclick="toggleSettingsPopup(event)">
+                    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                        <rect x="4" y="6" width="16" height="2" rx="1" fill="currentColor"/>
+                        <rect x="4" y="11" width="16" height="2" rx="1" fill="currentColor"/>
+                        <rect x="4" y="16" width="16" height="2" rx="1" fill="currentColor"/>
+                    </svg>
+                </button>
+                <button id="stopBtn" type="button" aria-label="Stop (esc)" onclick="stopProgram()">
+                    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                        <rect x="6" y="6" width="12" height="12" rx="1" fill="currentColor"/>
+                    </svg>
+                </button>
+                <button id="pauseBtn" type="button" aria-label="Pause" onclick="togglePause()">
+                    <!-- Icon swapped in JS via setPauseButtonIcon(). -->
+                </button>
+                <!-- Audio indicator mounts here (rightmost). -->
+            </div>
+            <div id="settingsPopup">
+                <div class="row">
                     <button id="stepBtn" onclick="stepFrame()" disabled>step</button>
                 </div>
-                <div class="sidebar-section">
-                    <label><input type="checkbox" id="muteToggle" onchange="toggleMute()"> mute</label>
+                <div class="row">
                     <label><input type="checkbox" id="skipPausesToggle" onchange="toggleSkipPauses()"> skip pauses</label>
+                </div>
+                <div class="row">
                     <label><input type="checkbox" id="hitboxToggle" onchange="toggleHitboxes()"> hitboxes</label>
                 </div>
-                <div class="sidebar-section">
-                    <div class="sidebar-label">ops/frame</div>
-                    <input type="number" id="opsInput" value="50" min="1" max="500" onchange="updateOpsPerFrame()">
+                <div class="row">
+                    <label>ops/frame <input type="number" id="opsInput" value="50" min="1" max="500" onchange="updateOpsPerFrame()"></label>
                 </div>
-                <div class="sidebar-section">
-                    <div class="sidebar-label">input</div>
-                    <div id="inputDisplay">
-                        <div>j1: <span id="j1Display">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span></div>
-                        <div>j2: <span id="j2Display">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span></div>
-                    </div>
+                <div class="row stats">
+                    fps <span id="fpsDisplay">0</span> · ops <span id="opsDisplay">0</span>
                 </div>
-                <div class="sidebar-section">
-                    <div class="sidebar-label">stats</div>
-                    <div id="statsDisplay">
-                        <div>fps: <span id="fpsDisplay">0</span></div>
-                        <div>ops: <span id="opsDisplay">0</span></div>
-                    </div>
+                <div class="row stats">
+                    j1 <span id="j1Display">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span> · j2 <span id="j2Display">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>
                 </div>
-                <button onclick="stopProgram()" class="exit-btn">exit (esc)</button>
             </div>
         </div>
     </div>
@@ -622,6 +781,7 @@ body.kbd-active .program-line .instruction:hover {
 <script src="js/gmRuntime.js"></script>
 <script src="js/gmEditor.js"></script>
 <script src="js/gmAudioIndicator.js"></script>
+<script src="js/gmPoster.js"></script>
 <!-- Runtime source text, exposed as window._runtimeSource. Used by the
      "Export Game" flow to inline the runtime into the standalone
      HTML without depending on fetch() (which file:// blocks). Generated
@@ -825,8 +985,17 @@ window.addEventListener('keydown', (e) => {
         case 's': case 'S': inputState.joystick2.left = true; e.preventDefault(); break;
         case 'f': case 'F': inputState.joystick2.right = true; e.preventDefault(); break;
         case ' ': inputState.button2 = true; e.preventDefault(); break;
-        // ESC to stop
-        case 'Escape': stopProgram(); e.preventDefault(); break;
+        // ESC: close settings popup if open, otherwise stop the program.
+        case 'Escape': {
+            const popup = document.getElementById('settingsPopup');
+            if (popup && popup.classList.contains('active')) {
+                popup.classList.remove('active');
+            } else {
+                stopProgram();
+            }
+            e.preventDefault();
+            break;
+        }
     }
 });
 
@@ -880,17 +1049,14 @@ function initApp() {
 
     updateStatusInfo();
 
-    // Mount the audio indicator inside the game border so it overlays the
-    // bottom-right corner of the play area whenever the game runs.
-    // setMuted keeps the sidebar checkbox in sync; onUnlock restarts any
-    // song whose schedule window was missed during AudioContext suspension.
-    audioIndicator = new GMAudioIndicator(document.getElementById('gameBorder'));
+    // Mount the audio indicator at the end of the bottom-bar control
+    // cluster (rightmost icon). onUnlock restarts any song whose schedule
+    // window was missed during AudioContext suspension.
+    audioIndicator = new GMAudioIndicator(document.getElementById('gameControls'));
     audioIndicator.bind({
         getMuted: () => audioMuted,
         setMuted: (muted) => {
             audioMuted = muted;
-            const checkbox = document.getElementById('muteToggle');
-            if (checkbox) checkbox.checked = muted;
             if (vm) vm.setConfig({ audioMuted: muted });
         },
         getAudioContext: () => audioContext,
@@ -908,66 +1074,98 @@ function initApp() {
     });
 
     // URL-driven loaders, mutually exclusive (most-specific first):
-    //   ?disk=<url>&file=<name>[&play=1]  — fetch any .d64, open any file
-    //   ?play_demo[=1]                     — bundled demo + GMC64I + run
+    //
+    //   ?play_demo=1
+    //       Alias — same effect as visiting
+    //       `?disk=demo&file=GMC64I/PRG&play=1&poster_seconds=8.5`.
+    //       Kept as a short link for the marketing site.
+    //
+    //   ?disk=<url>[&file=<name>][&play=1][&poster_seconds=N]
+    //       Fetch the disk, open the file in the editor. If `play=1` is
+    //       also present, show a play-button overlay with a rendered
+    //       poster on the game canvas — clicking play starts the VM,
+    //       clicking the sidebar exit drops the user into the editor.
+    //
     // Bare-URL visits get the regular empty editor / restored program —
     // no autoplay ambushes.
     const params = new URLSearchParams(location.search);
-    if (params.has('disk')) {
+    if (params.has('play_demo')) {
+        const aliasParams = new URLSearchParams();
+        aliasParams.set('disk', 'demo');
+        aliasParams.set('file', 'GMC64I/PRG');
+        aliasParams.set('play', '1');
+        aliasParams.set('poster_seconds', '8.5');
+        autoLoadFromUrl(aliasParams);
+    } else if (params.has('disk')) {
         autoLoadFromUrl(params);
-    } else if (params.has('play_demo')) {
-        autoLoadDemo();
     }
 }
 
-// URL-driven loading: `?disk=<url>&file=<name>[&play=1]`. Routes through
-// the shared GMTools.initFromUrl helper for the fetch + validation +
-// case-insensitive file lookup; this thin wrapper only wires up the
-// editor-specific "load the program, optionally run it" step.
+// URL-driven load. Routes through GMTools.initFromUrl for the fetch +
+// validation + case-insensitive file lookup; this thin wrapper only wires
+// up the editor-specific "load into editor, optionally show play overlay"
+// step. Accepts synthesized `params` so the `?play_demo=1` alias can
+// dispatch a demo load without rewriting the browser URL.
 async function autoLoadFromUrl(params) {
     await GMTools.initFromUrl({
         disk: gmDisk,
         showMessage,
         expectedExt: '/PRG',
+        params,
         loadFile: (actualName, fileData, params) => {
             loadProgramData(actualName, fileData);
             if (params.has('play')) {
-                runProgram();
-                if (audioIndicator) audioIndicator.refresh();
+                showPlayButtonOverlay(params);
             }
         }
     });
 }
 
-// Lazy-load the bundled demo disk, register it in the pool, load GMC64I,
-// and start running. Fire-and-forget — caller doesn't need to await.
-//
-// The bundle (js/demo-disk-source.js, ~228KB) is injected on demand via
-// GMTools.getDemoDiskBytes() so visitors who never hit `?play_demo=1` or
-// `?disk=demo` don't pay for it on cold load. <script src> works on
-// file:// too — fetch's CORS gotcha doesn't apply to script tags.
-async function autoLoadDemo() {
-    try {
-        const bytes = await GMTools.getDemoDiskBytes();
-        if (!bytes) return;
-        const id = await GMDisk.addToPool(bytes, 'GMC64-DEMO.d64');
-        if (!gmDisk.selectDisk(id)) return;
-        const prgBytes = gmDisk.disk.readFile('GMC64I/PRG');
-        if (!prgBytes) return;
-        loadProgramData('GMC64I/PRG', prgBytes);
-        runProgram();
+// Show the play-button overlay on the game canvas and render a poster
+// preview behind it. The VM doesn't actually start until the user clicks
+// play — that click also serves as the AudioContext-unlock gesture,
+// same as the run button in the sidebar.
+async function showPlayButtonOverlay(params) {
+    if (!currentProgramData) return;
 
-        // The browser autoplay policy keeps AudioContext suspended until
-        // the user actively gestures. The audio indicator (mounted in
-        // initApp) is the canonical unlock target — visitors see a
-        // muted-speaker icon in the play-area corner, click it, and that
-        // click both resumes the context and restarts the song via the
-        // indicator's onUnlock callback. No need for opportunistic
-        // window-level listeners here; the icon IS the affordance.
-        if (audioIndicator) audioIndicator.refresh();
-    } catch (e) {
-        console.warn('Demo auto-load failed:', e.message);
+    // Activating the game overlay makes the canvas visible so the poster
+    // has somewhere to render. The exit button in the game sidebar is
+    // still the user's escape hatch back to the editor.
+    document.getElementById('gameOverlay').classList.add('active');
+    document.getElementById('gameBorder').style.background = 'rgb(0, 0, 0)';
+
+    const overlay = document.getElementById('playOverlay');
+    overlay.classList.add('active');
+    if (!overlay.dataset.wired) {
+        overlay.dataset.wired = '1';
+        overlay.addEventListener('click', dismissPlayOverlay);
     }
+
+    // Ensure the screen exists for the poster to draw on. runProgram()
+    // creates it lazily too, but we need it *now*.
+    if (!screen) screen = new c64Screen('gameCanvas');
+    if (audioIndicator) audioIndicator.refresh();
+    await generatePoster(params);
+}
+
+// Click handler on the play overlay. Hides itself and hands off to the
+// normal run path — runProgram() calls initAudio(), which unlocks the
+// AudioContext (this click is the user gesture that satisfies the
+// browser's autoplay policy).
+function dismissPlayOverlay() {
+    document.getElementById('playOverlay').classList.remove('active');
+    runProgram();
+    if (audioIndicator) audioIndicator.refresh();
+}
+
+// Kick off a poster render on the game canvas. Ownership of the screen +
+// currentFileData stays here; GMPoster just runs the temp VM.
+async function generatePoster(params) {
+    await GMPoster.generatePoster({
+        screen,
+        fileData: currentFileData,
+        posterSeconds: GMPoster.getPosterSeconds(params)
+    });
 }
 
 // === INSTRUCTION PICKER ===
@@ -4370,21 +4568,25 @@ function runProgram() {
     // Build AST and start program
     try {
         const ast = buildAST(currentProgramData);
-        // Push current sidebar state into the VM. After this point the
-        // sidebar handlers (toggleMute/...) talk to vm.config directly —
-        // the module-level lets above are just UI-state mirrors.
+        // Push current chrome state into the VM. After this point the
+        // control handlers (toggleSkipPauses/...) talk to vm.config
+        // directly — the module-level lets above are just UI mirrors.
         vm.loadProgram(ast, currentFileData, {
             skipPauseInstructions,
             showHitboxes,
             audioMuted
         });
 
-        // Show game overlay and reset sidebar state
+        // Show game overlay and reset chrome state. The play-button
+        // overlay is force-cleared here so pressing Run after a Stop
+        // (following an initial ?play=1 landing) doesn't leave the
+        // dimmed overlay + button sitting on top of the real game.
         document.getElementById('gameOverlay').classList.add('active');
         document.getElementById('gameBorder').style.background = 'rgb(0, 0, 0)';  // Reset border to black
-        document.getElementById('pauseBtn').textContent = 'pause';
+        document.getElementById('playOverlay').classList.remove('active');
+        document.getElementById('settingsPopup').classList.remove('active');
+        setPauseButtonIcon(false);
         document.getElementById('stepBtn').disabled = true;
-        document.getElementById('muteToggle').checked = audioMuted;
         document.getElementById('skipPausesToggle').checked = skipPauseInstructions;
         document.getElementById('hitboxToggle').checked = showHitboxes;
         document.getElementById('opsInput').value = maxInstructionsPerFrame;
@@ -4393,7 +4595,7 @@ function runProgram() {
         frameCount = 0;
         lastFpsUpdate = Date.now();
 
-        // VM owns its loop now. onFrame keeps the sidebar dashboard alive.
+        // VM owns its loop now. onFrame keeps the stats readout alive.
         vm.start({
             opsPerFrame: maxInstructionsPerFrame,
             frameMs: FRAME_TIME,
@@ -4428,25 +4630,61 @@ function onVmFrame({ opsExecuted }) {
 function stopProgram() {
     if (vm) vm.stop();
     document.getElementById('gameOverlay').classList.remove('active');
-    document.getElementById('pauseBtn').textContent = 'pause';
+    document.getElementById('settingsPopup').classList.remove('active');
+    setPauseButtonIcon(false);
     document.getElementById('stepBtn').disabled = true;
     showMessage('Stopped');
 }
 
 function togglePause() {
     if (!vm) return;
-    const pauseBtn = document.getElementById('pauseBtn');
     const stepBtn = document.getElementById('stepBtn');
     if (vm.paused) {
         vm.resume();
-        pauseBtn.textContent = 'pause';
+        setPauseButtonIcon(false);
         stepBtn.disabled = true;
     } else {
         vm.pause();
-        pauseBtn.textContent = 'resume';
+        setPauseButtonIcon(true);
         stepBtn.disabled = false;
     }
 }
+
+// Pause / resume icons for the bottom-bar button. Same SVG pair as
+// play.html — two rounded bars for pause, a rounded triangle for resume.
+const PAUSE_ICON_SVG =
+    '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+    '<rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor"/>' +
+    '<rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor"/>' +
+    '</svg>';
+const RESUME_ICON_SVG =
+    '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+    '<path d="M7 5 L19 12 L7 19 Z" fill="currentColor" stroke="currentColor" ' +
+    'stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>' +
+    '</svg>';
+
+function setPauseButtonIcon(paused) {
+    const btn = document.getElementById('pauseBtn');
+    btn.innerHTML = paused ? RESUME_ICON_SVG : PAUSE_ICON_SVG;
+    btn.setAttribute('aria-label', paused ? 'Resume' : 'Pause');
+}
+
+// Hamburger opens the dev-settings popup; click-outside or Escape closes
+// it (Escape is already wired to stopProgram, so we intercept when the
+// popup is open to close it *instead* of stopping — see keydown handler).
+function toggleSettingsPopup(event) {
+    if (event) event.stopPropagation();   // don't trip click-outside below
+    document.getElementById('settingsPopup').classList.toggle('active');
+}
+
+document.addEventListener('click', (e) => {
+    const popup = document.getElementById('settingsPopup');
+    if (!popup.classList.contains('active')) return;
+    const hamburger = document.getElementById('hamburgerBtn');
+    if (!popup.contains(e.target) && !hamburger.contains(e.target)) {
+        popup.classList.remove('active');
+    }
+});
 
 function stepFrame() {
     if (!vm || !vm.paused) return;
@@ -4458,12 +4696,6 @@ function stepFrame() {
     vm.render(animationFrameToggle);
     updateBorderColor();
     updateInputDisplay();
-}
-
-function toggleMute() {
-    audioMuted = document.getElementById('muteToggle').checked;
-    if (vm) vm.setConfig({ audioMuted });
-    if (audioIndicator) audioIndicator.refresh();
 }
 
 function toggleSkipPauses() {

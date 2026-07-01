@@ -216,6 +216,7 @@ body {
 <script src="js/gmParser.js"></script>
 <script src="js/gmRuntime.js"></script>
 <script src="js/gmAudioIndicator.js"></script>
+<script src="js/gmPoster.js"></script>
 
 <script>
 // Chrome-free game player. Loads a game from URL params, shows a play
@@ -414,78 +415,17 @@ function updatePauseIcon() {
     }
 }
 
-// Parse `?poster_seconds=<n>` with the following semantics:
-//   - absent or non-numeric  → default 2s
-//   - negative                → default 2s (nonsense input, treat as default)
-//   - 0                       → caller should skip poster entirely
-//   - > 10                    → cap at 10s (protect against runaway URLs)
-//   - decimal precision       → rounded to 0.01s
-function getPosterSeconds() {
-    const raw = new URLSearchParams(location.search).get('poster_seconds');
-    if (raw === null) return 2;
-    const parsed = parseFloat(raw);
-    if (!isFinite(parsed) || parsed < 0) return 2;
-    const rounded = Math.round(parsed * 100) / 100;
-    return Math.min(rounded, 10);
-}
-
-// Render a preview frame ("poster") behind the play overlay by running
-// the VM silently for a few seconds of simulated playback. Anything
-// visual the game does during that window becomes the preview. Uses
-// a fresh mediaStore so the real run isn't perturbed.
+// Kick off a poster render on the game canvas. Screen has to exist first
+// so the temp VM has something to draw on. Fire-and-forget — a poster
+// failure never blocks the user from starting the game.
 async function generatePoster() {
-    if (!currentFileData) return;
-    const posterSeconds = getPosterSeconds();
-    if (posterSeconds === 0) return;   // opt-out: leave the canvas black
-
-    // Mock Date.now so `pause for X.X` opcodes resolve at *simulated*
-    // wallclock — otherwise a game that opens with `pause 1.0` would
-    // block the poster loop for a real second. Advances one frame's
-    // worth per simulated frame, matching what the runtime would see
-    // on real hardware. Restored in finally.
-    const realDateNow = Date.now.bind(Date);
-    let simulatedNow = realDateNow();
-    Date.now = () => simulatedNow;
-
-    try {
-        if (!screen) screen = new c64Screen('gameCanvas');
-        const posterProgramData = parseProgramData(currentFileData);
-        const posterAst = buildAST(posterProgramData);
-        const posterVm = new gmVM(screen);
-        // Pauses now honored (via the simulated clock). Muted because no
-        // AudioContext exists yet.
-        posterVm.loadProgram(posterAst, currentFileData, {
-            audioMuted: true                   // skipPauseInstructions defaults false — pauses honored
-        });
-        posterVm.running = true;
-
-        const totalFrames = Math.max(1, Math.round(posterSeconds * 60));
-        const opsPerFrame = 50;
-        const frameMs = 1000 / 60;
-        // Toggle mirrors the real run loop's animation cadence — sprite
-        // animation advances every other frame so it lands at ~30fps
-        // like on real hardware.
-        let animToggle = false;
-        for (let f = 0; f < totalFrames && posterVm.running; f++) {
-            for (let i = 0; i < opsPerFrame && posterVm.running; i++) {
-                posterVm.step();
-            }
-            posterVm.updateSpritePositions();
-            animToggle = !animToggle;
-            posterVm.advanceSpriteAnimations(animToggle);
-            simulatedNow += frameMs;
-        }
-        // Render only the final frame. Intermediate paints in a sync
-        // loop are wasted (browser doesn't composite until the loop
-        // yields), and we've already advanced sprite state above.
-        // Pass advanceAnimation=false so render doesn't nudge the final
-        // frame past what we just simulated.
-        posterVm.render(false);
-    } catch (e) {
-        console.warn('poster generation failed:', e.message);
-    } finally {
-        Date.now = realDateNow;
-    }
+    if (!screen) screen = new c64Screen('gameCanvas');
+    const params = new URLSearchParams(location.search);
+    await GMPoster.generatePoster({
+        screen,
+        fileData: currentFileData,
+        posterSeconds: GMPoster.getPosterSeconds(params)
+    });
 }
 
 // Standard GM input mapping — arrows + right-Meta for joystick 1 / button 1,
