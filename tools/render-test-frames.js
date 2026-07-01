@@ -98,7 +98,7 @@ function renderProgram(disk, name, steps, setup) {
     const pd = parseProgramData(fileData);
     const ast = buildAST(pd);
     const screen = new MockScreen();
-    const vm = new gmVM(screen, { pauseEnabled: false });
+    const vm = new gmVM(screen, { skipPauseInstructions: true });
     vm.loadProgram(ast, fileData);
     vm.running = true;
     runSteps(vm, steps);

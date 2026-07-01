@@ -42,7 +42,9 @@
 // provide to drive the runtime:
 //
 //   Per-instance config (passed via constructor / loadProgram / setConfig):
-//   - pauseEnabled  honor `pause for X.X` opcode (false = run-fast / debug)
+//   - skipPauseInstructions  when true, `pause for X.X` opcodes become
+//                            no-ops (testing / debug fast-run only —
+//                            default is false, i.e. pauses are honored)
 //   - showHitboxes  draw collision rectangles on top of the rendered frame
 //   - audioMuted    suppress sound/song playback (does not stop the program)
 //
@@ -74,7 +76,7 @@ class gmVM {
         // deterministic — useful for tests that snapshot VM state after
         // running a program with random branches.
         this.config = {
-            pauseEnabled: true,
+            skipPauseInstructions: false,
             showHitboxes: false,
             audioMuted: false,
             rngSeed: undefined,
@@ -853,12 +855,21 @@ class gmVM {
                         this.currentSong = music;
                         this.currentSongIndex = dataIndex;
 
-                        // Always start the song; gate audibility via volume.
-                        // A song that begins under mute keeps advancing
-                        // silently — unmute later becomes instantly audible
-                        // from the right position, no restart required.
-                        music.play();
-                        music.setVolume(this.config.audioMuted ? 0 : this.songVolume);
+                        // Start the song only if there's an audio system to
+                        // route through. Poster generation, headless testing,
+                        // and any other context that doesn't wire up an
+                        // AudioContext get a "song is loaded but silent"
+                        // state — no gmMusic.play() means no self-created
+                        // AudioContext, no scheduled notes, no audio leak.
+                        //
+                        // Under normal editor/player use, audioContext exists
+                        // and the song starts. Mute is honored via volume so
+                        // a song can advance silently and become audible on
+                        // unmute without a restart.
+                        if (typeof audioContext !== 'undefined' && audioContext) {
+                            music.play();
+                            music.setVolume(this.config.audioMuted ? 0 : this.songVolume);
+                        }
                     } else {
                     }
                 }
@@ -1735,7 +1746,7 @@ class gmVM {
             case 0x57: // pause for XX.X seconds
                 // arg2 = time value 1-255, with implied decimal before last digit
                 // So 15 = 1.5 seconds, 255 = 25.5 seconds, range is 0.1 to 25.5 seconds
-                if (this.config.pauseEnabled) {
+                if (!this.config.skipPauseInstructions) {
                     const pauseSeconds = arg2 / 10;
                     const pauseMs = pauseSeconds * 1000;
                     this.pauseUntil = Date.now() + pauseMs;
@@ -2173,6 +2184,57 @@ class gmVM {
         }
     }
 
+    // Advance sprite animation frames for all slots with animSpeed > 0.
+    // Peer of updateSpritePositions: both mutate runtime sprite state
+    // and both are callable independently of render() (so callers doing
+    // silent state advance — poster generation, headless smoke tests —
+    // can drive animation without touching the canvas).
+    //
+    // shouldAdvance mirrors what render's `advanceAnimation` toggle was:
+    // pass true on every other frame to reproduce the ~30fps animation
+    // cadence of the editor's run loop (see start()'s _loopAnimToggle).
+    advanceSpriteAnimations(shouldAdvance = true) {
+        if (!shouldAdvance) return;
+        for (const slot of this.sprites) {
+            if (!slot.visible || !slot.spriteInstance) continue;
+            const numFrames = slot.spriteInstance.getNumFrames();
+
+            // Defensive normalise — animFrame can drift if a sprite was
+            // reassigned to a shorter one after the last render.
+            if (typeof slot.animFrame !== 'number' || isNaN(slot.animFrame) ||
+                slot.animFrame < 0 || slot.animFrame >= numFrames) {
+                slot.animFrame = 0;
+            }
+
+            if (slot.animSpeed <= 0) continue;
+
+            // animateOnce: freeze on last frame, flag done, no advance.
+            if (slot.animateOnce && slot.animFrame >= numFrames - 1) {
+                slot.animateOnceDone = true;
+                continue;
+            }
+
+            // Clamp animSpeed 1-31 so framesToSkip stays positive.
+            const clampedSpeed = Math.max(1, Math.min(31, slot.animSpeed));
+            const framesToSkip = 32 - clampedSpeed;
+
+            if (typeof slot.skipCounter !== 'number' || isNaN(slot.skipCounter)) {
+                slot.skipCounter = framesToSkip;
+            }
+
+            if (slot.skipCounter <= 0) {
+                if (slot.animateOnce) {
+                    slot.animFrame = Math.min(slot.animFrame + 1, numFrames - 1);
+                } else {
+                    slot.animFrame = (slot.animFrame + 1) % numFrames;
+                }
+                slot.skipCounter = framesToSkip;
+            } else {
+                slot.skipCounter--;
+            }
+        }
+    }
+
     render(advanceAnimation = true) {
         // Update sprite positions (movement physics) - runs every frame at 60fps
         // Must happen even when screen updates are off, so sprites keep moving
@@ -2219,40 +2281,14 @@ class gmVM {
                     // Pass GM coordinates - blitToBuffer handles coordinate conversion and wrapping
                     const mask = slot.overUnder === 1 ? underMask : null;
                     gmSpriteObj.blitToBuffer(this.screen.pixels, c64Screen.WIDTH, c64Screen.HEIGHT, slot.x, slot.y, slot.animFrame, slot.skipQuads, mask);
-
-                    // Advance animation (only at 30fps, controlled by advanceAnimation flag)
-                    if (advanceAnimation && slot.animSpeed > 0) {
-                        // If animateOnce is true and we're on the last frame, don't advance
-                        if (slot.animateOnce && slot.animFrame >= numFrames - 1) {
-                            // Stay on last frame - mark animation as done so it can restart
-                            slot.animateOnceDone = true;
-                        } else {
-                            // Clamp animSpeed to valid range 1-31 to prevent negative framesToSkip
-                            const clampedSpeed = Math.max(1, Math.min(31, slot.animSpeed));
-                            const framesToSkip = 32 - clampedSpeed;
-
-                            // Initialize or fix invalid skipCounter
-                            if (typeof slot.skipCounter !== 'number' || isNaN(slot.skipCounter)) {
-                                slot.skipCounter = framesToSkip;
-                            }
-
-                            if (slot.skipCounter <= 0) {
-                                if (slot.animateOnce) {
-                                    // For "once" mode, don't wrap - stop at last frame
-                                    slot.animFrame = Math.min(slot.animFrame + 1, numFrames - 1);
-                                } else {
-                                    // For "always" mode, wrap around
-                                    slot.animFrame = (slot.animFrame + 1) % numFrames;
-                                }
-                                slot.skipCounter = framesToSkip;
-                            } else {
-                                slot.skipCounter--;
-                            }
-                        }
-                    }
                 }
             }
         }
+
+        // Advance animation state now that everything's been drawn. Kept
+        // AFTER blit so the current frame renders with its "in-flight"
+        // animFrame, then advances for the next call.
+        this.advanceSpriteAnimations(advanceAnimation);
 
         // Present the composited frame to the canvas
         this.screen.present();

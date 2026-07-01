@@ -7,6 +7,10 @@
 <style>
 :root {
     --c64-black: #000;
+    /* The bottom bar doubles as the C64-style bottom border, so the canvas
+       has no padded frame of its own. Bar height is used in the canvas
+       sizing math below — keep it here so the two stay in sync. */
+    --bar-height: 44px;
 }
 html, body {
     margin: 0;
@@ -18,35 +22,60 @@ html, body {
     overflow: hidden;
 }
 
+body {
+    display: flex;
+    flex-direction: column;
+}
+
+/* Play area fills all vertical space above the bottom bar. min-height:0
+   lets flex shrink it under content when the viewport is short (otherwise
+   the canvas's intrinsic aspect-driven height would push the bar off-screen). */
 #playArea {
-    height: 100%;
+    flex: 1;
+    min-height: 0;
     display: flex;
     align-items: center;
     justify-content: center;
     position: relative;
 }
 
-/* Border wrapper around the canvas — mirrors editor.html's C64 border.
-   Runtime sets the background color per scene via border opcodes. */
-#gameBorder {
-    padding: min(6vmin, 40px);
-    background: rgb(0, 0, 0);
-    display: inline-block;
+/* Dedicated bottom border strip — the credit link, pause toggle, and
+   audio indicator live here rather than overlaying the play field. */
+#bottomBar {
+    height: var(--bar-height);
+    flex-shrink: 0;
     position: relative;
-    box-sizing: border-box;
+    background: var(--c64-black);
 }
 
-/* Canvas scales to fit viewport while preserving the 8:5 (320×200) aspect.
-   image-rendering keeps pixels crisp at any scale. */
+/* Canvas wrapper — no padding: the bottom bar acts as the bottom border,
+   and the black body background surrounds the canvas on the other sides.
+   Kept as an element mostly for structural symmetry with editor.html and
+   in case we want to reintroduce a runtime-tinted border later. */
+#gameBorder {
+    display: inline-block;
+    position: relative;
+}
+
+/* Canvas scales to fit viewport while preserving the CRT-authentic 6:5
+   display aspect. image-rendering keeps pixels crisp at any scale. */
 #gameCanvas {
     display: block;
-    width: min(90vw, 140vh);
-    aspect-ratio: 8 / 5;
+    /* C64 pixels aren't square — the CRT-authentic display aspect is 6:5
+       (matches editor.html's 480×400 canvas over 320×200 native data),
+       NOT the raw 8:5 of the pixel resolution. Using native pixel aspect
+       here makes everything look horizontally stretched.
+
+       Width is the min of (a) 90% of viewport width and (b) the width that
+       fits vertically: (viewport height − bar) × 6/5. Without the vertical
+       clamp, aspect-ratio would derive a height that overflows #playArea
+       and the canvas would clip instead of scaling down on short viewports. */
+    width: min(90vw, calc((100vh - var(--bar-height)) * 6 / 5));
+    aspect-ratio: 6 / 5;
     height: auto;
     image-rendering: pixelated;
     image-rendering: crisp-edges;
     max-width: 960px;
-    max-height: 600px;
 }
 
 /* Full-canvas overlay with the play button. Sits above the game until the
@@ -71,7 +100,6 @@ html, body {
     border: 2px solid rgba(255, 255, 255, 0.8);
     border-radius: 50%;
     color: white;
-    font-size: 14px;
     font-family: inherit;
     cursor: pointer;
     display: flex;
@@ -86,21 +114,19 @@ html, body {
     height: auto;
     border-radius: 8px;
     padding: 12px 20px;
+    font-size: 14px;
     opacity: 0.85;
 }
-#playButton svg {
-    width: 44px;
-    height: 44px;
-}
+#playButton svg { width: 44px; height: 44px; display: block; }
 
-/* Speaker icon (gmAudioIndicator) — same styles as css/gm-ui.css defines,
-   inlined so play.html doesn't need to pull the full editor stylesheet. */
-.gm-audio-indicator {
+/* Speaker icon + pause toggle. Both anchored to the bottom-right of the
+   #bottomBar strip (position: absolute against its position: relative). */
+.gm-audio-indicator,
+#pauseToggle {
     position: absolute;
-    bottom: 10px;
-    right: 10px;
-    width: 32px;
-    height: 32px;
+    bottom: 8px;
+    width: 28px;
+    height: 28px;
     background: rgba(0, 0, 0, 0.5);
     border: 1px solid rgba(255, 255, 255, 0.25);
     border-radius: 4px;
@@ -110,24 +136,29 @@ html, body {
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 10;
     transition: background 0.1s, opacity 0.1s;
+    font-family: inherit;
 }
-.gm-audio-indicator:hover { background: rgba(0, 0, 0, 0.75); }
+.gm-audio-indicator { right: 20px; }
+#pauseToggle { right: 56px; }
+.gm-audio-indicator:hover,
+#pauseToggle:hover { background: rgba(0, 0, 0, 0.75); }
 .gm-audio-indicator.muted { opacity: 0.65; }
-.gm-audio-indicator svg { width: 100%; height: 100%; display: block; }
+.gm-audio-indicator svg,
+#pauseToggle svg { width: 100%; height: 100%; display: block; }
 
 /* Subtle attribution corner. Suppressed when ?nocredit is in the URL. */
+/* Credit link — anchored to the left of #bottomBar, vertically centred.
+   No z-index needed: the bar sits below playArea entirely, so the play
+   overlay (which lives inside playArea) never covers it. */
 .credit {
-    position: fixed;
-    bottom: 8px;
-    left: 8px;
+    position: absolute;
+    top: 50%;
+    left: 20px;
+    transform: translateY(-50%);
     color: rgba(255, 255, 255, 0.5);
     font-size: 12px;
     text-decoration: none;
-    /* Above the play overlay (z-index 100) so the link is clickable even
-       before the visitor starts the game. */
-    z-index: 101;
     font-family: monospace;
 }
 .credit:hover { color: rgba(255, 255, 255, 0.9); }
@@ -142,12 +173,30 @@ html, body {
     <div id="playOverlay">
         <button id="playButton" type="button" aria-label="Play">
             <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                <polygon points="9,5 21,12 9,19" fill="currentColor"/>
+                <path d="M7 5 L19 12 L7 19 Z"
+                      fill="currentColor"
+                      stroke="currentColor"
+                      stroke-width="3"
+                      stroke-linejoin="round"
+                      stroke-linecap="round"/>
             </svg>
         </button>
     </div>
 </div>
-<a class="credit" href="https://gmc64.com" target="_blank" rel="noopener">gmc64.com</a>
+<!-- Bottom border strip. Holds the credit link, pause toggle, and audio
+     indicator (mounted from JS after startGame). Sits below #playArea in
+     the flex column, so the play overlay never covers these controls. -->
+<div id="bottomBar">
+    <a class="credit" href="https://gmc64.com" target="_blank" rel="noopener">gmc64.com</a>
+    <!-- Pause / resume toggle. Hidden until the game actually starts. -->
+    <button id="pauseToggle" type="button" aria-label="Pause" style="display: none;">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor"/>
+            <rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor"/>
+        </svg>
+    </button>
+    <!-- audio indicator mounts here at first play -->
+</div>
 
 <!-- Runtime files. play.html deliberately does NOT include:
        - editor JS (instruction picker, arg editing, save/load UI, …)
@@ -175,9 +224,13 @@ html, body {
 // clicking-to-play in a video embed.
 //
 // URL params:
-//   disk       .d64 URL, or the magic word `demo` for the bundled demo
-//   file       program name on the disk (case-insensitive)
-//   nocredit   any value: hides the gmc64.com corner link
+//   disk            .d64 URL, or the magic word `demo` for the bundled demo
+//   file            program name on the disk (case-insensitive)
+//   nocredit=1      hides the gmc64.com corner link (must be exactly "1")
+//   poster_seconds  how long to simulate the game before rendering the
+//                   preview frame behind the play button. Default: 2.
+//                   Max: 10. Decimals allowed (rounded to 0.01s). `=0`
+//                   skips the poster entirely — canvas stays black.
 
 const disk = new GMDisk('player');
 let audioContext = null;
@@ -220,7 +273,7 @@ async function init() {
 async function loadGame() {
     const params = new URLSearchParams(location.search);
     if (!params.has('disk')) {
-        showPlayButtonError('no game specified');
+        showPlayButtonError('no disk specified');
         return;
     }
 
@@ -228,7 +281,7 @@ async function loadGame() {
         diskUrl: params.get('disk'), disk
     });
     if (!ok) {
-        showPlayButtonError('couldn\'t load disk');
+        showPlayButtonError('invalid disk');
         return;
     }
 
@@ -240,17 +293,17 @@ async function loadGame() {
 
     const actualName = GMTools.findFileCaseInsensitive(disk.disk, fileName);
     if (!actualName) {
-        showPlayButtonError(`"${fileName}" not on disk`);
+        showPlayButtonError('invalid file');
         return;
     }
     if (!actualName.toUpperCase().endsWith('/PRG')) {
-        showPlayButtonError('only /PRG files can be played');
+        showPlayButtonError('invalid file type');
         return;
     }
 
     const fileData = disk.disk.readFile(actualName);
     if (!fileData) {
-        showPlayButtonError(`couldn't read ${actualName}`);
+        showPlayButtonError('invalid file');
         return;
     }
 
@@ -294,7 +347,7 @@ async function startGame() {
     }
 
     if (!audioIndicator) {
-        audioIndicator = new GMAudioIndicator(document.getElementById('gameBorder'));
+        audioIndicator = new GMAudioIndicator(document.getElementById('bottomBar'));
         audioIndicator.bind({
             getMuted: () => vm.config.audioMuted,
             setMuted: (muted) => vm.setConfig({ audioMuted: muted }),
@@ -313,12 +366,67 @@ async function startGame() {
         });
     }
 
+    // Reveal the pause/resume toggle (hidden until first play) and wire
+    // its click handler once. Icon reflects current vm.paused state.
+    const pauseBtn = document.getElementById('pauseToggle');
+    if (!pauseBtn.dataset.wired) {
+        pauseBtn.dataset.wired = '1';
+        pauseBtn.addEventListener('click', togglePause);
+    }
+    pauseBtn.style.display = '';
+
     // Re-parse so the real run gets a fresh mediaStore, unmutated by
     // whatever the poster VM did.
     const programData = parseProgramData(currentFileData);
     const ast = buildAST(programData);
     vm.loadProgram(ast, currentFileData);
     vm.start({ opsPerFrame: 50, frameMs: 16 });
+    updatePauseIcon();
+}
+
+const PAUSE_ICON_SVG =
+    '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+    '<rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor"/>' +
+    '<rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor"/>' +
+    '</svg>';
+
+const RESUME_ICON_SVG =
+    '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+    '<path d="M7 5 L19 12 L7 19 Z" fill="currentColor" stroke="currentColor" ' +
+    'stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>' +
+    '</svg>';
+
+function togglePause() {
+    if (!vm) return;
+    if (vm.paused) vm.resume();
+    else vm.pause();
+    updatePauseIcon();
+}
+
+function updatePauseIcon() {
+    const btn = document.getElementById('pauseToggle');
+    if (vm && vm.paused) {
+        btn.innerHTML = RESUME_ICON_SVG;
+        btn.setAttribute('aria-label', 'Resume');
+    } else {
+        btn.innerHTML = PAUSE_ICON_SVG;
+        btn.setAttribute('aria-label', 'Pause');
+    }
+}
+
+// Parse `?poster_seconds=<n>` with the following semantics:
+//   - absent or non-numeric  → default 2s
+//   - negative                → default 2s (nonsense input, treat as default)
+//   - 0                       → caller should skip poster entirely
+//   - > 10                    → cap at 10s (protect against runaway URLs)
+//   - decimal precision       → rounded to 0.01s
+function getPosterSeconds() {
+    const raw = new URLSearchParams(location.search).get('poster_seconds');
+    if (raw === null) return 2;
+    const parsed = parseFloat(raw);
+    if (!isFinite(parsed) || parsed < 0) return 2;
+    const rounded = Math.round(parsed * 100) / 100;
+    return Math.min(rounded, 10);
 }
 
 // Render a preview frame ("poster") behind the play overlay by running
@@ -327,29 +435,56 @@ async function startGame() {
 // a fresh mediaStore so the real run isn't perturbed.
 async function generatePoster() {
     if (!currentFileData) return;
+    const posterSeconds = getPosterSeconds();
+    if (posterSeconds === 0) return;   // opt-out: leave the canvas black
+
+    // Mock Date.now so `pause for X.X` opcodes resolve at *simulated*
+    // wallclock — otherwise a game that opens with `pause 1.0` would
+    // block the poster loop for a real second. Advances one frame's
+    // worth per simulated frame, matching what the runtime would see
+    // on real hardware. Restored in finally.
+    const realDateNow = Date.now.bind(Date);
+    let simulatedNow = realDateNow();
+    Date.now = () => simulatedNow;
+
     try {
         if (!screen) screen = new c64Screen('gameCanvas');
         const posterProgramData = parseProgramData(currentFileData);
         const posterAst = buildAST(posterProgramData);
         const posterVm = new gmVM(screen);
-        // Poster mode: no pauses (would freeze on the first `pause for`),
-        // muted (no AudioContext exists yet), no hitboxes.
+        // Pauses now honored (via the simulated clock). Muted because no
+        // AudioContext exists yet.
         posterVm.loadProgram(posterAst, currentFileData, {
-            pauseEnabled: false, audioMuted: true
+            audioMuted: true                   // skipPauseInstructions defaults false — pauses honored
         });
         posterVm.running = true;
-        // Simulate ~2 seconds of gameplay at 60fps × 50 ops.
-        const totalFrames = 120;
+
+        const totalFrames = Math.max(1, Math.round(posterSeconds * 60));
         const opsPerFrame = 50;
+        const frameMs = 1000 / 60;
+        // Toggle mirrors the real run loop's animation cadence — sprite
+        // animation advances every other frame so it lands at ~30fps
+        // like on real hardware.
+        let animToggle = false;
         for (let f = 0; f < totalFrames && posterVm.running; f++) {
             for (let i = 0; i < opsPerFrame && posterVm.running; i++) {
                 posterVm.step();
             }
             posterVm.updateSpritePositions();
+            animToggle = !animToggle;
+            posterVm.advanceSpriteAnimations(animToggle);
+            simulatedNow += frameMs;
         }
+        // Render only the final frame. Intermediate paints in a sync
+        // loop are wasted (browser doesn't composite until the loop
+        // yields), and we've already advanced sprite state above.
+        // Pass advanceAnimation=false so render doesn't nudge the final
+        // frame past what we just simulated.
         posterVm.render(false);
     } catch (e) {
         console.warn('poster generation failed:', e.message);
+    } finally {
+        Date.now = realDateNow;
     }
 }
 

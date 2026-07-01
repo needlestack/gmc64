@@ -75,8 +75,8 @@ globalThis.window = {
 };
 globalThis.audioContext = new MockAudioContext();
 globalThis.masterGain = { connect: () => {}, gain: { value: 1 } };
-// pauseEnabled / showHitboxes / audioMuted are per-VM config now —
-// see new gmVM(...) below.
+// skipPauseInstructions / showHitboxes / audioMuted are per-VM config
+// now — see new gmVM(...) below.
 globalThis.inputState = {
     joystick1: { up: false, down: false, left: false, right: false },
     joystick2: { up: false, down: false, left: false, right: false },
@@ -221,7 +221,7 @@ function loadProgram(disk, programName) {
     const ast = buildAST(programData);
 
     const screen = new MockScreen();
-    const vm = new gmVM(screen, { pauseEnabled: false });
+    const vm = new gmVM(screen, { skipPauseInstructions: true });
     vm.loadProgram(ast, fileData);
     vm.running = true;
 

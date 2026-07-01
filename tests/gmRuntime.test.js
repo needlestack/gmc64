@@ -45,8 +45,8 @@ globalThis.loadFileByName = (fileName) => {
 await import('../js/gmParser.js');
 
 // gmRuntime no longer reads ambient globals for these — they're per-VM
-// config now. We pass pauseEnabled:false at vm.loadProgram time below
-// (tests want to race past `pause for X` opcodes).
+// config now. We pass skipPauseInstructions:true at vm.loadProgram time
+// below (tests want to race past `pause for X` opcodes).
 
 // Input state - will be manipulated during tests
 globalThis.inputState = {
@@ -259,7 +259,7 @@ function loadProgram(disk, programName) {
     const ast = buildAST(programData);
 
     const screen = new MockScreen();
-    const vm = new gmVM(screen, { pauseEnabled: false });
+    const vm = new gmVM(screen, { skipPauseInstructions: true });
     vm.loadProgram(ast, fileData);
     vm.running = true;
 

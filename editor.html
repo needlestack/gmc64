@@ -769,7 +769,7 @@ function initAudio() {
 
 // Runtime flags
 let showHitboxes = false;
-let pauseEnabled = true;
+let skipPauseInstructions = false;
 let audioMuted = false;
 
 // Input state for VM
@@ -4374,7 +4374,7 @@ function runProgram() {
         // sidebar handlers (toggleMute/...) talk to vm.config directly —
         // the module-level lets above are just UI-state mirrors.
         vm.loadProgram(ast, currentFileData, {
-            pauseEnabled,
+            skipPauseInstructions,
             showHitboxes,
             audioMuted
         });
@@ -4385,7 +4385,7 @@ function runProgram() {
         document.getElementById('pauseBtn').textContent = 'pause';
         document.getElementById('stepBtn').disabled = true;
         document.getElementById('muteToggle').checked = audioMuted;
-        document.getElementById('skipPausesToggle').checked = !pauseEnabled;
+        document.getElementById('skipPausesToggle').checked = skipPauseInstructions;
         document.getElementById('hitboxToggle').checked = showHitboxes;
         document.getElementById('opsInput').value = maxInstructionsPerFrame;
         document.getElementById('fpsDisplay').textContent = '0';
@@ -4467,8 +4467,8 @@ function toggleMute() {
 }
 
 function toggleSkipPauses() {
-    pauseEnabled = !document.getElementById('skipPausesToggle').checked;
-    if (vm) vm.setConfig({ pauseEnabled });
+    skipPauseInstructions = document.getElementById('skipPausesToggle').checked;
+    if (vm) vm.setConfig({ skipPauseInstructions });
 }
 
 function toggleHitboxes() {
