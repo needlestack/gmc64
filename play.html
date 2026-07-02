@@ -132,6 +132,96 @@ body {
 }
 #playButton svg { width: 44px; height: 44px; display: block; }
 
+/* Same overlay geometry as #playOverlay but semantically different:
+   this one is shown when we don't yet have a game to play — either to
+   drop / pick a .d64 file, or to choose one of several programs on it.
+   Never shown in the exported HTML (embedded data path bypasses it). */
+#pickerOverlay {
+    display: none;
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.85);
+    align-items: center;
+    justify-content: center;
+    z-index: 90;
+    padding: 24px;
+    box-sizing: border-box;
+}
+#pickerOverlay.active { display: flex; }
+
+#pickerOverlay .picker-content {
+    width: 100%;
+    max-width: 420px;
+    color: rgba(255, 255, 255, 0.9);
+    font-family: system-ui, -apple-system, sans-serif;
+    text-align: center;
+}
+
+#pickerOverlay h2 {
+    font-size: 16px;
+    margin: 0 0 8px 0;
+    font-weight: normal;
+    letter-spacing: 0.3px;
+}
+#pickerOverlay p {
+    font-size: 13px;
+    margin: 0 0 16px 0;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+/* Drop target — dashed border, hover state, "or choose file" fallback. */
+#dropTarget {
+    padding: 32px 20px;
+    border: 2px dashed rgba(255, 255, 255, 0.3);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+}
+#dropTarget:hover,
+#dropTarget.drag-over {
+    border-color: rgba(255, 255, 255, 0.7);
+    background: rgba(255, 255, 255, 0.05);
+}
+#dropTarget .drop-hint {
+    font-size: 14px;
+    margin-bottom: 4px;
+}
+#dropTarget .drop-sub {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.5);
+}
+#dropTarget input[type="file"] { display: none; }
+
+/* Program picker (shown after a disk is loaded with 2+ PRGs). */
+#programList {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    max-height: 60vh;
+    overflow-y: auto;
+    text-align: left;
+}
+#programList li {
+    padding: 10px 14px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 4px;
+    margin-bottom: 6px;
+    cursor: pointer;
+    font-family: monospace;
+    font-size: 13px;
+    transition: background 0.1s, border-color 0.1s;
+}
+#programList li:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.4);
+}
+
+#pickerOverlay .picker-error {
+    color: #ff9090;
+    font-size: 13px;
+    margin-top: 12px;
+}
+
 /* Right-side control cluster in the bottom bar. Visual order DOM=left→right:
    hamburger, pause, mute (audio indicator mounts last). */
 #gameControls {
@@ -252,6 +342,27 @@ body {
                       stroke-linecap="round"/>
             </svg>
         </button>
+    </div>
+    <!-- Only shown when the visitor arrives without a disk. Toggles
+         between a drop-zone (state 1) and a program picker (state 2)
+         via .mode-drop / .mode-pick classes set from JS. -->
+    <div id="pickerOverlay">
+        <div class="picker-content">
+            <div id="dropContent">
+                <h2>Play a .d64 disk</h2>
+                <label id="dropTarget" for="dropInput">
+                    <div class="drop-hint">Drop a <code>.d64</code> here</div>
+                    <div class="drop-sub">or click to choose a file</div>
+                    <input type="file" id="dropInput" accept=".d64">
+                </label>
+                <div id="dropError" class="picker-error" style="display: none;"></div>
+            </div>
+            <div id="pickContent" style="display: none;">
+                <h2>Choose a program</h2>
+                <p id="pickDiskName"></p>
+                <ul id="programList"></ul>
+            </div>
+        </div>
     </div>
 </div>
 <!-- Bottom border strip. Holds the credit link, control cluster (hamburger,
@@ -376,6 +487,7 @@ async function init() {
     document.getElementById('hamburgerBtn').innerHTML = GMPlayerChrome.ICONS.hamburger;
 
     populateJoystickSelects();
+    setupDropZone();
     document.getElementById('hamburgerBtn').addEventListener('click', toggleSettingsPopup);
     document.getElementById('playOverlay').addEventListener('click', startGame);
 
@@ -430,12 +542,14 @@ function populateJoystickSelects() {
     }
 }
 
-// Fetch (or decode) the disk, find the requested file, parse it into an
-// AST. The game doesn't start playing yet — that waits for the play-
-// button click.
+// Three entry modes:
+//   1. Embedded (Export): EMBEDDED_PRG / EMBEDDED_D64 populated → skip
+//      URL params entirely, decode bytes, jump straight to poster + play.
+//   2. URL-driven: `?disk=<url>` present. `file=` optional — missing
+//      falls back to auto-load (one PRG) or the program picker (2+).
+//   3. Bare visit (no disk, no embedded): show the drop-zone so the
+//      visitor can drop their own .d64.
 async function loadGame() {
-    // Mode 2 (Export): both consts patched by editor.html's Export flow.
-    // Bypass all URL param handling — the disk and program are baked in.
     if (EMBEDDED_PRG && EMBEDDED_D64) {
         const d64Bytes = _b64ToBytes(EMBEDDED_D64);
         const prgBytes = _b64ToBytes(EMBEDDED_PRG);
@@ -443,17 +557,13 @@ async function loadGame() {
         globalThis.loadFileByName = (name) => {
             try { return embeddedDisk.readFile(name); } catch (e) { return null; }
         };
-        currentFileName = '<embedded>';
-        currentFileData = prgBytes;
-        currentProgramData = parseProgramData(prgBytes);
-        generatePoster();
+        proceedWithProgram('<embedded>', prgBytes);
         return;
     }
 
-    // Mode 1 (URL-driven): normal play.html use.
     const params = new URLSearchParams(location.search);
     if (!params.has('disk')) {
-        showPlayButtonError('no disk specified');
+        showDropZone();
         return;
     }
 
@@ -465,9 +575,15 @@ async function loadGame() {
         return;
     }
 
+    // gmParser needs this to compose multi-part sprites that reference
+    // other files on the disk. Set up before any PRG parsing.
+    globalThis.loadFileByName = (name) => disk.disk.readFile(name);
+
     const fileName = params.get('file');
     if (!fileName) {
-        showPlayButtonError('no file specified');
+        // No specific file requested — hand off to the auto/picker path
+        // over whatever's on the fetched disk.
+        handleProgramList(disk.disk, disk.diskFileName || params.get('disk'));
         return;
     }
 
@@ -487,16 +603,112 @@ async function loadGame() {
         return;
     }
 
-    // gmParser needs this to compose multi-part sprites that reference
-    // other files on the disk.
-    globalThis.loadFileByName = (name) => disk.disk.readFile(name);
-    currentFileName = actualName;
-    currentFileData = fileData;
-    currentProgramData = parseProgramData(fileData);
+    proceedWithProgram(actualName, fileData);
+}
 
-    // Kick off the preview render behind the play overlay. Fire-and-forget;
-    // a poster failure never blocks the user from starting the game.
+// Once we have a name + bytes for the program we want to run, this
+// commits it, kicks off the poster, and hides any drop-zone / picker
+// overlay so the user sees the play button. Shared by all three entry
+// modes (embedded, URL, drop).
+function proceedWithProgram(name, bytes) {
+    currentFileName = name;
+    currentFileData = bytes;
+    currentProgramData = parseProgramData(bytes);
+    document.getElementById('pickerOverlay').classList.remove('active');
+    // Fire-and-forget — a poster failure never blocks the play button.
     generatePoster();
+}
+
+// Called when we have a disk but no specific file. Enumerate PRGs and
+// decide: auto-load a single one, show the picker for many, or error
+// out if there are none.
+function handleProgramList(d64, diskLabel) {
+    const prgs = GMTools.listFilesByExtension(d64, '/PRG');
+    if (prgs.length === 0) {
+        showPlayButtonError('no programs on disk');
+        return;
+    }
+    if (prgs.length === 1) {
+        const bytes = d64.readFile(prgs[0]);
+        if (!bytes) { showPlayButtonError('read failed'); return; }
+        proceedWithProgram(prgs[0], bytes);
+        return;
+    }
+    showProgramPicker(d64, prgs, diskLabel);
+}
+
+// State 1 of pickerOverlay: drop-zone. Shown when the visitor arrives
+// without any disk source at all.
+function showDropZone() {
+    document.getElementById('dropContent').style.display = '';
+    document.getElementById('pickContent').style.display = 'none';
+    document.getElementById('dropError').style.display = 'none';
+    document.getElementById('pickerOverlay').classList.add('active');
+}
+
+// State 2 of pickerOverlay: program picker. Shown when a disk is loaded
+// (via URL or drop) and has multiple PRGs. Clicking a row proceeds.
+function showProgramPicker(d64, prgs, diskLabel) {
+    document.getElementById('dropContent').style.display = 'none';
+    document.getElementById('pickContent').style.display = '';
+    document.getElementById('pickDiskName').textContent = diskLabel || '';
+
+    const list = document.getElementById('programList');
+    list.innerHTML = '';
+    for (const name of prgs) {
+        const li = document.createElement('li');
+        li.textContent = name;
+        li.addEventListener('click', () => {
+            const bytes = d64.readFile(name);
+            if (!bytes) return;
+            proceedWithProgram(name, bytes);
+        });
+        list.appendChild(li);
+    }
+    document.getElementById('pickerOverlay').classList.add('active');
+}
+
+// Drop-zone wiring — attached at page load. File input + drag/drop
+// both funnel through the same handleDroppedFile path.
+function setupDropZone() {
+    const target = document.getElementById('dropTarget');
+    const input = document.getElementById('dropInput');
+
+    input.addEventListener('change', () => {
+        if (input.files && input.files[0]) handleDroppedFile(input.files[0]);
+    });
+
+    target.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        target.classList.add('drag-over');
+    });
+    target.addEventListener('dragleave', () => target.classList.remove('drag-over'));
+    target.addEventListener('drop', (e) => {
+        e.preventDefault();
+        target.classList.remove('drag-over');
+        const file = e.dataTransfer?.files?.[0];
+        if (file) handleDroppedFile(file);
+    });
+}
+
+// Handle a File object (from drop or picker). Read the bytes, validate
+// it's a plausible D64, then run the same enumerate/auto/pick flow the
+// URL path uses.
+async function handleDroppedFile(file) {
+    const err = document.getElementById('dropError');
+    err.style.display = 'none';
+    try {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        // D64 constructor will throw on garbage input; catch below.
+        const d64 = new D64(bytes);
+        globalThis.loadFileByName = (name) => {
+            try { return d64.readFile(name); } catch (e) { return null; }
+        };
+        handleProgramList(d64, file.name);
+    } catch (e) {
+        err.textContent = "that doesn't look like a valid .d64";
+        err.style.display = '';
+    }
 }
 
 // Decode a base64 string to a Uint8Array. Chunk-loop because atob

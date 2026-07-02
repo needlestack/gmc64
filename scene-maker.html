@@ -525,7 +525,10 @@ function init() {
 
 async function initFromUrl() {
     await GMTools.initFromUrl({
-        disk, showMessage, expectedExt: '/PIC', loadFile: loadSceneFromDisk
+        disk, showMessage, expectedExt: '/PIC', loadFile: loadSceneFromDisk,
+        // ?disk=X with no ?file= and multiple PICs on the disk: fall back
+        // to the standard scene-filtered popup.
+        showPicker: () => showDiskPopup()
     });
 }
 

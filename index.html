@@ -1,12 +1,369 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<title>gmc64</title>
-<meta http-equiv="refresh" content="0; url=editor.html">
-<link rel="canonical" href="editor.html">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GMC64 — GameMaker for the browser</title>
+  <meta name="description" content="A faithful, browser-based recreation of Garry Kitchen's 1985 Commodore 64 GameMaker." />
+  <style>
+    :root {
+      /* Modern page, C64-adjacent accents. */
+      --bg: #ffffff;
+      --ink: #151515;
+      --muted: #686868;
+      --line: #e6e2ef;
+      --card: #ffffff;
+      --paper: #fbfaff;
+      --c64-blue: #40318d;
+      --c64-light-blue: #7869c4;
+      --c64-cyan: #67b6bd;
+      --c64-purple: #8b3f96;
+      --c64-green: #55a049;
+      --c64-yellow: #bfce72;
+      --accent: var(--c64-blue);
+      --accent-ink: #fff;
+      --shadow: 0 18px 60px rgba(33, 25, 78, .10);
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: linear-gradient(180deg, #fff 0%, var(--paper) 100%);
+      color: var(--ink);
+    }
+
+    a { color: inherit; text-decoration-thickness: .08em; text-underline-offset: .18em; }
+    a:hover { color: var(--accent); }
+
+    .wrap {
+      width: min(1120px, calc(100% - 40px));
+      margin: 0 auto;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      padding: 24px 0;
+    }
+
+    .logo {
+      font-weight: 850;
+      letter-spacing: .045em;
+      font-size: 1.25rem;
+      text-transform: uppercase;
+      text-decoration: none;
+    }
+
+    .logo::before {
+      content: "";
+      display: inline-block;
+      width: .72em;
+      height: .72em;
+      margin-right: .45em;
+      border-radius: 2px;
+      background: linear-gradient(135deg, var(--c64-blue) 0 25%, var(--c64-light-blue) 25% 50%, var(--c64-cyan) 50% 75%, var(--c64-yellow) 75%);
+      vertical-align: -.04em;
+    }
+
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px 20px;
+      color: var(--muted);
+      font-size: .92rem;
+    }
+
+    nav a { text-decoration: none; }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(320px, .95fr);
+      gap: 54px;
+      align-items: center;
+      padding: 80px 0 64px;
+    }
+
+    h1 {
+      margin: 0;
+      max-width: 760px;
+      font-size: clamp(3rem, 8vw, 7.4rem);
+      line-height: .88;
+      letter-spacing: -.045em;
+    }
+
+    .dek {
+      margin: 28px 0 0;
+      max-width: 590px;
+      color: var(--muted);
+      font-size: clamp(1.12rem, 2vw, 1.35rem);
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 34px;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 44px;
+      padding: 0 18px;
+      border: 1px solid var(--ink);
+      border-radius: 999px;
+      text-decoration: none;
+      font-weight: 700;
+      background: transparent;
+    }
+
+    .button.primary {
+      background: linear-gradient(135deg, var(--c64-blue), var(--c64-light-blue));
+      border-color: var(--c64-blue);
+      color: var(--accent-ink);
+    }
+
+    .screen {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: var(--card);
+      box-shadow: var(--shadow), 10px 10px 0 var(--c64-cyan);
+    }
+
+    .screen img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    .strip {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+      padding: 0 0 72px;
+    }
+
+    .tile {
+      display: block;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--card);
+      text-decoration: none;
+      box-shadow: 0 10px 28px rgba(33, 25, 78, .05);
+    }
+
+    .tile:nth-child(1) { border-top: 5px solid var(--c64-light-blue); }
+    .tile:nth-child(2) { border-top: 5px solid var(--c64-cyan); }
+    .tile:nth-child(3) { border-top: 5px solid var(--c64-purple); }
+    .tile:nth-child(4) { border-top: 5px solid var(--c64-green); }
+
+    .tile img {
+      width: 100%;
+      display: block;
+      aspect-ratio: 4 / 3;
+      object-fit: cover;
+    }
+
+    .tile span {
+      display: block;
+      padding: 12px 14px;
+      font-weight: 700;
+      font-size: .95rem;
+    }
+
+    section {
+      border-top: 1px solid var(--line);
+      padding: 56px 0;
+    }
+
+    .section-grid {
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      gap: 44px;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 1rem;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: var(--c64-blue);
+    }
+
+    .big {
+      margin: 0;
+      max-width: 760px;
+      font-size: clamp(1.6rem, 3vw, 2.35rem);
+      line-height: 1.12;
+      letter-spacing: -.025em;
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+      margin-top: 30px;
+    }
+
+    .card {
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: rgba(255, 255, 255, .78);
+    }
+
+    .card h3 { margin: 0 0 8px; font-size: 1rem; }
+    .card p { margin: 0; color: var(--muted); }
+
+    .links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 28px;
+    }
+
+    .links a {
+      padding: 10px 14px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--card);
+      text-decoration: none;
+    }
+
+    .links a:hover, .button:hover {
+      transform: translateY(-1px);
+    }
+
+    footer {
+      padding: 40px 0 64px;
+      color: var(--muted);
+      font-size: .92rem;
+    }
+
+    @media (max-width: 860px) {
+      header { align-items: flex-start; flex-direction: column; }
+      .hero, .section-grid { grid-template-columns: 1fr; }
+      .hero { padding-top: 44px; }
+      .strip, .cards { grid-template-columns: 1fr 1fr; }
+    }
+
+    @media (max-width: 560px) {
+      .wrap { width: min(100% - 28px, 1120px); }
+      .strip, .cards { grid-template-columns: 1fr; }
+      nav { gap: 10px 14px; }
+    }
+  </style>
 </head>
 <body>
-<noscript><a href="editor.html">Open the editor</a></noscript>
+  <div class="wrap">
+    <header>
+      <a class="logo" href="#top" aria-label="GMC64 home">gmc64</a>
+      <nav aria-label="Main navigation">
+        <a href="#play">Play</a>
+        <a href="#make">Make</a>
+        <a href="#compatibility">Compatibility</a>
+        <a href="#resources">Resources</a>
+        <a href="https://github.com/needlestack/gmc64">GitHub</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero" aria-labelledby="title">
+        <div>
+          <h1 id="title">GameMaker, back in the browser.</h1>
+          <p class="dek">A faithful, static HTML recreation of Garry Kitchen’s 1985 Commodore 64 game-creation tool. Load old disks, make new games, edit sprites and scenes, then share the result as a link or a single HTML file.</p>
+          <div class="actions">
+            <a class="button primary" href="editor.html?play_demo=1">Try the demo</a>
+            <a class="button" href="editor.html">Open the editor</a>
+            <a class="button" href="https://github.com/needlestack/gmc64">View source</a>
+          </div>
+        </div>
+        <!-- Replace these image paths with your actual screenshot files, or keep this structure and copy the images into /docs/screenshots/. -->
+        <a class="screen" href="editor.html?play_demo=1" aria-label="Try the GMC64 intro demo">
+          <img src="docs/screenshots/01-intro.png" alt="GMC64 intro demo screenshot" />
+        </a>
+      </section>
+
+      <div class="strip" aria-label="GMC64 tools">
+        <a class="tile" href="sprite-maker.html"><img src="docs/screenshots/02-sprite-maker.png" alt="Sprite maker screenshot" /><span>Sprite maker</span></a>
+        <a class="tile" href="scene-maker.html"><img src="docs/screenshots/03-scene-maker.png" alt="Scene maker screenshot" /><span>Scene maker</span></a>
+        <a class="tile" href="sound-maker.html"><img src="docs/screenshots/04-sound-maker.png" alt="Sound maker screenshot" /><span>Sound maker</span></a>
+        <a class="tile" href="music-maker.html"><img src="docs/screenshots/05-music-maker.png" alt="Music maker screenshot" /><span>Music maker</span></a>
+      </div>
+
+      <section id="play">
+        <div class="section-grid">
+          <h2>Play</h2>
+          <div>
+            <p class="big">Drop in a `.d64`, pick a program, and run it — without installing VICE or configuring a virtual 1541.</p>
+            <div class="cards">
+              <div class="card"><h3>No install</h3><p>Static HTML and JavaScript. Runs from a browser, even from local files.</p></div>
+              <div class="card"><h3>Demo disk</h3><p>Bundled programs and editable assets give you something to poke at immediately.</p></div>
+              <div class="card"><h3>Embed-ready</h3><p>Use `play.html` for a chrome-free iframe-friendly player.</p></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="make">
+        <div class="section-grid">
+          <h2>Make</h2>
+          <div>
+            <p class="big">Draw sprites, build scenes, compose music, tweak SID-style sounds, and write GameMaker logic in a plain-English instruction list.</p>
+            <div class="links">
+              <a href="editor.html">Program editor</a>
+              <a href="sprite-maker.html">Sprites</a>
+              <a href="scene-maker.html">Scenes</a>
+              <a href="sound-maker.html">Sounds</a>
+              <a href="music-maker.html">Music</a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="compatibility">
+        <div class="section-grid">
+          <h2>Compatibility</h2>
+          <div>
+            <p class="big">GMC64 reads and writes the original GameMaker formats: `.D64`, `.PRG`, `.SPR`, `.PIC`, `.SND`, and `.SNG`.</p>
+            <div class="cards">
+              <div class="card"><h3>Old → new</h3><p>Load work made on original hardware and edit it in the browser.</p></div>
+              <div class="card"><h3>New → old</h3><p>Save back to disk images that can load in the original C64 GameMaker.</p></div>
+              <div class="card"><h3>Share</h3><p>Export a self-contained HTML game, or deep-link to a disk and program.</p></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="resources">
+        <div class="section-grid">
+          <h2>Resources</h2>
+          <div>
+            <p class="big">For preservation, tinkering, and falling down the C64 rabbit hole.</p>
+            <div class="links">
+              <a href="https://github.com/needlestack/gmc64">GMC64 on GitHub</a>
+              <a href="https://www.c64-wiki.com/wiki/Main_Page">C64 Wiki</a>
+              <a href="https://vice-emu.sourceforge.io/">VICE emulator</a>
+              <a href="https://archive.org/details/softwarelibrary_c64">C64 Software Library</a>
+              <a href="https://www.lemon64.com/">Lemon64</a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      Independent, unaffiliated, clean-room reimplementation for preservation, education, and fun. GameMaker and related marks belong to their respective owners.
+    </footer>
+  </div>
 </body>
 </html>

@@ -862,7 +862,10 @@ async function initFromUrl() {
     // music-maker has no plain showMessage helper; GMTools.initFromUrl
     // falls back to console.warn when one isn't provided.
     await GMTools.initFromUrl({
-        disk, expectedExt: '/SNG', loadFile: loadSongFromDisk
+        disk, expectedExt: '/SNG', loadFile: loadSongFromDisk,
+        // ?disk=X with no ?file= and multiple SNGs on the disk: fall back
+        // to the standard music-filtered popup.
+        showPicker: () => showFilePopup()
     });
 }
 

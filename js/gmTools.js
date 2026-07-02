@@ -1456,6 +1456,23 @@ const GMTools = {
     },
 
     /**
+     * Return every filename on `disk` whose name ends with `ext` (case-
+     * insensitive). Extension form matches the on-disk convention:
+     * '/PRG', '/SPR', etc. Preserves each file's original casing +
+     * space padding so entries can be passed directly to readFile.
+     */
+    listFilesByExtension(disk, ext) {
+        const target = ext.toUpperCase();
+        const out = [];
+        for (const entry of disk.getDirectory()) {
+            if (entry.fileName.toUpperCase().endsWith(target)) {
+                out.push(entry.fileName);
+            }
+        }
+        return out;
+    },
+
+    /**
      * Full URL-driven init for an editor page. Reads the `?disk=` /
      * `?file=` query params, fetches the disk, validates the file's
      * extension matches what this editor handles, then hands the loaded
@@ -1465,6 +1482,15 @@ const GMTools = {
      * `loadFile(name, bytes, params)` callback. The params object is
      * passed through so callers can read extras like `?play=1`.
      *
+     * Missing-`file=` behavior: if `?disk=` is present without `?file=`,
+     * we enumerate all files on the disk matching `expectedExt`.
+     *   0 matches → error message via showMessage
+     *   1 match  → auto-load it (no picker; there's nothing to choose)
+     *   2+ matches → invoke the caller-provided `showPicker(names, onPick)`
+     *                callback if given; otherwise no-op silently.
+     * That's how each editor gets "just show me the picker" behavior for
+     * free when someone shares a `?disk=` link with no file specified.
+     *
      * `params` is optional. If omitted, we read `location.search`. Pass
      * a synthesized URLSearchParams to dispatch a load without changing
      * the browser URL — used by editor.html's `?play_demo=1` alias,
@@ -1473,7 +1499,7 @@ const GMTools = {
      * No-op when `?disk=` isn't in the URL. Surfaces all errors via
      * showMessage; nothing throws.
      */
-    async initFromUrl({ disk, showMessage, expectedExt, loadFile, params }) {
+    async initFromUrl({ disk, showMessage, expectedExt, loadFile, showPicker, params }) {
         const msg = (text) => { if (showMessage) showMessage(text); else console.warn(text); };
         if (!params) params = new URLSearchParams(location.search);
         if (!params.has('disk')) return;
@@ -1483,28 +1509,35 @@ const GMTools = {
         });
         if (!ok) return;
 
-        const fileName = params.get('file');
-        if (!fileName) return;
+        const proceed = (actualName) => {
+            const fileData = disk.disk.readFile(actualName);
+            if (!fileData) return msg(`couldn't read "${actualName}"`);
+            loadFile(actualName, fileData, params);
+        };
 
-        const actualName = GMTools.findFileCaseInsensitive(disk.disk, fileName);
-        if (!actualName) {
-            msg(`"${fileName}" not on disk`);
+        const fileName = params.get('file');
+        if (!fileName) {
+            // No `?file=` — auto-load if there's only one candidate,
+            // hand off to the picker if there are multiple.
+            const matches = GMTools.listFilesByExtension(disk.disk, expectedExt);
+            if (matches.length === 0) {
+                return msg(`no ${expectedExt.replace('/', '.')} files on disk`);
+            }
+            if (matches.length === 1) return proceed(matches[0]);
+            if (showPicker) showPicker(matches, proceed);
             return;
         }
+
+        const actualName = GMTools.findFileCaseInsensitive(disk.disk, fileName);
+        if (!actualName) return msg(`"${fileName}" not on disk`);
         if (!actualName.toUpperCase().endsWith(expectedExt.toUpperCase())) {
             const ext = actualName.split('/').pop().toLowerCase();
             const target = {
                 prg: 'editor', spr: 'sprite-maker', pic: 'scene-maker',
                 snd: 'sound-maker', sng: 'music-maker'
             }[ext];
-            msg(target ? `"${actualName}" is a ${ext} — try ${target}.html` : `wrong file type`);
-            return;
+            return msg(target ? `"${actualName}" is a ${ext} — try ${target}.html` : `wrong file type`);
         }
-        const fileData = disk.disk.readFile(actualName);
-        if (!fileData) {
-            msg(`couldn't read "${actualName}"`);
-            return;
-        }
-        loadFile(actualName, fileData, params);
+        proceed(actualName);
     }
 };

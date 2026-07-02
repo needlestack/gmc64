@@ -1835,7 +1835,10 @@ async function initFromUrl() {
     // sound-maker has no visible message area; GMTools.initFromUrl falls
     // back to console.warn when showMessage isn't provided.
     await GMTools.initFromUrl({
-        disk, expectedExt: '/SND', loadFile: loadSoundFromDisk
+        disk, expectedExt: '/SND', loadFile: loadSoundFromDisk,
+        // ?disk=X with no ?file= and multiple SNDs on the disk: fall back
+        // to the standard sound-filtered popup.
+        showPicker: () => showDiskPopup()
     });
 }
 

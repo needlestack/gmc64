@@ -1340,6 +1340,11 @@ async function autoLoadFromUrl(params) {
         showMessage,
         expectedExt: '/PRG',
         params,
+        // ?disk=X with no ?file= and multiple PRGs on the disk: hand off
+        // to the standard file popup filtered to programs. Its onSelect
+        // routes back through loadProgramData, so the picked file lands
+        // in the editor the same way as an explicit ?file= would.
+        showPicker: () => showFilePopup(),
         loadFile: (actualName, fileData, params) => {
             loadProgramData(actualName, fileData);
             if (params.has('play')) {

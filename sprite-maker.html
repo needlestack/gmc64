@@ -2289,7 +2289,10 @@ function initApp() {
 
 async function initFromUrl() {
     await GMTools.initFromUrl({
-        disk, showMessage, expectedExt: '/SPR', loadFile: loadSpriteFromDisk
+        disk, showMessage, expectedExt: '/SPR', loadFile: loadSpriteFromDisk,
+        // ?disk=X with no ?file= and multiple SPRs on the disk: fall back
+        // to the standard sprite-filtered popup.
+        showPicker: () => showDiskPopup()
     });
 }
 
