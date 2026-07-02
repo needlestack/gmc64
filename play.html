@@ -8,9 +8,12 @@
 :root {
     --c64-black: #000;
     /* The bottom bar doubles as the C64-style bottom border, so the canvas
-       has no padded frame of its own. Bar height is used in the canvas
-       sizing math below — keep it here so the two stay in sync. */
+       has no padded frame of its own. Bar heights feed the canvas sizing
+       math below — keep them here so the two stay in sync. The top bar
+       is a thinner cosmetic strip (half the bottom) that frames the
+       playfield symmetrically without stealing room for controls. */
     --bar-height: 44px;
+    --top-height: 22px;
 }
 html, body {
     margin: 0;
@@ -37,6 +40,15 @@ body {
     align-items: center;
     justify-content: center;
     position: relative;
+}
+
+/* Thin top border strip — cosmetic only. Frames the playfield above so
+   the canvas isn't flush with the browser chrome. Half the bottom bar's
+   height because it doesn't hold any controls. */
+#topBar {
+    height: var(--top-height);
+    flex-shrink: 0;
+    background: var(--c64-black);
 }
 
 /* Dedicated bottom border strip — the credit link, pause toggle, and
@@ -67,10 +79,11 @@ body {
        here makes everything look horizontally stretched.
 
        Width is the min of (a) 90% of viewport width and (b) the width that
-       fits vertically: (viewport height − bar) × 6/5. Without the vertical
-       clamp, aspect-ratio would derive a height that overflows #playArea
-       and the canvas would clip instead of scaling down on short viewports. */
-    width: min(90vw, calc((100vh - var(--bar-height)) * 6 / 5));
+       fits vertically: (viewport height − top border − bottom bar) × 6/5.
+       Without the vertical clamp, aspect-ratio would derive a height that
+       overflows #playArea and the canvas would clip instead of scaling
+       down on short viewports. */
+    width: min(90vw, calc((100vh - var(--bar-height) - var(--top-height)) * 6 / 5));
     aspect-ratio: 6 / 5;
     height: auto;
     image-rendering: pixelated;
@@ -119,12 +132,18 @@ body {
 }
 #playButton svg { width: 44px; height: 44px; display: block; }
 
-/* Speaker icon + pause toggle. Both anchored to the bottom-right of the
-   #bottomBar strip (position: absolute against its position: relative). */
-.gm-audio-indicator,
-#pauseToggle {
+/* Right-side control cluster in the bottom bar. Visual order DOM=left→right:
+   hamburger, pause, mute (audio indicator mounts last). */
+#gameControls {
     position: absolute;
+    right: 20px;
     bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#gameControls button {
     width: 28px;
     height: 28px;
     background: rgba(0, 0, 0, 0.5);
@@ -136,16 +155,66 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: background 0.1s, opacity 0.1s;
     font-family: inherit;
+    transition: background 0.1s;
 }
-.gm-audio-indicator { right: 20px; }
-#pauseToggle { right: 56px; }
-.gm-audio-indicator:hover,
-#pauseToggle:hover { background: rgba(0, 0, 0, 0.75); }
-.gm-audio-indicator.muted { opacity: 0.65; }
-.gm-audio-indicator svg,
-#pauseToggle svg { width: 100%; height: 100%; display: block; }
+#gameControls button:hover { background: rgba(0, 0, 0, 0.75); }
+#gameControls button svg { width: 100%; height: 100%; display: block; }
+
+/* Audio indicator flexes with the other icons — override the shared
+   CSS's default absolute positioning. */
+#gameControls .gm-audio-indicator {
+    position: static;
+    bottom: auto;
+    right: auto;
+    width: 28px;
+    height: 28px;
+    padding: 4px;
+}
+
+/* Hamburger popup — opens above the bar, right-aligned. Houses the
+   joystick preset selectors. */
+#settingsPopup {
+    display: none;
+    position: absolute;
+    bottom: calc(var(--bar-height) + 4px);
+    right: 20px;
+    background: rgba(0, 0, 0, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 4px;
+    padding: 12px;
+    z-index: 10;
+    min-width: 220px;
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 12px;
+}
+#settingsPopup.active { display: block; }
+
+#settingsPopup .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+#settingsPopup .row:last-child { margin-bottom: 0; }
+
+#settingsPopup .settings-section-label {
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin: 0 0 4px 0;
+}
+
+#settingsPopup select {
+    font-family: inherit;
+    font-size: 12px;
+    padding: 2px 4px;
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+}
 
 /* Subtle attribution corner. Suppressed when ?nocredit is in the URL. */
 /* Credit link — anchored to the left of #bottomBar, vertically centred.
@@ -165,6 +234,8 @@ body {
 </style>
 </head>
 <body>
+<!-- Thin cosmetic top border strip; no interactive content. -->
+<div id="topBar"></div>
 <div id="playArea">
     <div id="gameBorder">
         <canvas id="gameCanvas" width="320" height="200"></canvas>
@@ -183,24 +254,38 @@ body {
         </button>
     </div>
 </div>
-<!-- Bottom border strip. Holds the credit link, pause toggle, and audio
-     indicator (mounted from JS after startGame). Sits below #playArea in
-     the flex column, so the play overlay never covers these controls. -->
+<!-- Bottom border strip. Holds the credit link, control cluster (hamburger,
+     pause, audio indicator), and the settings popup (opens above the bar).
+     Sits below #playArea in the flex column, so the play overlay never
+     covers these controls. -->
 <div id="bottomBar">
     <a class="credit" href="https://gmc64.com" target="_blank" rel="noopener">gmc64.com</a>
-    <!-- Pause / resume toggle. Hidden until the game actually starts. -->
-    <button id="pauseToggle" type="button" aria-label="Pause" style="display: none;">
-        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-            <rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor"/>
-            <rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor"/>
-        </svg>
-    </button>
-    <!-- audio indicator mounts here at first play -->
+    <!-- Hamburger, pause, audio-indicator (mounted). Hidden until first play. -->
+    <div id="gameControls" style="display: none;">
+        <button id="hamburgerBtn" type="button" aria-label="Settings">
+            <!-- icon injected in init() -->
+        </button>
+        <button id="pauseToggle" type="button" aria-label="Pause">
+            <!-- icon injected on first pause state change -->
+        </button>
+        <!-- audio indicator mounts here at first play -->
+    </div>
+    <div id="settingsPopup">
+        <div class="settings-section-label">Controls</div>
+        <div class="row">
+            <label>Joystick 1</label>
+            <select id="joy1Sel"></select>
+        </div>
+        <div class="row">
+            <label>Joystick 2</label>
+            <select id="joy2Sel"></select>
+        </div>
+    </div>
 </div>
 
 <!-- Runtime files. play.html deliberately does NOT include:
        - editor JS (instruction picker, arg editing, save/load UI, …)
-       - runtime-source.js (only needed by editor's Export Game flow)
+       - standalone-source.js (only needed by editor's Export Game flow)
        - demo-disk-source.js (only relevant to editor's demo shortcut) -->
 <script src="js/c64lib.js"></script>
 <script src="js/c64Screen.js"></script>
@@ -217,14 +302,24 @@ body {
 <script src="js/gmRuntime.js"></script>
 <script src="js/gmAudioIndicator.js"></script>
 <script src="js/gmPoster.js"></script>
+<script src="js/gmPlayerChrome.js"></script>
 
 <script>
-// Chrome-free game player. Loads a game from URL params, shows a play
-// button until the visitor clicks, then runs. The click serves as the
-// user gesture that unlocks the AudioContext — same solution as
-// clicking-to-play in a video embed.
+// Chrome-free game player. Two run modes:
 //
-// URL params:
+//   1. URL-driven — normal use. `?disk=<url>&file=<name>` fetches a .d64
+//      and picks a program off it. Shows a play-button overlay; the
+//      click starts the VM and unlocks the AudioContext (autoplay-policy
+//      compliant).
+//
+//   2. Embedded — the editor's "Export Game" flow patches the two
+//      EMBEDDED_ consts below with base64-encoded PRG + D64 bytes. When
+//      those aren't null, we skip the URL fetch entirely and decode the
+//      bytes locally. That's how the exported HTML is *literally*
+//      play.html with two strings changed — one source of truth for the
+//      player. See tools/bundle-standalone.js for the build path.
+//
+// URL params (mode 1 only, plus these two which work in both modes):
 //   disk            .d64 URL, or the magic word `demo` for the bundled demo
 //   file            program name on the disk (case-insensitive)
 //   nocredit=1      hides the gmc64.com corner link (must be exactly "1")
@@ -232,6 +327,12 @@ body {
 //                   preview frame behind the play button. Default: 2.
 //                   Max: 10. Decimals allowed (rounded to 0.01s). `=0`
 //                   skips the poster entirely — canvas stays black.
+
+// Populated at Export time via string replacement — see
+// tools/bundle-standalone.js. Stay `null` in normal play.html use;
+// the exported HTML has them as base64 strings.
+const EMBEDDED_PRG = null;
+const EMBEDDED_D64 = null;
 
 const disk = new GMDisk('player');
 let audioContext = null;
@@ -244,6 +345,12 @@ let currentProgramData = null;
 let currentFileData = null;
 let currentFileName = null;
 let animationFrameToggle = false;
+
+// Input preset settings — persisted in localStorage. Different key from
+// the editor so per-context choices don't leak between them.
+const INPUT_SETTINGS_KEY = 'gmc64-player-input';
+let inputSettings = GMPlayerChrome.loadInputSettings(
+    INPUT_SETTINGS_KEY, GMPlayerChrome.DEFAULT_INPUT_SETTINGS);
 
 // Input state read by gmRuntime. Same shape as editor.html.
 const inputState = {
@@ -264,14 +371,86 @@ async function init() {
         document.querySelector('.credit').style.display = 'none';
     }
 
+    // Populate hamburger button icon (declared as empty in HTML). Pause
+    // icon initialized on first play state change.
+    document.getElementById('hamburgerBtn').innerHTML = GMPlayerChrome.ICONS.hamburger;
+
+    populateJoystickSelects();
+    document.getElementById('hamburgerBtn').addEventListener('click', toggleSettingsPopup);
     document.getElementById('playOverlay').addEventListener('click', startGame);
-    setupInputListeners();
+
+    // Shared input listener — gates on vm being present and running so
+    // key presses before start / after end don't leak into inputState.
+    GMPlayerChrome.setupInputListeners({
+        inputState,
+        getPresets: () => inputSettings,
+        isEnabled: () => vm && vm.running
+    });
+
+    // Close settings popup on click-outside or Escape.
+    document.addEventListener('click', (e) => {
+        const popup = document.getElementById('settingsPopup');
+        if (!popup.classList.contains('active')) return;
+        const burger = document.getElementById('hamburgerBtn');
+        if (!popup.contains(e.target) && !burger.contains(e.target)) {
+            popup.classList.remove('active');
+        }
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        const popup = document.getElementById('settingsPopup');
+        if (popup.classList.contains('active')) popup.classList.remove('active');
+    });
+
     await loadGame();
 }
 
-// Fetch the disk, find the requested file, parse it into an AST. The
-// game doesn't start playing yet — that waits for the play-button click.
+function toggleSettingsPopup(e) {
+    if (e) e.stopPropagation();   // don't trip the click-outside handler
+    document.getElementById('settingsPopup').classList.toggle('active');
+}
+
+// Fill the joy1/joy2 dropdowns from the shared PRESET_LABELS. Runs once
+// at init. Selecting either dropdown updates inputSettings + persists.
+function populateJoystickSelects() {
+    for (const which of ['joy1', 'joy2']) {
+        const sel = document.getElementById(which + 'Sel');
+        sel.innerHTML = '';
+        for (const [value, label] of GMPlayerChrome.PRESET_LABELS) {
+            const opt = document.createElement('option');
+            opt.value = value;
+            opt.textContent = label;
+            sel.appendChild(opt);
+        }
+        sel.value = inputSettings[which];
+        sel.addEventListener('change', () => {
+            inputSettings = { ...inputSettings, [which]: sel.value };
+            GMPlayerChrome.saveInputSettings(INPUT_SETTINGS_KEY, inputSettings);
+        });
+    }
+}
+
+// Fetch (or decode) the disk, find the requested file, parse it into an
+// AST. The game doesn't start playing yet — that waits for the play-
+// button click.
 async function loadGame() {
+    // Mode 2 (Export): both consts patched by editor.html's Export flow.
+    // Bypass all URL param handling — the disk and program are baked in.
+    if (EMBEDDED_PRG && EMBEDDED_D64) {
+        const d64Bytes = _b64ToBytes(EMBEDDED_D64);
+        const prgBytes = _b64ToBytes(EMBEDDED_PRG);
+        const embeddedDisk = new D64(d64Bytes);
+        globalThis.loadFileByName = (name) => {
+            try { return embeddedDisk.readFile(name); } catch (e) { return null; }
+        };
+        currentFileName = '<embedded>';
+        currentFileData = prgBytes;
+        currentProgramData = parseProgramData(prgBytes);
+        generatePoster();
+        return;
+    }
+
+    // Mode 1 (URL-driven): normal play.html use.
     const params = new URLSearchParams(location.search);
     if (!params.has('disk')) {
         showPlayButtonError('no disk specified');
@@ -320,6 +499,15 @@ async function loadGame() {
     generatePoster();
 }
 
+// Decode a base64 string to a Uint8Array. Chunk-loop because atob
+// returns a binary string and we need byte codes.
+function _b64ToBytes(b64) {
+    const bin = atob(b64);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+}
+
 function showPlayButtonError(text) {
     const btn = document.getElementById('playButton');
     btn.textContent = text;
@@ -348,7 +536,10 @@ async function startGame() {
     }
 
     if (!audioIndicator) {
-        audioIndicator = new GMAudioIndicator(document.getElementById('bottomBar'));
+        // Mount inside #gameControls so it flexes with the other icons.
+        // (The shared CSS defaults the indicator to position:absolute; our
+        // #gameControls .gm-audio-indicator override neutralises that.)
+        audioIndicator = new GMAudioIndicator(document.getElementById('gameControls'));
         audioIndicator.bind({
             getMuted: () => vm.config.audioMuted,
             setMuted: (muted) => vm.setConfig({ audioMuted: muted }),
@@ -367,14 +558,14 @@ async function startGame() {
         });
     }
 
-    // Reveal the pause/resume toggle (hidden until first play) and wire
-    // its click handler once. Icon reflects current vm.paused state.
+    // Reveal the control cluster (hidden until first play) and wire the
+    // pause button once. Icon reflects current vm.paused state.
+    document.getElementById('gameControls').style.display = '';
     const pauseBtn = document.getElementById('pauseToggle');
     if (!pauseBtn.dataset.wired) {
         pauseBtn.dataset.wired = '1';
         pauseBtn.addEventListener('click', togglePause);
     }
-    pauseBtn.style.display = '';
 
     // Re-parse so the real run gets a fresh mediaStore, unmutated by
     // whatever the poster VM did.
@@ -382,37 +573,14 @@ async function startGame() {
     const ast = buildAST(programData);
     vm.loadProgram(ast, currentFileData);
     vm.start({ opsPerFrame: 50, frameMs: 16 });
-    updatePauseIcon();
+    GMPlayerChrome.setPauseIcon(pauseBtn, false);
 }
-
-const PAUSE_ICON_SVG =
-    '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
-    '<rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor"/>' +
-    '<rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor"/>' +
-    '</svg>';
-
-const RESUME_ICON_SVG =
-    '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
-    '<path d="M7 5 L19 12 L7 19 Z" fill="currentColor" stroke="currentColor" ' +
-    'stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>' +
-    '</svg>';
 
 function togglePause() {
     if (!vm) return;
     if (vm.paused) vm.resume();
     else vm.pause();
-    updatePauseIcon();
-}
-
-function updatePauseIcon() {
-    const btn = document.getElementById('pauseToggle');
-    if (vm && vm.paused) {
-        btn.innerHTML = RESUME_ICON_SVG;
-        btn.setAttribute('aria-label', 'Resume');
-    } else {
-        btn.innerHTML = PAUSE_ICON_SVG;
-        btn.setAttribute('aria-label', 'Pause');
-    }
+    GMPlayerChrome.setPauseIcon(document.getElementById('pauseToggle'), vm.paused);
 }
 
 // Kick off a poster render on the game canvas. Screen has to exist first
@@ -428,53 +596,6 @@ async function generatePoster() {
     });
 }
 
-// Standard GM input mapping — arrows + right-Meta for joystick 1 / button 1,
-// ESDF + Space for joystick 2 / button 2. Same scheme as editor.html.
-function setupInputListeners() {
-    window.addEventListener('keydown', (e) => {
-        if (!vm || !vm.running) return;
-        switch (e.key) {
-            case 'ArrowUp':    inputState.joystick1.up    = true; e.preventDefault(); break;
-            case 'ArrowDown':  inputState.joystick1.down  = true; e.preventDefault(); break;
-            case 'ArrowLeft':  inputState.joystick1.left  = true; e.preventDefault(); break;
-            case 'ArrowRight': inputState.joystick1.right = true; e.preventDefault(); break;
-            case 'Meta':
-                if (e.location === 2) { inputState.button1 = true; e.preventDefault(); }
-                break;
-            case 'e': case 'E': inputState.joystick2.up    = true; e.preventDefault(); break;
-            case 'd': case 'D': inputState.joystick2.down  = true; e.preventDefault(); break;
-            case 's': case 'S': inputState.joystick2.left  = true; e.preventDefault(); break;
-            case 'f': case 'F': inputState.joystick2.right = true; e.preventDefault(); break;
-            case ' ': inputState.button2 = true; e.preventDefault(); break;
-        }
-    });
-
-    window.addEventListener('keyup', (e) => {
-        if (!vm || !vm.running) return;
-        switch (e.key) {
-            case 'ArrowUp':    inputState.joystick1.up    = false; break;
-            case 'ArrowDown':  inputState.joystick1.down  = false; break;
-            case 'ArrowLeft':  inputState.joystick1.left  = false; break;
-            case 'ArrowRight': inputState.joystick1.right = false; break;
-            case 'Meta':
-                if (e.location === 2) {
-                    inputState.button1 = false;
-                    // macOS often swallows arrow keyup while Meta is held,
-                    // so clear the whole j1 direction set defensively.
-                    inputState.joystick1.up = false;
-                    inputState.joystick1.down = false;
-                    inputState.joystick1.left = false;
-                    inputState.joystick1.right = false;
-                }
-                break;
-            case 'e': case 'E': inputState.joystick2.up    = false; break;
-            case 'd': case 'D': inputState.joystick2.down  = false; break;
-            case 's': case 'S': inputState.joystick2.left  = false; break;
-            case 'f': case 'F': inputState.joystick2.right = false; break;
-            case ' ': inputState.button2 = false; break;
-        }
-    });
-}
 </script>
 </body>
 </html>

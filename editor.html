@@ -445,6 +445,9 @@ body.kbd-active .program-line .instruction:hover {
    doubles as the C64-style bottom border and holds the runtime controls. */
 :root {
     --game-bar-height: 44px;
+    /* Cosmetic top border, half the bottom bar's height. Frames the
+       playfield symmetrically without stealing room for controls. */
+    --game-top-height: 22px;
 }
 
 #gameOverlay {
@@ -473,6 +476,13 @@ body.kbd-active .program-line .instruction:hover {
     position: relative;
 }
 
+/* Thin top border strip — cosmetic only. Mirrors play.html. */
+#gameOverlay #topBar {
+    height: var(--game-top-height);
+    flex-shrink: 0;
+    background: var(--c64-black);
+}
+
 #bottomBar {
     height: var(--game-bar-height);
     flex-shrink: 0;
@@ -490,11 +500,11 @@ body.kbd-active .program-line .instruction:hover {
 }
 
 /* Fluid canvas: width capped by the smaller of 90vw and the width
-   derived from the available vertical space (viewport minus bar). See
-   play.html for the full rationale. */
+   derived from the available vertical space (viewport minus top and
+   bottom bars). See play.html for the full rationale. */
 #gameCanvas {
     display: block;
-    width: min(90vw, calc((100vh - var(--game-bar-height)) * 6 / 5));
+    width: min(90vw, calc((100vh - var(--game-bar-height) - var(--game-top-height)) * 6 / 5));
     aspect-ratio: 6 / 5;
     height: auto;
     image-rendering: pixelated;
@@ -659,6 +669,172 @@ body.kbd-active .program-line .instruction:hover {
     color: rgba(255, 255, 255, 0.6);
     font-family: monospace;
 }
+
+#settingsPopup .settings-section-label {
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin: 4px 0 4px 0;
+}
+#settingsPopup .settings-section-label:first-child { margin-top: 0; }
+
+#settingsPopup select {
+    font-family: inherit;
+    font-size: 12px;
+    padding: 2px 4px;
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+/* Export Game dialog. Full-viewport modal (needs to escape #screen's
+   720×520 clip, same reason #gameOverlay does), centered content, closes
+   on backdrop click or Escape. Two-section layout: Download the standalone
+   HTML on top, embed snippet for the hosted file on the bottom. */
+#exportDialog {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.7);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+}
+#exportDialog.active { display: flex; }
+
+#exportDialog .export-dialog-content {
+    background: var(--c64-gray1);
+    border: 3px solid var(--c64-black);
+    border-bottom: 6px solid var(--c64-black);
+    border-right: 6px solid var(--c64-black);
+    padding: 20px;
+    width: 560px;
+    max-width: 90vw;
+    max-height: 90vh;
+    overflow-y: auto;
+    color: var(--c64-black);
+    font-family: inherit;
+    /* Override the global body { user-select: none } — this is a form
+       with fields users need to read, select, and paste from. */
+    -webkit-user-select: text;
+    user-select: text;
+}
+
+#exportDialog h3 {
+    margin: 0 0 8px 0;
+    color: var(--c64-black);
+    font-size: 16px;
+}
+
+#exportDialog .export-hint {
+    margin: 0 0 12px 0;
+    font-size: 12px;
+    color: var(--c64-black);
+    opacity: 0.75;
+}
+#exportDialog .export-hint code {
+    background: var(--c64-gray3);
+    padding: 1px 4px;
+    border-radius: 2px;
+}
+
+/* Section header — visually distinct from row labels so the two-section
+   flow is obvious. */
+#exportDialog .export-section-label {
+    font-size: 12px;
+    font-weight: bold;
+    color: var(--c64-black);
+    margin: 8px 0 6px 0;
+    letter-spacing: 0.5px;
+}
+
+#exportDialog hr {
+    border: none;
+    border-top: 1px solid var(--c64-black);
+    opacity: 0.25;
+    margin: 15px 0 5px 0;
+}
+
+#exportDialog .export-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+#exportDialog .export-row > label:first-child {
+    min-width: 100px;
+    text-align: right;
+    font-size: 13px;
+}
+
+#exportDialog .export-row input[type="text"] {
+    flex: 1;
+    font-family: inherit;
+    font-size: 13px;
+    padding: 4px 6px;
+    border: 1px solid var(--c64-black);
+    background: white;
+}
+
+#exportDialog .export-row input[type="number"] {
+    width: 80px;
+    font-family: inherit;
+    font-size: 13px;
+    padding: 4px 6px;
+    border: 1px solid var(--c64-black);
+    background: white;
+}
+
+#exportDialog .export-row button {
+    font-family: inherit;
+    padding: 5px 14px;
+    cursor: pointer;
+}
+
+/* Secondary hint text alongside a field (e.g., "play.html only"). */
+#exportDialog .export-row-hint {
+    font-size: 11px;
+    color: var(--c64-black);
+    opacity: 0.6;
+}
+
+/* Checkbox row: the label owns the checkbox, no right-aligned column. */
+#exportDialog .export-checkbox-row > label:first-child {
+    min-width: auto;
+    text-align: left;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+}
+
+#exportDialog textarea {
+    width: 100%;
+    box-sizing: border-box;
+    font-family: monospace;
+    font-size: 12px;
+    padding: 8px;
+    margin-top: 8px;
+    border: 1px solid var(--c64-black);
+    background: white;
+    color: var(--c64-black);
+    resize: vertical;
+}
+
+#exportDialog .export-buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 15px;
+}
+#exportDialog .export-buttons button {
+    font-family: inherit;
+    padding: 5px 14px;
+    cursor: pointer;
+}
 </style>
 </head>
 <body>
@@ -697,6 +873,8 @@ body.kbd-active .program-line .instruction:hover {
     <div id="assetPicker"></div>
 
     <div id="gameOverlay">
+        <!-- Thin cosmetic top border strip; no interactive content. -->
+        <div id="topBar"></div>
         <div id="playArea">
             <div id="gameBorder">
                 <canvas id="gameCanvas" width="320" height="200"></canvas>
@@ -742,6 +920,16 @@ body.kbd-active .program-line .instruction:hover {
                 <!-- Audio indicator mounts here (rightmost). -->
             </div>
             <div id="settingsPopup">
+                <div class="settings-section-label">Controls</div>
+                <div class="row">
+                    <label>Joystick 1</label>
+                    <select id="joy1Sel"></select>
+                </div>
+                <div class="row">
+                    <label>Joystick 2</label>
+                    <select id="joy2Sel"></select>
+                </div>
+                <div class="settings-section-label">Debug</div>
                 <div class="row">
                     <button id="stepBtn" onclick="stepFrame()" disabled>step</button>
                 </div>
@@ -760,6 +948,52 @@ body.kbd-active .program-line .instruction:hover {
                 <div class="row stats">
                     j1 <span id="j1Display">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span> · j2 <span id="j2Display">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Export Game dialog. Fires from the file popup's "Export Game"
+         custom button. Two sections: download the self-contained HTML
+         (top), and — once hosted — grab a matching iframe embed snippet
+         (bottom). If the user is on the bundled demo disk, the URL field
+         pre-fills with the gmc64.com/play.html link so demo embeds work
+         without going through export/host at all. -->
+    <div id="exportDialog">
+        <div class="export-dialog-content">
+            <h3>Export Game</h3>
+            <p class="export-hint">Download a self-contained HTML file.</p>
+
+            <div class="export-row">
+                <label>Filename</label>
+                <input type="text" id="exportFilename" placeholder="game.html">
+                <button id="exportDownloadBtn" onclick="triggerExportDownload()">Download HTML</button>
+            </div>
+
+            <hr>
+
+            <div class="export-section-label">Embed (optional)</div>
+            <p class="export-hint">To embed on a page, paste the URL where you're hosting the above file.</p>
+            <div class="export-row">
+                <label>Hosted URL</label>
+                <input type="text" id="exportUrl" oninput="updateExportSnippet()" placeholder="https://your-site.com/game.html">
+            </div>
+            <div class="export-row">
+                <label>Width</label>
+                <input type="number" id="exportWidth" oninput="updateExportSnippet()" value="640" min="100" step="10">
+                <span class="export-row-hint">× <span id="exportHeightReadout">533</span></span>
+            </div>
+            <div class="export-row">
+                <label>Poster</label>
+                <input type="number" id="exportPosterSeconds" oninput="updateExportSnippet()" value="2" min="0" max="10" step="0.5">
+                <span class="export-row-hint">seconds after startup</span>
+            </div>
+            <div class="export-row export-checkbox-row">
+                <label><input type="checkbox" id="exportNoCredit" onchange="updateExportSnippet()"> Hide gmc64.com link</label>
+            </div>
+            <textarea id="exportSnippet" readonly rows="6" spellcheck="false"></textarea>
+            <div class="export-buttons">
+                <button id="exportCopyBtn" onclick="copyExportSnippet()">Copy</button>
+                <button onclick="closeExportDialog()">Close</button>
             </div>
         </div>
     </div>
@@ -782,13 +1016,15 @@ body.kbd-active .program-line .instruction:hover {
 <script src="js/gmEditor.js"></script>
 <script src="js/gmAudioIndicator.js"></script>
 <script src="js/gmPoster.js"></script>
-<!-- Runtime source text, exposed as window._runtimeSource. Used by the
-     "Export Game" flow to inline the runtime into the standalone
-     HTML without depending on fetch() (which file:// blocks). Generated
-     by `node tools/bundle-runtime.js`; the test suite verifies it's
-     current. Inert at editor runtime — just string data sitting in
-     memory. -->
-<script src="js/runtime-source.js"></script>
+<script src="js/gmPlayerChrome.js"></script>
+<!-- play.html snapshot (with all its <script src> tags inlined), exposed
+     as window._standaloneSource. The "Export Game" flow patches two
+     const placeholders in this string with the current game's base64
+     PRG + D64 and downloads the result — the exported HTML is literally
+     play.html with two strings changed. Generated by
+     `node tools/bundle-standalone.js`; test suite verifies it's current.
+     Inert at editor runtime — just string data sitting in memory. -->
+<script src="js/standalone-source.js"></script>
 
 <!-- The demo disk (js/demo-disk-source.js, ~228KB base64) is lazy-loaded
      on demand via GMTools.getDemoDiskBytes() so visitors who never use
@@ -962,70 +1198,62 @@ document.addEventListener('visibilitychange', () => {
     if (document.hidden) clearInputState();
 });
 
-// Keyboard input handling for game - blocks ALL keys from reaching editor when game is running.
-// This prevents editor operations (like Enter inserting instructions) while playing.
+// Editor-side blocker: when the game is running, stop editor keyboard
+// shortcuts from firing (Enter inserting instructions, letters triggering
+// type-to-search, etc.). Joystick handling itself lives in the shared
+// GMPlayerChrome listener, attached at capture phase so it runs before
+// this blocker's stopImmediatePropagation kicks in.
 window.addEventListener('keydown', (e) => {
     if (!vm || !vm.running) return;
-
-    // Block all keyboard events from reaching editor handlers when game is active
     e.stopImmediatePropagation();
-
-    switch(e.key) {
-        // Joystick 1: Arrow keys + right Meta
-        case 'ArrowUp': inputState.joystick1.up = true; e.preventDefault(); break;
-        case 'ArrowDown': inputState.joystick1.down = true; e.preventDefault(); break;
-        case 'ArrowLeft': inputState.joystick1.left = true; e.preventDefault(); break;
-        case 'ArrowRight': inputState.joystick1.right = true; e.preventDefault(); break;
-        case 'Meta':
-            if (e.location === 2) { inputState.button1 = true; e.preventDefault(); }
-            break;
-        // Joystick 2: ESDF + Space
-        case 'e': case 'E': inputState.joystick2.up = true; e.preventDefault(); break;
-        case 'd': case 'D': inputState.joystick2.down = true; e.preventDefault(); break;
-        case 's': case 'S': inputState.joystick2.left = true; e.preventDefault(); break;
-        case 'f': case 'F': inputState.joystick2.right = true; e.preventDefault(); break;
-        case ' ': inputState.button2 = true; e.preventDefault(); break;
-        // ESC: close settings popup if open, otherwise stop the program.
-        case 'Escape': {
-            const popup = document.getElementById('settingsPopup');
-            if (popup && popup.classList.contains('active')) {
-                popup.classList.remove('active');
-            } else {
-                stopProgram();
-            }
-            e.preventDefault();
-            break;
+    // ESC: close settings popup if open, otherwise stop the program.
+    if (e.key === 'Escape') {
+        const popup = document.getElementById('settingsPopup');
+        if (popup && popup.classList.contains('active')) {
+            popup.classList.remove('active');
+        } else {
+            stopProgram();
         }
+        e.preventDefault();
     }
 });
-
 window.addEventListener('keyup', (e) => {
     if (!vm || !vm.running) return;
-
-    // Block keyup events from reaching editor handlers too
     e.stopImmediatePropagation();
+});
 
-    switch(e.key) {
-        case 'ArrowUp': inputState.joystick1.up = false; break;
-        case 'ArrowDown': inputState.joystick1.down = false; break;
-        case 'ArrowLeft': inputState.joystick1.left = false; break;
-        case 'ArrowRight': inputState.joystick1.right = false; break;
-        case 'Meta':
-            if (e.location === 2) {
-                inputState.button1 = false;
-                // Also clear joystick 1 directions - macOS often swallows arrow keyup
-                // events while Meta is held, causing stuck directions
-                inputState.joystick1.up = false;
-                inputState.joystick1.down = false;
-                inputState.joystick1.left = false;
-                inputState.joystick1.right = false;
-            }
-            break;
-        case 'e': case 'E': inputState.joystick2.up = false; break;
-        case 'd': case 'D': inputState.joystick2.down = false; break;
-        case 's': case 'S': inputState.joystick2.left = false; break;
-        case 'f': case 'F': inputState.joystick2.right = false; break;
-        case ' ': inputState.button2 = false; break;
+// Input preset settings — persisted in localStorage. Different key from
+// the player so choices don't cross between editor and player contexts.
+const INPUT_SETTINGS_KEY = 'gmc64-editor-input';
+let inputSettings = GMPlayerChrome.loadInputSettings(
+    INPUT_SETTINGS_KEY, GMPlayerChrome.DEFAULT_INPUT_SETTINGS);
+
+// Attached once at load; capture-phase so the blocker above can't
+// shadow it. Gated on vm.running so pre-game key presses don't leak.
+GMPlayerChrome.setupInputListeners({
+    inputState,
+    getPresets: () => inputSettings,
+    isEnabled: () => vm && vm.running
+});
+
+// Populate joy1/joy2 selectors after the DOM is ready. Selection
+// changes update inputSettings + persist.
+document.addEventListener('DOMContentLoaded', () => {
+    for (const which of ['joy1', 'joy2']) {
+        const sel = document.getElementById(which + 'Sel');
+        if (!sel) return;   // may run before overlay is present in tests
+        sel.innerHTML = '';
+        for (const [value, label] of GMPlayerChrome.PRESET_LABELS) {
+            const opt = document.createElement('option');
+            opt.value = value;
+            opt.textContent = label;
+            sel.appendChild(opt);
+        }
+        sel.value = inputSettings[which];
+        sel.addEventListener('change', () => {
+            inputSettings = { ...inputSettings, [which]: sel.value };
+            GMPlayerChrome.saveInputSettings(INPUT_SETTINGS_KEY, inputSettings);
+        });
     }
 });
 
@@ -3695,7 +3923,7 @@ function showFilePopup() {
             updateStatusInfo();
         },
         customButtons: [
-            { label: 'Export Game', onClick: () => exportStandaloneGame() }
+            { label: 'Export Game', onClick: () => showExportDialog() }
         ]
     });
 }
@@ -3732,23 +3960,24 @@ function saveToDisk(fullFileName) {
 }
 
 // ==================== STANDALONE GAME EXPORT ====================
-// Builds a single self-contained HTML file that plays the current program
-// in any browser, without the editor chrome. Embeds:
-//   - The serialized PRG bytes (the program currently being edited)
-//   - The current disk's D64 bytes (so the runtime's parser can resolve
-//     scenes by name at boot \u2014 same loadFileByName indirection the editor
-//     uses)
-//   - All runtime JS files inlined (c64lib through gmRuntime; everything
-//     editor-side like gmEditor / gmDisk is omitted)
-//   - A minimal boot script that wires up input + a tiny "Controls" UI
-async function exportStandaloneGame() {
+// Builds a single self-contained HTML file that plays the current
+// program anywhere. The exported HTML is *literally* play.html with two
+// consts (EMBEDDED_PRG, EMBEDDED_D64) patched to base64 strings. See
+// tools/bundle-standalone.js for how the snapshot is produced, and
+// play.html's `if (EMBEDDED_PRG && EMBEDDED_D64)` branch for the
+// embedded-vs-URL routing.
+//
+// `customFilename` overrides the default <programName>.html. Returns
+// true on success so callers can gate UI feedback on it. Errors surface
+// via gmDisk.showInfoMessage.
+async function exportStandaloneGame(customFilename) {
     if (!currentProgramData?.instructions?.length) {
         gmDisk.showInfoMessage('No program to export');
-        return;
+        return false;
     }
     if (!gmDisk.disk) {
         gmDisk.showInfoMessage('No disk loaded');
-        return;
+        return false;
     }
 
     let prgBytes, d64Bytes;
@@ -3758,44 +3987,159 @@ async function exportStandaloneGame() {
     } catch (e) {
         console.error('export: serialize failed', e);
         gmDisk.showInfoMessage('Export error: ' + e.message);
-        return;
+        return false;
     }
 
     const prgName = (document.getElementById('programName').textContent || 'game').trim() || 'game';
 
-    // Runtime JS comes from window._runtimeSource, populated by
-    // js/runtime-source.js (generated by tools/bundle-runtime.js). Using
-    // this static bundle instead of fetching at click-time means the
-    // export works on file:// too — fetch is blocked there in every
-    // modern browser, but <script src> loads fine.
-    const sourceMap = window._runtimeSource;
-    if (!sourceMap) {
-        gmDisk.showInfoMessage('Export needs the runtime bundle (run `node tools/bundle-runtime.js` and reload)', { duration: 8000 });
-        return;
+    // Snapshot comes from js/standalone-source.js (generated by
+    // tools/bundle-standalone.js). Bundling as a <script>-loadable JS
+    // file means Export works on file:// too - fetch is blocked there
+    // in every modern browser.
+    const snapshot = window._standaloneSource;
+    if (!snapshot) {
+        gmDisk.showInfoMessage(
+            'Export needs the standalone bundle (run `node tools/bundle-standalone.js` and reload)',
+            { duration: 8000 });
+        return false;
     }
-    const inlinedJs = Object.entries(sourceMap)
-        .map(([path, src]) => `// === ${path} ===\n${src}`)
-        .join('\n\n');
 
-    const html = _buildStandaloneHtml({
-        title: prgName,
-        prgB64: _bytesToBase64(prgBytes),
-        d64B64: _bytesToBase64(d64Bytes),
-        runtimeJs: inlinedJs
-    });
+    // Patch the two placeholder consts in play.html's inline script
+    // with base64-encoded game bytes. The literal strings on the left
+    // are what play.html declares - keep them in sync.
+    const html = snapshot
+        .replace('const EMBEDDED_PRG = null;',
+                 `const EMBEDDED_PRG = ${JSON.stringify(_bytesToBase64(prgBytes))};`)
+        .replace('const EMBEDDED_D64 = null;',
+                 `const EMBEDDED_D64 = ${JSON.stringify(_bytesToBase64(d64Bytes))};`);
 
-    // Trigger download via blob URL
+    // Trigger download via blob URL.
     const blob = new Blob([html], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${prgName}.html`;
+    a.download = customFilename || `${prgName}.html`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
+    return true;
+}
+
+// === EXPORT GAME DIALOG ===
+// Unified download + embed flow. The top section downloads a self-
+// contained HTML file the user hosts wherever they like. The embed
+// section below generates an iframe snippet pointing at that hosted
+// URL (or at gmc64.com/play.html for direct-from-disk embeds). No
+// infrastructure on gmc64.com's side — the user's hosting is the
+// source of truth.
+function showExportDialog() {
+    // programName UI shows just the 6-char base (lowercase). The actual
+    // disk filename is `<NAME>/PRG`; the export filename is `<name>.html`.
+    const rawName = (document.getElementById('programName').textContent || '').trim();
+    const baseName = rawName || 'game';
+
+    document.getElementById('exportFilename').value = `${baseName.toLowerCase()}.html`;
+    // Hosted URL always blank — anything pre-filled implies a specific
+    // intent (self-host vs play.html) that muddies the flow.
+    document.getElementById('exportUrl').value = '';
+
+    document.getElementById('exportWidth').value = 640;
+    document.getElementById('exportPosterSeconds').value = 2;
+    document.getElementById('exportNoCredit').checked = false;
+    document.getElementById('exportCopyBtn').textContent = 'Copy';
+
+    updateExportSnippet();
+    document.getElementById('exportDialog').classList.add('active');
     gmDisk.closePopup();
+}
+
+function closeExportDialog() {
+    document.getElementById('exportDialog').classList.remove('active');
+}
+
+async function triggerExportDownload() {
+    const filename = document.getElementById('exportFilename').value.trim() || 'game.html';
+    await exportStandaloneGame(filename);
+}
+
+// Backdrop click and Escape close the dialog. Both wired once — guards
+// check `.active` so they no-op when the dialog isn't showing.
+document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('exportDialog').addEventListener('click', (e) => {
+        if (e.target.id === 'exportDialog') closeExportDialog();
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        const dialog = document.getElementById('exportDialog');
+        if (dialog.classList.contains('active')) {
+            closeExportDialog();
+            e.stopPropagation();
+        }
+    }, true);   // capture so we run before the game's escape → stopProgram
+});
+
+// Rebuild the iframe snippet from current field values. Called on
+// every input event so the textarea tracks live edits. poster_seconds
+// and nocredit are merged into the URL as query params — they only
+// affect play.html embeds (they're ignored by self-hosted exports),
+// but including them here keeps the demo/play.html flow one-click.
+function updateExportSnippet() {
+    const raw = document.getElementById('exportUrl').value.trim();
+    const width = parseInt(document.getElementById('exportWidth').value, 10) || 640;
+    // Height auto-derived to preserve the CRT-authentic 6:5 display aspect
+    // (same as the fluid canvas in play.html / editor.html game overlay).
+    const height = Math.round(width * 5 / 6);
+    document.getElementById('exportHeightReadout').textContent = height;
+    const posterSecs = document.getElementById('exportPosterSeconds').value;
+    const nocredit = document.getElementById('exportNoCredit').checked;
+
+    let finalUrl;
+    try {
+        // Merge params via URL API so we don't blindly duplicate
+        // existing ?disk= / ?file= if the user pasted a play.html URL.
+        const url = new URL(raw || 'https://YOUR_URL/');
+        if (posterSecs !== '' && parseFloat(posterSecs) !== 2) {
+            url.searchParams.set('poster_seconds', posterSecs);
+        } else {
+            url.searchParams.delete('poster_seconds');
+        }
+        if (nocredit) {
+            url.searchParams.set('nocredit', '1');
+        } else {
+            url.searchParams.delete('nocredit');
+        }
+        finalUrl = url.toString();
+    } catch (e) {
+        // URL didn't parse (partial input). Show as-is so live typing
+        // doesn't blow up the snippet mid-keystroke.
+        finalUrl = raw || 'https://YOUR_URL';
+    }
+
+    const snippet =
+`<iframe src="${finalUrl}"
+        width="${width}" height="${height}"
+        allow="autoplay" loading="lazy"
+        frameborder="0"></iframe>`;
+
+    document.getElementById('exportSnippet').value = snippet;
+}
+
+async function copyExportSnippet() {
+    const text = document.getElementById('exportSnippet').value;
+    const btn = document.getElementById('exportCopyBtn');
+    try {
+        await navigator.clipboard.writeText(text);
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = 'Copy'; }, 1200);
+    } catch (e) {
+        // Older browsers / insecure contexts fall back to select-all
+        // (user completes with Cmd/Ctrl+C themselves).
+        document.getElementById('exportSnippet').select();
+        btn.textContent = 'Press Cmd+C';
+        setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+    }
 }
 
 function _bytesToBase64(bytes) {
@@ -3806,280 +4150,6 @@ function _bytesToBase64(bytes) {
         binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
     }
     return btoa(binary);
-}
-
-function _buildStandaloneHtml({ title, prgB64, d64B64, runtimeJs }) {
-    // Boot script: decode embedded bytes, parse program, create VM, run
-    // the same kind of frame loop the editor uses. Keyboard maps + reset
-    // live in the Controls popup. Settings persist in the player's
-    // localStorage so they only have to configure once per game.
-    const bootJs = `
-(function () {
-    const SETTINGS_KEY = 'gmc64-standalone-controls';
-    const DEFAULTS = { joy1: 'cursors', joy2: 'wasd' };
-
-    function loadSettings() {
-        try {
-            return { ...DEFAULTS, ...(JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}) };
-        } catch (e) { return { ...DEFAULTS }; }
-    }
-    function saveSettings(s) {
-        localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
-    }
-
-    // Each preset maps DOM key (event.key) \u2192 joystick action.
-    // The right cmd / right ctrl variations cover Mac vs PC keyboards
-    // without needing a separate preset.
-    const PRESETS = {
-        cursors: {
-            'ArrowUp': 'up', 'ArrowDown': 'down',
-            'ArrowLeft': 'left', 'ArrowRight': 'right',
-            'Meta': 'fire', 'Control': 'fire', 'Enter': 'fire'
-        },
-        wasd: {
-            w: 'up', W: 'up', s: 'down', S: 'down',
-            a: 'left', A: 'left', d: 'right', D: 'right',
-            ' ': 'fire'
-        },
-        none: {}
-    };
-
-    let settings = loadSettings();
-
-    // Runtime expects this global (see gmRuntime.js doc block).
-    window.inputState = {
-        joystick1: { up: false, down: false, left: false, right: false, fire: false },
-        joystick2: { up: false, down: false, left: false, right: false, fire: false }
-    };
-    // Helper the parser expects (matches editor.html).
-    window.decode16bit = (a, b) => a + (b << 8);
-
-    // Audio context \u2014 created eagerly, gets resumed on first user gesture
-    // (browsers require a gesture before sound plays).
-    try {
-        const Ctx = window.AudioContext || window.webkitAudioContext;
-        if (Ctx) {
-            window.audioContext = new Ctx();
-            window.masterGain = audioContext.createGain();
-            window.masterGain.connect(audioContext.destination);
-            const resume = () => {
-                if (audioContext.state === 'suspended') audioContext.resume();
-            };
-            document.addEventListener('keydown', resume, { once: true });
-            document.addEventListener('click', resume, { once: true });
-        }
-    } catch (e) {
-        console.warn('audio init failed', e);
-    }
-
-    // Decode embedded data
-    function b64ToBytes(b64) {
-        const bin = atob(b64);
-        const out = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-        return out;
-    }
-    const prgBytes = b64ToBytes(EMBEDDED_PRG);
-    const d64Bytes = b64ToBytes(EMBEDDED_D64);
-
-    // gmParser uses this global to resolve referenced scenes etc. from
-    // the disk. We give it a tiny shim over the embedded D64.
-    const disk = new D64(d64Bytes);
-    window.loadFileByName = (name) => {
-        try { return disk.readFile(name); } catch (e) { return null; }
-    };
-
-    window.charset = new gmCharset();
-
-    const programData = parseProgramData(prgBytes);
-    const ast = buildAST(programData);
-
-    const screen = new c64Screen('gameCanvas');
-    // Defaults intentionally match the editor's Run mode (pauses honored,
-    // no hitbox overlay, audio on). vm.start owns the loop and renders
-    // at ~60fps × 50 ops/frame — same as the editor's sidebar default.
-    const vm = new gmVM(screen);
-    window.vm = vm;
-    vm.loadProgram(ast, prgBytes);
-    vm.start({ opsPerFrame: 50, frameMs: 16 });
-
-    // === Input handlers ===
-    function setKey(e, value) {
-        let consumed = false;
-        const j1 = PRESETS[settings.joy1] || {};
-        const j2 = PRESETS[settings.joy2] || {};
-        if (j1[e.key] !== undefined) {
-            inputState.joystick1[j1[e.key]] = value;
-            consumed = true;
-        }
-        if (j2[e.key] !== undefined) {
-            inputState.joystick2[j2[e.key]] = value;
-            consumed = true;
-        }
-        if (consumed) e.preventDefault();
-    }
-    document.addEventListener('keydown', e => setKey(e, true));
-    document.addEventListener('keyup', e => setKey(e, false));
-
-    // === Pause toggle ===
-    const pauseLink = document.getElementById('pauseLink');
-    pauseLink.addEventListener('click', e => {
-        e.preventDefault();
-        if (vm.paused) {
-            vm.resume();
-            pauseLink.textContent = 'Pause';
-        } else {
-            vm.pause();
-            pauseLink.textContent = 'Resume';
-        }
-    });
-
-    // === Controls popup ===
-    const popup = document.getElementById('controlsPopup');
-    const j1Sel = document.getElementById('joy1Sel');
-    const j2Sel = document.getElementById('joy2Sel');
-    j1Sel.value = settings.joy1;
-    j2Sel.value = settings.joy2;
-    j1Sel.addEventListener('change', () => { settings.joy1 = j1Sel.value; saveSettings(settings); });
-    j2Sel.addEventListener('change', () => { settings.joy2 = j2Sel.value; saveSettings(settings); });
-    document.getElementById('ctrlOpen').addEventListener('click', e => {
-        e.preventDefault();
-        popup.classList.add('open');
-    });
-    document.getElementById('closeBtn').addEventListener('click', () => popup.classList.remove('open'));
-    document.getElementById('resetBtn').addEventListener('click', () => location.reload());
-    popup.addEventListener('click', e => {
-        if (e.target === popup) popup.classList.remove('open');
-    });
-})();
-`;
-
-    return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>${_escapeHtml(title)}</title>
-<style>
-    html, body {
-        margin: 0; padding: 0; height: 100%;
-        background: #000; color: #ccc;
-        font-family: ui-monospace, monospace; font-size: 13px;
-    }
-    body {
-        display: flex; flex-direction: column;
-        align-items: center; justify-content: center;
-        min-height: 100vh;
-        -webkit-user-select: none; user-select: none;
-    }
-    /* 6:5 display aspect mirrors the editor's 480x400 canvas (the C64
-       had tall pixels — square-pixel 320x200 is 16:10 and looks wrong).
-       Sizes to whichever of width/height is the binding constraint so
-       the canvas always fits the window with a generous black margin.
-       85vh / 90vw leaves room for the strip below without overflowing. */
-    #gameCanvas {
-        image-rendering: pixelated; image-rendering: crisp-edges;
-        aspect-ratio: 6 / 5;
-        height: min(85vh, calc(90vw * 5 / 6));
-        max-width: 90vw;
-        background: #000;
-    }
-    /* Stub the runtime checks for #gameOverlay (editor uses it for the
-       pause overlay; we don't, but the runtime reads its .active class). */
-    #gameOverlay { display: none; }
-    .strip {
-        margin-top: 12px; font-size: 12px;
-        display: flex; gap: 16px;
-    }
-    .strip a {
-        color: #fff; text-decoration: none;
-        padding: 2px 6px;
-        border-bottom: 1px dotted #888;
-        cursor: pointer;
-    }
-    .strip a:hover { border-bottom-color: #fff; }
-    #controlsPopup {
-        position: fixed; inset: 0;
-        background: rgba(0,0,0,0.75);
-        display: none; align-items: center; justify-content: center;
-    }
-    #controlsPopup.open { display: flex; }
-    #controlsPopup .inner {
-        background: #c0c0c0; color: #000;
-        padding: 16px 20px; min-width: 320px;
-        border: 3px solid #000;
-    }
-    #controlsPopup h2 {
-        margin: 0 0 12px; font-size: 14px;
-    }
-    #controlsPopup label {
-        display: flex; justify-content: space-between; align-items: center;
-        margin: 8px 0; gap: 12px;
-    }
-    #controlsPopup select {
-        font: inherit; padding: 2px 4px;
-    }
-    #controlsPopup .actions {
-        display: flex; justify-content: flex-end; gap: 8px;
-        margin-top: 16px;
-    }
-    #controlsPopup button {
-        font: inherit; padding: 4px 12px;
-        cursor: pointer;
-    }
-</style>
-</head>
-<body>
-<canvas id="gameCanvas" width="320" height="200"></canvas>
-<div class="strip">
-    <a id="pauseLink">Pause</a>
-    <a id="ctrlOpen">Controls</a>
-</div>
-<div id="gameOverlay"></div>
-<div id="controlsPopup">
-    <div class="inner">
-        <h2>Controls</h2>
-        <label>Joystick 1
-            <select id="joy1Sel">
-                <option value="cursors">Cursors + Right-Cmd</option>
-                <option value="wasd">W/A/S/D + Space</option>
-                <option value="none">None</option>
-            </select>
-        </label>
-        <label>Joystick 2
-            <select id="joy2Sel">
-                <option value="cursors">Cursors + Right-Cmd</option>
-                <option value="wasd">W/A/S/D + Space</option>
-                <option value="none">None</option>
-            </select>
-        </label>
-        <div class="actions">
-            <button id="resetBtn">Reset Game</button>
-            <button id="closeBtn">Close</button>
-        </div>
-    </div>
-</div>
-
-<script>
-const EMBEDDED_PRG = ${JSON.stringify(prgB64)};
-const EMBEDDED_D64 = ${JSON.stringify(d64B64)};
-<\/script>
-
-<script>
-${runtimeJs}
-<\/script>
-
-<script>
-${bootJs}
-<\/script>
-</body>
-</html>
-`;
-}
-
-function _escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, c => ({
-        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
-    }[c]));
 }
 
 function loadProgramData(fileName, fileData) {
@@ -4650,23 +4720,10 @@ function togglePause() {
     }
 }
 
-// Pause / resume icons for the bottom-bar button. Same SVG pair as
-// play.html — two rounded bars for pause, a rounded triangle for resume.
-const PAUSE_ICON_SVG =
-    '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
-    '<rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor"/>' +
-    '<rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor"/>' +
-    '</svg>';
-const RESUME_ICON_SVG =
-    '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
-    '<path d="M7 5 L19 12 L7 19 Z" fill="currentColor" stroke="currentColor" ' +
-    'stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>' +
-    '</svg>';
-
+// Thin wrapper — chrome's shared helper takes the button element directly,
+// so callers don't have to look it up themselves.
 function setPauseButtonIcon(paused) {
-    const btn = document.getElementById('pauseBtn');
-    btn.innerHTML = paused ? RESUME_ICON_SVG : PAUSE_ICON_SVG;
-    btn.setAttribute('aria-label', paused ? 'Resume' : 'Pause');
+    GMPlayerChrome.setPauseIcon(document.getElementById('pauseBtn'), paused);
 }
 
 // Hamburger opens the dev-settings popup; click-outside or Escape closes

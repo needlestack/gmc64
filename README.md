@@ -60,6 +60,69 @@ Then either:
 
 When your game is ready, hit **Export Game** to get a single HTML file that boots straight into your creation, embeddable anywhere.
 
+## Sharing your game
+
+Every editor takes URL parameters, so you can hand someone a direct link to a specific program or drop the player into a page you're building.
+
+### Player (`play.html`) — chrome-free, iframe-friendly
+
+| Param | Purpose |
+|-------|---------|
+| `disk` | `.d64` URL, or the magic value `demo` for the bundled demo disk |
+| `file` | Program name on the disk (case-insensitive) |
+| `nocredit=1` | Hide the `gmc64.com` corner link |
+| `poster_seconds` | How many seconds to simulate the game for the preview frame behind the play button. Default `2`, max `10`, `0` skips the poster entirely. Decimals allowed. |
+
+Example — direct link:
+
+```
+https://gmc64.com/play.html?disk=demo&file=ALIENS/PRG&nocredit=1
+```
+
+### Editor (`editor.html`) — loads into the editor, optionally plays
+
+| Param | Purpose |
+|-------|---------|
+| `disk` | Same as above |
+| `file` | Same as above |
+| `play=1` | Show a play-button overlay with a poster preview when the page opens. Visitor clicks play to run, clicks the stop button to drop into the editor. Without this flag the file just opens for editing. |
+| `poster_seconds` | Same as above; only meaningful with `play=1` |
+| `play_demo=1` | Alias — expands to `disk=demo&file=GMC64I/PRG&play=1&poster_seconds=8.5` |
+
+Example — send someone a runnable link that still lets them peek behind the curtain:
+
+```
+https://gmc64.com/editor.html?disk=https://your-host.com/game.d64&file=GAME/PRG&play=1
+```
+
+The other editors (`sprite-maker.html`, `scene-maker.html`, `sound-maker.html`, `music-maker.html`) accept `disk` and `file` too — deep-linking straight to a specific asset for editing.
+
+### Iframe embed
+
+Two ways to get an embeddable game, depending on what you're willing to host.
+
+**Option A — self-contained HTML.** Use the editor's **Export Game** button. It downloads a single HTML file containing your program, the disk image, and the runtime. Host it anywhere (GitHub Pages, Netlify, S3, your own server), then embed it. The Export dialog also generates the iframe snippet for you — just paste the URL where you'll host the file:
+
+```html
+<iframe src="https://your-site.com/mygame.html"
+        width="640" height="500"
+        allow="autoplay" loading="lazy"
+        frameborder="0"></iframe>
+```
+
+**Option B — `play.html` + a hosted `.d64`.** Skip export. If your disk image is already at a public URL, point `play.html` at it directly:
+
+```html
+<iframe src="https://gmc64.com/play.html?disk=https://your-host.com/game.d64&file=GAME/PRG"
+        width="640" height="500"
+        allow="autoplay" loading="lazy"
+        frameborder="0"></iframe>
+```
+
+For the bundled demo disk on gmc64.com, this option needs no hosting at all — the Export dialog pre-fills the URL when you're on the demo disk. Both attributes (`allow="autoplay"`, `loading="lazy"`) matter: the first lets browsers unlock audio from the click-to-play gesture, the second stops multiple embeds on one page from all booting at once.
+
+**Cross-origin disks:** for option B, if your `.d64` lives on a different domain than the page hosting `play.html`, that origin needs to allow cross-origin fetches (CORS). Option A avoids this entirely — the disk is inside the HTML.
+
 ## What's included
 
 | File | What it edits |
@@ -76,13 +139,13 @@ All five editors read and write to the same in-browser `.d64` image, so your spr
 
 **To play and edit: none.** It's static HTML and JavaScript. No build step, no server, no npm. Open the files in a browser and use them. They also run from `file://` (just double-click).
 
-**To rebuild the runtime bundle:** Node.js. Pure built-ins, no `npm install` needed. After editing any file in `js/`, run:
+**To rebuild the standalone bundle:** Node.js. Pure built-ins, no `npm install` needed. After editing `play.html` or any file it loads from `js/`, run:
 
 ```
-node tools/bundle-runtime.js
+node tools/bundle-standalone.js
 ```
 
-This regenerates `js/runtime-source.js`, which is what the "Download Game" export inlines into the standalone HTML.
+This regenerates `js/standalone-source.js` — a snapshot of `play.html` with every `<script src>` inlined, used by the editor's "Export Game" flow to produce a self-contained playable HTML file.
 
 **To run the test suite:** the test tooling lives in `dev/` (kept out of the project root so static hosts don't mistake this for a Node project). One-time setup:
 
