@@ -539,12 +539,12 @@ const gmOpcodes = {
 
     0x40: {
         name: 'sound channel 1 = [    ]',
-        template: 'sound channel {channel:1+1} = {sound:2}',
+        template: 'sound channel {channel:1} = {sound:2}',
         args: ['channel', 'sound']
     },
     0x41: {
         name: 'sound channel 1 off',
-        template: 'sound channel {channel:2+1} off',
+        template: 'sound channel {channel:2} off',
         args: ['unused', 'channel']
     },
     0x60: {
