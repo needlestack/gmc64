@@ -606,6 +606,36 @@ body.kbd-active .program-line .instruction:hover {
 #gameControls button:disabled { opacity: 0.4; cursor: default; }
 #gameControls button svg { width: 100%; height: 100%; display: block; }
 
+/* Play-mode affordance: when the page opens via ?play=1 / ?play_demo=1,
+   expand the stop button to include a "stop & edit" text label so
+   first-time visitors watching a demo see the way in to the code. Body
+   class is set by showPlayButtonOverlay and removed by stopProgram —
+   so the label appears only on the initial play-into-demo run. Any
+   subsequent manual run from within the editor keeps the compact
+   icon-only stop button. */
+body.play-mode #gameControls #stopBtn {
+    width: auto;
+    padding: 4px 10px 4px 6px;
+    gap: 6px;
+    background: rgba(64, 49, 141, 0.85);          /* c64-blue tint */
+    border-color: rgba(120, 105, 196, 0.9);       /* c64-light-blue outline */
+}
+body.play-mode #gameControls #stopBtn:hover {
+    background: rgba(64, 49, 141, 1);
+}
+body.play-mode #gameControls #stopBtn svg {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+}
+body.play-mode #gameControls #stopBtn::after {
+    content: 'stop & edit';
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+}
+
 /* Audio indicator sits at the end of the flex row — override the shared
    CSS's absolute positioning so it flexes with the other icons. */
 #gameControls .gm-audio-indicator {
@@ -1430,6 +1460,13 @@ async function showPlayButtonOverlay(params) {
     // still the user's escape hatch back to the editor.
     document.getElementById('gameOverlay').classList.add('active');
     document.getElementById('gameBorder').style.background = 'rgb(0, 0, 0)';
+    // Flip the stop button to its "stop & edit" labeled variant so a
+    // first-time visitor watching the demo sees the way into the code.
+    // stopProgram removes the class when they drop into the editor, so
+    // any subsequent manual run keeps the compact icon-only button.
+    document.body.classList.add('play-mode');
+    // Match aria for screen-reader parity with the visible text.
+    document.getElementById('stopBtn').setAttribute('aria-label', 'Stop and edit (esc)');
 
     const overlay = document.getElementById('playOverlay');
     overlay.classList.add('active');
@@ -4771,6 +4808,14 @@ function stopProgram() {
     document.getElementById('settingsPopup').classList.remove('active');
     setPauseButtonIcon(false);
     document.getElementById('stepBtn').disabled = true;
+    // Drop the play-mode label the moment the visitor lands in the editor.
+    // The label was a one-time affordance to reveal the way in from the
+    // demo; subsequent manual runs from the editor keep the compact
+    // icon-only stop button. Aria reverts to match.
+    if (document.body.classList.contains('play-mode')) {
+        document.body.classList.remove('play-mode');
+        document.getElementById('stopBtn').setAttribute('aria-label', 'Stop (esc)');
+    }
     showMessage('Stopped');
 }
 

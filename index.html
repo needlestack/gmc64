@@ -116,7 +116,7 @@
       grid-template-columns: minmax(0, 1.05fr) minmax(320px, .95fr);
       gap: 54px;
       align-items: center;
-      padding: 80px 0 64px;
+      padding: 40px 0 64px;
     }
 
     h1 {
@@ -194,10 +194,33 @@
       box-shadow: 0 10px 28px rgba(33, 25, 78, .05);
     }
 
-    .tile:nth-child(1) { border-top: 5px solid var(--c64-light-blue); }
-    .tile:nth-child(2) { border-top: 5px solid var(--c64-cyan); }
-    .tile:nth-child(3) { border-top: 5px solid var(--c64-purple); }
-    .tile:nth-child(4) { border-top: 5px solid var(--c64-green); }
+    /* Accent stripe on the four top-strip tiles + the two big feature
+       tiles (ALIENS demo in Play, Program editor in Make). The sub-strip
+       tiles under Make stay clean — same identity classes there are
+       intentionally quiet. */
+    .strip:not(.strip--sub) .tile--sprite { border-top: 5px solid var(--c64-light-blue); }
+    .strip:not(.strip--sub) .tile--scene  { border-top: 5px solid var(--c64-cyan); }
+    .strip:not(.strip--sub) .tile--sound  { border-top: 5px solid var(--c64-purple); }
+    .strip:not(.strip--sub) .tile--music  { border-top: 5px solid var(--c64-green); }
+    .tile--big.tile--play   { border-top: 5px solid var(--c64-purple); }
+    .tile--big.tile--editor { border-top: 5px solid var(--c64-cyan); }
+    .tile--big.tile--files  { border-top: 5px solid var(--c64-green); }
+
+    /* Sub-strip variant: 4 columns, no bottom padding — used inside a
+       section-grid's right column where its natural rhythm is set by
+       section padding rather than the strip's own tail padding. */
+    .strip.strip--sub {
+      grid-template-columns: repeat(4, 1fr);
+      padding: 0;
+      margin-top: 28px;
+    }
+
+    /* Bigger featured tile used in the left column of the Play + Make
+       sections. Layout-only — the accent color comes from the maker-
+       identity class (.tile--editor, .tile--play, etc.), not from here. */
+    .tile.tile--big {
+      margin-top: 20px;
+    }
 
     .tile img {
       width: 100%;
@@ -280,6 +303,62 @@
       transform: translateY(-1px);
     }
 
+    /* Resources section — description-list style. Small-caps subheading
+       to separate categories, then a name/description pair per entry.
+       Scoped by #resources so h3 elsewhere (like .card h3) isn't
+       affected. */
+    #resources h3 {
+      margin: 32px 0 12px;
+      font-size: .85rem;
+      font-weight: 700;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    #resources h3:first-of-type { margin-top: 0; }
+
+    .resources-list { margin: 0; padding: 0; }
+    .resources-list dt { margin-top: 16px; font-weight: 700; }
+    .resources-list dt:first-child { margin-top: 0; }
+    .resources-list dd {
+      margin: 3px 0 0;
+      color: var(--muted);
+      font-size: .95rem;
+      max-width: 560px;
+    }
+
+    /* Attribute-selector auto-badge: any resource link pointing at
+       youtube.com picks up a tiny YouTube glyph before the text. No
+       HTML change needed to enable it on future links. SVG is inlined
+       as a data URI so there's no extra network request. */
+    .resources-list a[href*="youtube.com"]::before {
+      content: "";
+      display: inline-block;
+      width: 1.1em;
+      height: .78em;
+      margin-right: .35em;
+      vertical-align: -.05em;
+      background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 17'><rect width='24' height='17' rx='4' fill='%23c00'/><path d='M9.5 5v7l6-3.5z' fill='%23fff'/></svg>") no-repeat center / contain;
+    }
+
+    /* Book badge for manuals / documentation links. Applied via
+       explicit .link--book class rather than href-matching because
+       "is this a book?" is a semantic call, not a URL pattern.
+       Open-book silhouette: near-white pages with a gray outline.
+       Top edge arches upward, bottom arches downward, and both outer
+       corners rise higher / fall lower than the spine corners — the
+       pages spread outward like wings. viewBox 24×17 matches the
+       YouTube badge so the two render at the same visual size. */
+    .resources-list a.link--book::before {
+      content: "";
+      display: inline-block;
+      width: 1.1em;
+      height: .78em;
+      margin-right: .35em;
+      vertical-align: -.05em;
+      background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 17'><path d='M2 2.5 Q6.5 1 11 4.5 L11 16 Q6.5 10 2 14.5 Z' fill='%23f5f5f5' stroke='%235a5a5c' stroke-width='1.5' stroke-linejoin='round' stroke-linecap='round'/><path d='M22 2.5 Q17.5 1 13 4.5 L13 16 Q17.5 10 22 14.5 Z' fill='%23f5f5f5' stroke='%235a5a5c' stroke-width='1.5' stroke-linejoin='round' stroke-linecap='round'/></svg>") no-repeat center / contain;
+    }
+
     footer {
       padding: 40px 0 64px;
       color: var(--muted);
@@ -328,36 +407,41 @@
     <main id="top">
       <section class="hero" aria-labelledby="title">
         <div>
-          <h1 id="title">GameMaker, back in the browser.</h1>
-          <p class="dek">A faithful, static HTML recreation of Garry Kitchen’s 1985 Commodore 64 game-creation tool. Load old disks, make new games, edit sprites and scenes, then share the result as a link or a single HTML file.</p>
+          <h1 id="title">GameMaker, now in your browser.</h1>
+          <p class="dek">A faithful, modern recreation of Garry Kitchen’s GameMaker. Load old disks, make new games, edit sprites and scenes, share as a link or a single HTML file.</p>
           <div class="actions">
-            <a class="button primary" href="editor.html?play_demo=1">Try the demo</a>
+            <a class="button primary" href="editor.html?play_demo=1">Play the demo</a>
             <a class="button" href="editor.html">Open the editor</a>
             <a class="button" href="https://github.com/needlestack/gmc64">View source</a>
           </div>
         </div>
-        <!-- Replace these image paths with your actual screenshot files, or keep this structure and copy the images into /docs/screenshots/. -->
-        <a class="screen" href="editor.html?play_demo=1" aria-label="Try the GMC64 intro demo">
-          <img src="docs/screenshots/01-intro.png" alt="GMC64 intro demo screenshot" />
+        <a class="screen" href="editor.html?play_demo=1" aria-label="Try the gmc64 intro demo">
+          <img src="docs/screenshots/01-intro.png" alt="gmc64 intro demo screenshot" />
         </a>
       </section>
 
-      <div class="strip" aria-label="GMC64 tools">
-        <a class="tile" href="sprite-maker.html"><img src="docs/screenshots/02-sprite-maker.png" alt="Sprite maker screenshot" /><span>Sprite maker</span></a>
-        <a class="tile" href="scene-maker.html"><img src="docs/screenshots/03-scene-maker.png" alt="Scene maker screenshot" /><span>Scene maker</span></a>
-        <a class="tile" href="sound-maker.html"><img src="docs/screenshots/04-sound-maker.png" alt="Sound maker screenshot" /><span>Sound maker</span></a>
-        <a class="tile" href="music-maker.html"><img src="docs/screenshots/05-music-maker.png" alt="Music maker screenshot" /><span>Music maker</span></a>
+      <div class="strip" aria-label="gmc64 tools">
+        <a class="tile tile--sprite" href="sprite-maker.html"><img src="docs/screenshots/02-sprite-maker.png" alt="Sprite maker screenshot" /><span>Sprite maker</span></a>
+        <a class="tile tile--scene" href="scene-maker.html"><img src="docs/screenshots/03-scene-maker.png" alt="Scene maker screenshot" /><span>Scene maker</span></a>
+        <a class="tile tile--sound" href="sound-maker.html"><img src="docs/screenshots/04-sound-maker.png" alt="Sound maker screenshot" /><span>Sound maker</span></a>
+        <a class="tile tile--music" href="music-maker.html"><img src="docs/screenshots/05-music-maker.png" alt="Music maker screenshot" /><span>Music maker</span></a>
       </div>
 
       <section id="play">
         <div class="section-grid">
-          <h2>Play</h2>
           <div>
-            <p class="big">Drag a <code>.d64</code> onto any tool — editor, sprite maker, the player — pick a program, and run it. No VICE. No virtual 1541 setup.</p>
+            <h2>Play</h2>
+            <a class="tile tile--big tile--play" href="editor.html?disk=demo&file=aliens/prg&play=1">
+              <img src="docs/screenshots/07-aliens.png" alt="Aliens demo screenshot" />
+              <span>Play the ALIENS demo</span>
+            </a>
+          </div>
+          <div>
+            <p class="big">Just drag a <code>.d64</code> onto gmc64 and go. No emulator to configure. No virtual 1541 to wait for.</p>
             <div class="cards">
-              <div class="card"><h3>No install</h3><p>Static HTML and JavaScript. Runs from a browser, even from local files.</p></div>
+              <div class="card"><h3>Ready to go</h3><p>No installation - use it online, or grab the package for yourself. Runs in your browser, even from local files.</p></div>
               <div class="card"><h3>Demo disk</h3><p>Bundled programs and editable assets give you something to poke at immediately.</p></div>
-              <div class="card"><h3>Embed-ready</h3><p>Use <code>play.html</code> for a chrome-free iframe-friendly player.</p></div>
+              <div class="card"><h3>Embeddable</h3><p>Use the included <code>play.html</code> to embed in an iframe like a video.</p></div>
             </div>
           </div>
         </div>
@@ -365,15 +449,20 @@
 
       <section id="make">
         <div class="section-grid">
-          <h2>Make</h2>
           <div>
-            <p class="big">Draw sprites, build scenes, compose music, tweak SID-style sounds, and write GameMaker logic in a plain-English instruction list. Same tools as the original — but with mouse editing and instant response instead of joystick menus and 1541 delays.</p>
-            <div class="links">
-              <a href="editor.html">Program editor</a>
-              <a href="sprite-maker.html">Sprites</a>
-              <a href="scene-maker.html">Scenes</a>
-              <a href="sound-maker.html">Sounds</a>
-              <a href="music-maker.html">Music</a>
+            <h2>Make</h2>
+            <a class="tile tile--big tile--editor" href="editor.html">
+              <img src="docs/screenshots/06-editor.png" alt="Program editor screenshot" />
+              <span>Program editor</span>
+            </a>
+          </div>
+          <div>
+            <p class="big">Same tools as the original, but with modern UI. Use your mouse or trackpad to instantly edit sprites and scenes, compose music, tweak sounds. Use your keyboard to choose instructions.</p>
+            <div class="strip strip--sub" aria-label="gmc64 asset editors">
+              <a class="tile tile--sprite" href="sprite-maker.html"><img src="docs/screenshots/02-sprite-maker.png" alt="Sprite maker screenshot" /><span>Sprite maker</span></a>
+              <a class="tile tile--scene" href="scene-maker.html"><img src="docs/screenshots/03-scene-maker.png" alt="Scene maker screenshot" /><span>Scene maker</span></a>
+              <a class="tile tile--sound" href="sound-maker.html"><img src="docs/screenshots/04-sound-maker.png" alt="Sound maker screenshot" /><span>Sound maker</span></a>
+              <a class="tile tile--music" href="music-maker.html"><img src="docs/screenshots/05-music-maker.png" alt="Music maker screenshot" /><span>Music maker</span></a>
             </div>
           </div>
         </div>
@@ -381,9 +470,15 @@
 
       <section id="compatibility">
         <div class="section-grid">
-          <h2>Compatibility</h2>
           <div>
-            <p class="big">GMC64 reads and writes the original GameMaker formats: <code>.D64</code>, <code>.PRG</code>, <code>.SPR</code>, <code>.PIC</code>, <code>.SND</code>, and <code>.SNG</code>.</p>
+            <h2>Compatibility</h2>
+            <a class="tile tile--big tile--files" href="editor.html?disk=demo">
+              <img src="docs/screenshots/08-files.png" alt="Demo disk file browser screenshot" />
+              <span>Browse the demo disk</span>
+            </a>
+          </div>
+          <div>
+            <p class="big">gmc64 reads and writes the original GameMaker formats right from <code>.d64</code> files. Imports and exports PNG, GIF, and MIDI.</p>
             <div class="cards">
               <div class="card"><h3>Old → new</h3><p>Load work made on original hardware and edit it in the browser.</p></div>
               <div class="card"><h3>New → old</h3><p>Save back to disk images that can load in the original C64 GameMaker.</p></div>
@@ -397,21 +492,51 @@
         <div class="section-grid">
           <h2>Resources</h2>
           <div>
-            <p class="big">For preservation, tinkering, and falling down the C64 rabbit hole.</p>
-            <div class="links">
-              <a href="https://github.com/needlestack/gmc64">GMC64 on GitHub</a>
-              <a href="https://www.c64-wiki.com/wiki/Main_Page">C64 Wiki</a>
-              <a href="https://vice-emu.sourceforge.io/">VICE emulator</a>
-              <a href="https://archive.org/details/softwarelibrary_c64">C64 Software Library</a>
-              <a href="https://www.lemon64.com/">Lemon64</a>
-            </div>
+            <h3>GameMaker</h3>
+            <dl class="resources-list">
+              <dt><a href="https://github.com/needlestack/gmc64">gmc64 on GitHub</a></dt>
+              <dd>Source, issues, and pull requests for this project.</dd>
+
+              <dt><a class="link--book" href="https://archive.org/details/7btv-98wqvt-698qwvt-698bwvq-6t-98wbv-76">GameMaker Instruction Manual</a></dt>
+              <dd>The original instruction manual that shipped with GameMaker</dd>
+
+              <dt><a href="https://www.garrykitchen.com/product_history/garry_kitchens_gamemaker.html">Garry Kitchen's product page</a></dt>
+              <dd>The creator's own account of the original 1985 tool.</dd>
+
+              <dt><a href="https://en.wikipedia.org/wiki/Garry_Kitchen's_GameMaker">GameMaker on Wikipedia</a></dt>
+              <dd>Reference summary — platforms, reception, and history.</dd>
+
+              <dt><a href="https://gb64.com/search.php?f=1&amp;t=2&amp;s=GKGM&amp;b=Go%21&amp;d=30&amp;h=1&amp;a=0">List of GameMaker games</a></dt>
+              <dd>gb64.com catalog of programs built with the original.</dd>
+
+              <dt><a href="https://www.lemon64.com/forum/viewtopic.php?t=54712">GameMaker discussion thread</a></dt>
+              <dd>Long-running Lemon64 forum thread — decades of enthusiast commentary.</dd>
+
+              <dt><a href="https://www.youtube.com/playlist?list=PL7YZ5Ek_mDMO-aP09oh9dzljWAGv7Ipqc">VIDEO HOW-TO: using GameMaker</a></dt>
+              <dd>YouTube series on using the original GameMaker should apply to gmc64 as well</dd>
+            </dl>
+
+            <h3>Commodore 64</h3>
+            <dl class="resources-list">
+              <dt><a href="https://www.c64-wiki.com/wiki/Main_Page">C64 Wiki</a></dt>
+              <dd>Encyclopedic reference for hardware, software, and games.</dd>
+
+              <dt><a href="https://vice-emu.sourceforge.io/">VICE emulator</a></dt>
+              <dd>The cross-platform C64 emulator most retro folks reach for.</dd>
+
+              <dt><a href="https://www.lemon64.com/">Lemon64</a></dt>
+              <dd>Active forums, game reviews, and the community's front door.</dd>
+
+              <dt><a href="https://www.youtube.com/results?search_query=create+d64+file+from+disk">VIDEO HOW-TO: creating d64 files</a></dt>
+              <dd>Instructions on creating .d64 files from your old cc64 disks</dd>
+            </dl>
           </div>
         </div>
       </section>
     </main>
 
     <footer>
-      Independent, unaffiliated, clean-room reimplementation for preservation, education, and fun. GameMaker and related marks belong to their respective owners.
+      gmc64 is an independent, unaffiliated re-implementation for preservation, education, and fun. GameMaker and related marks belong to their respective owners.
       <br><br>
       &copy; 2024&ndash;2026 Jonathan Field &middot; <a href="https://github.com/needlestack/gmc64/blob/main/LICENSE">MIT</a>
     </footer>
