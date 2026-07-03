@@ -5,6 +5,26 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>GMC64 — GameMaker for the browser</title>
   <meta name="description" content="A faithful, browser-based recreation of Garry Kitchen's 1985 Commodore 64 GameMaker." />
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+
+  <!-- Social preview cards. What Discord/Slack/Twitter/iMessage show when
+       someone drops a gmc64.com link. Absolute URLs required — social
+       scrapers don't resolve relative paths. -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="gmc64" />
+  <meta property="og:url" content="https://gmc64.com/" />
+  <meta property="og:title" content="gmc64 — GameMaker for the browser" />
+  <meta property="og:description" content="A browser recreation of the 1985 Commodore 64 GameMaker. Load old disks, make new games, edit sprites and scenes, share the result as a link or a self-contained HTML file." />
+  <meta property="og:image" content="https://gmc64.com/docs/screenshots/06-editor.png" />
+  <meta property="og:image:width" content="640" />
+  <meta property="og:image:height" content="480" />
+  <meta property="og:image:alt" content="The gmc64 editor showing a program listing next to an instruction picker" />
+
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="gmc64 — GameMaker for the browser" />
+  <meta name="twitter:description" content="A browser recreation of the 1985 Commodore 64 GameMaker." />
+  <meta name="twitter:image" content="https://gmc64.com/docs/screenshots/06-editor.png" />
+
   <style>
     :root {
       /* GameMaker-editor gray palette. Body bg tracks the C64's own
@@ -37,7 +57,11 @@
 
     body {
       margin: 0;
-      font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      /* System serif — reads warm/personal rather than the sans stack's
+         startup-landing-page feel. ui-serif picks each OS's native serif
+         (SF serif on macOS, Segoe UI Serif variant on Windows) with
+         Georgia + Cambria as fallbacks. */
+      font: 16px/1.55 ui-serif, Georgia, Cambria, "Times New Roman", serif;
       background: linear-gradient(180deg, var(--bg) 0%, var(--paper) 100%);
       color: var(--ink);
     }
@@ -73,7 +97,7 @@
       height: .72em;
       margin-right: .45em;
       border-radius: 2px;
-      background: linear-gradient(135deg, var(--c64-blue) 0 25%, var(--c64-light-blue) 25% 50%, var(--c64-cyan) 50% 75%, var(--c64-yellow) 75%);
+      background: linear-gradient(135deg, var(--c64-blue) 0 25%, var(--c64-light-blue) 25% 50%, var(--c64-cyan) 50% 75%, var(--c64-blue) 75%);
       vertical-align: -.04em;
     }
 
@@ -98,9 +122,12 @@
     h1 {
       margin: 0;
       max-width: 760px;
-      font-size: clamp(3rem, 8vw, 7.4rem);
-      line-height: .88;
-      letter-spacing: -.045em;
+      /* Was clamp(3rem, 8vw, 7.4rem) — max 118px, magazine-cover big.
+         Toned down to a personal-site headline size: still clearly the
+         page title, no longer shouting. */
+      font-size: clamp(2rem, 5vw, 3.4rem);
+      line-height: 1.05;
+      letter-spacing: -.015em;
     }
 
     .dek {
@@ -124,7 +151,7 @@
       min-height: 44px;
       padding: 0 18px;
       border: 1px solid var(--ink);
-      border-radius: 999px;
+      border-radius: 4px;
       text-decoration: none;
       font-weight: 700;
       background: transparent;
@@ -139,7 +166,7 @@
     .screen {
       overflow: hidden;
       border: 1px solid var(--line);
-      border-radius: 24px;
+      border-radius: 4px;
       background: var(--card);
       box-shadow: var(--shadow), 10px 10px 0 var(--c64-cyan);
     }
@@ -161,7 +188,7 @@
       display: block;
       overflow: hidden;
       border: 1px solid var(--line);
-      border-radius: 18px;
+      border-radius: 4px;
       background: var(--card);
       text-decoration: none;
       box-shadow: 0 10px 28px rgba(33, 25, 78, .05);
@@ -208,9 +235,12 @@
     .big {
       margin: 0;
       max-width: 760px;
-      font-size: clamp(1.6rem, 3vw, 2.35rem);
-      line-height: 1.12;
-      letter-spacing: -.025em;
+      /* Middle ground between the original "pull-quote big" and the
+         first pass's "just prose" — clearly reads as a section-lead
+         without shouting. */
+      font-size: clamp(1.35rem, 2.2vw, 1.85rem);
+      line-height: 1.25;
+      letter-spacing: -.01em;
     }
 
     .cards {
@@ -223,7 +253,7 @@
     .card {
       padding: 20px;
       border: 1px solid var(--line);
-      border-radius: 20px;
+      border-radius: 4px;
       /* Translucent card fill in the same gray family as --card. */
       background: rgba(232, 232, 232, .78);
     }
@@ -241,7 +271,7 @@
     .links a {
       padding: 10px 14px;
       border: 1px solid var(--line);
-      border-radius: 999px;
+      border-radius: 4px;
       background: var(--card);
       text-decoration: none;
     }
@@ -254,6 +284,18 @@
       padding: 40px 0 64px;
       color: var(--muted);
       font-size: .92rem;
+    }
+
+    /* Technical strings — file extensions, filenames. Darker than the
+       surrounding cards so it pops as "specific term" without looking
+       like just another gray box. Border dropped: with a distinctly
+       darker fill, the chip stands on its own. */
+    code {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: .9em;
+      padding: 1px 6px;
+      background: #c4c4c4;
+      border-radius: 3px;
     }
 
     @media (max-width: 860px) {
@@ -311,11 +353,11 @@
         <div class="section-grid">
           <h2>Play</h2>
           <div>
-            <p class="big">Drop in a `.d64`, pick a program, and run it — without installing VICE or configuring a virtual 1541.</p>
+            <p class="big">Drag a <code>.d64</code> onto any tool — editor, sprite maker, the player — pick a program, and run it. No VICE. No virtual 1541 setup.</p>
             <div class="cards">
               <div class="card"><h3>No install</h3><p>Static HTML and JavaScript. Runs from a browser, even from local files.</p></div>
               <div class="card"><h3>Demo disk</h3><p>Bundled programs and editable assets give you something to poke at immediately.</p></div>
-              <div class="card"><h3>Embed-ready</h3><p>Use `play.html` for a chrome-free iframe-friendly player.</p></div>
+              <div class="card"><h3>Embed-ready</h3><p>Use <code>play.html</code> for a chrome-free iframe-friendly player.</p></div>
             </div>
           </div>
         </div>
@@ -325,7 +367,7 @@
         <div class="section-grid">
           <h2>Make</h2>
           <div>
-            <p class="big">Draw sprites, build scenes, compose music, tweak SID-style sounds, and write GameMaker logic in a plain-English instruction list.</p>
+            <p class="big">Draw sprites, build scenes, compose music, tweak SID-style sounds, and write GameMaker logic in a plain-English instruction list. Same tools as the original — but with mouse editing and instant response instead of joystick menus and 1541 delays.</p>
             <div class="links">
               <a href="editor.html">Program editor</a>
               <a href="sprite-maker.html">Sprites</a>
@@ -341,7 +383,7 @@
         <div class="section-grid">
           <h2>Compatibility</h2>
           <div>
-            <p class="big">GMC64 reads and writes the original GameMaker formats: `.D64`, `.PRG`, `.SPR`, `.PIC`, `.SND`, and `.SNG`.</p>
+            <p class="big">GMC64 reads and writes the original GameMaker formats: <code>.D64</code>, <code>.PRG</code>, <code>.SPR</code>, <code>.PIC</code>, <code>.SND</code>, and <code>.SNG</code>.</p>
             <div class="cards">
               <div class="card"><h3>Old → new</h3><p>Load work made on original hardware and edit it in the browser.</p></div>
               <div class="card"><h3>New → old</h3><p>Save back to disk images that can load in the original C64 GameMaker.</p></div>
@@ -370,7 +412,10 @@
 
     <footer>
       Independent, unaffiliated, clean-room reimplementation for preservation, education, and fun. GameMaker and related marks belong to their respective owners.
+      <br><br>
+      &copy; 2024&ndash;2026 Jonathan Field &middot; <a href="https://github.com/needlestack/gmc64/blob/main/LICENSE">MIT</a>
     </footer>
   </div>
+
 </body>
 </html>

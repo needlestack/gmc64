@@ -1441,6 +1441,28 @@ const GMTools = {
     },
 
     /**
+     * First-visit convenience: if the shared disk pool is completely empty
+     * (visitor has never touched an editor before), mount the bundled demo
+     * disk so the file picker isn't a dead end. No file is opened — canvas
+     * stays blank, `?disk=…` / `?play_demo=1` URL routes still win. Safe to
+     * call from every editor on init: pool-check is synchronous, and
+     * addToPool dedupes by SHA-256 so a concurrent `?disk=demo` won't
+     * duplicate the entry.
+     *
+     * Fire-and-forget from callers: the demo bundle load is async but the
+     * only observable effect is the file menu picking up the disk once it
+     * lands (typically <100ms).
+     */
+    async ensureDemoDiskInPool(gmDisk) {
+        if (GMDisk.getPool().length > 0) return;
+        const bytes = await GMTools.getDemoDiskBytes();
+        if (!bytes) return;
+        const id = await GMDisk.addToPool(bytes, 'GMC64-DEMO.d64');
+        // Only claim the seeded disk if no URL-driven load beat us to it.
+        if (!gmDisk.hasDisk()) gmDisk.selectDisk(id);
+    },
+
+    /**
      * Case-insensitive file lookup against a D64 disk's directory.
      * Returns the actual on-disk filename (preserving real case + space
      * padding so it can be passed straight to readFile), or null.

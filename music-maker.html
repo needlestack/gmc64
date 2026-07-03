@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>C64 GameMaker Music Editor</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="stylesheet" href="css/gm-ui.css">
 <style>
 
@@ -2762,6 +2763,9 @@ function updateSongNameDisplay() {
 // GMDisk instance
 const disk = new GMDisk();
 disk.autoLoad();
+// First-visit convenience: seed the demo disk into an empty pool so the
+// file picker isn't a dead end. Fire-and-forget; addToPool dedupes.
+GMTools.ensureDemoDiskInPool(disk);
 
 function showFilePopup() {
     disk.showPopup({

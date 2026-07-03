@@ -62,6 +62,25 @@ async function openDiskPopup(page) {
     await page.waitForSelector('.gm-disk-dialog');
 }
 
+// Force a truly empty disk pool. Editors auto-seed the bundled demo disk on
+// first visit (empty pool), so `withDisk: false` no longer guarantees a
+// disk-less state — we have to drain the pool after any pending seed lands.
+async function drainDiskPool(page) {
+    await page.evaluate(async () => {
+        // Wait for the in-flight seed promise (if any) so a late-arriving
+        // addToPool doesn't re-populate after we clear.
+        if (GMTools._demoDiskPromise) {
+            try { await GMTools._demoDiskPromise; } catch (e) {}
+        }
+        for (const entry of GMDisk.getPool()) {
+            GMDisk.removeFromPool(entry.id);
+        }
+        disk.disk = null;
+        disk.diskFileName = '';
+        disk.currentDiskId = null;
+    });
+}
+
 describe('disk popup save row', () => {
     test('opens with a name input that is 6-char lowercase', async () => {
         const page = await openPage();
@@ -102,6 +121,7 @@ describe('disk popup save row', () => {
 describe('disk popup save behaviour', () => {
     test('save with no disk flashes "Insert a disk first"', async () => {
         const page = await openPage({ withDisk: false });
+        await drainDiskPool(page);
         await openDiskPopup(page);
 
         await page.focus('.gm-disk-name-input');

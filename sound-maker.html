@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>C64 GameMaker Sound Editor</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="stylesheet" href="css/gm-ui.css">
 <style>
 /* Page-specific: centered flex layout */
@@ -993,6 +994,9 @@ td:has(.slider-speed) {
 // GMDisk instance
 const disk = new GMDisk();
 disk.autoLoad();
+// First-visit convenience: seed the demo disk into an empty pool so the
+// file picker isn't a dead end. Fire-and-forget; addToPool dedupes.
+GMTools.ensureDemoDiskInPool(disk);
 
 // Sound editor state
 let currentSound = null;

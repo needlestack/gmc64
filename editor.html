@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>C64 GameMaker Editor</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="stylesheet" href="css/gm-ui.css">
 <style>
 /* Page layout */
@@ -1309,6 +1310,11 @@ function initApp() {
 
     // Load disk from localStorage
     gmDisk.autoLoad();
+
+    // First-visit convenience: seed the demo disk into an empty pool so the
+    // file menu isn't a dead end. Fire-and-forget; URL-driven loads below
+    // still win because addToPool dedupes.
+    GMTools.ensureDemoDiskInPool(gmDisk);
 
     // Try to load saved program
     loadSavedProgram();

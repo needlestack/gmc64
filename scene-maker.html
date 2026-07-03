@@ -60,6 +60,7 @@
 <head>
 <meta charset="utf-8">
 <title>C64 GameMaker Scene Editor 2</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="stylesheet" href="css/gm-ui.css">
 <style>
 /* Page-specific styles */
@@ -1822,6 +1823,9 @@ function onKeyDown(e) {
 // GMDisk instance
 const disk = new GMDisk();
 disk.autoLoad();
+// First-visit convenience: seed the demo disk into an empty pool so the
+// file picker isn't a dead end. Fire-and-forget; addToPool dedupes.
+GMTools.ensureDemoDiskInPool(disk);
 
 let currentSceneFileName = null;
 

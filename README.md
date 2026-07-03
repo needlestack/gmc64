@@ -1,17 +1,17 @@
 # gmc64
 
-A faithful, browser-based recreation of the 1985 Commodore 64 game-creation tool by Garry Kitchen.
+A faithful, modern recreation of Garry Kitchen's GameMaker
 
 <table>
   <tr>
-    <td align="center"><a href="https://gmc64.com/editor.html?play_demo=1"><img src="docs/screenshots/01-intro.png" width="320"></a><br><sub>Intro demo</sub></td>
-    <td align="center"><a href="https://gmc64.com/sprite-maker.html"><img src="docs/screenshots/02-sprite-maker.png" width="320"></a><br><sub>Sprite maker</sub></td>
-    <td align="center"><a href="https://gmc64.com/scene-maker.html"><img src="docs/screenshots/03-scene-maker.png" width="320"></a><br><sub>Scene maker</sub></td>
+    <td align="center"><a href="https://gmc64.com/editor.html?play_demo=1"><img src="docs/screenshots/01-intro.png" width="320"></a><br><sub>Intro Demo</sub></td>
+    <td align="center"><a href="https://gmc64.com/sprite-maker.html"><img src="docs/screenshots/02-sprite-maker.png" width="320"></a><br><sub>Sprite Maker</sub></td>
+    <td align="center"><a href="https://gmc64.com/scene-maker.html"><img src="docs/screenshots/03-scene-maker.png" width="320"></a><br><sub>Scene Maker</sub></td>
   </tr>
   <tr>
-    <td align="center"><a href="https://gmc64.com/sound-maker.html"><img src="docs/screenshots/04-sound-maker.png" width="320"></a><br><sub>Sound maker</sub></td>
-    <td align="center"><a href="https://gmc64.com/music-maker.html"><img src="docs/screenshots/05-music-maker.png" width="320"></a><br><sub>Music maker</sub></td>
-    <td align="center"><a href="https://gmc64.com/editor.html"><img src="docs/screenshots/06-editor.png" width="320"></a><br><sub>Program editor</sub></td>
+    <td align="center"><a href="https://gmc64.com/sound-maker.html"><img src="docs/screenshots/04-sound-maker.png" width="320"></a><br><sub>Sound Maker</sub></td>
+    <td align="center"><a href="https://gmc64.com/music-maker.html"><img src="docs/screenshots/05-music-maker.png" width="320"></a><br><sub>Music Maker</sub></td>
+    <td align="center"><a href="https://gmc64.com/editor.html"><img src="docs/screenshots/06-editor.png" width="320"></a><br><sub>Program Editor</sub></td>
   </tr>
 </table>
 
@@ -19,17 +19,40 @@ A faithful, browser-based recreation of the 1985 Commodore 64 game-creation tool
 
 ## If you used GameMaker back then
 
-You probably remember the joy of stitching a game together from sprites and scenes you drew pixel by pixel, the BASIC-adjacent instruction list, the SID sounds you tweaked for hours, the comments scrolling under your title screen.
+You probably remember the fun of animating sprites pixel by pixel, drawing
+background scenes, coding up little games and demos, tweaking SID sounds,
+and writing music.
 
-If you ever burned your work to a `.d64` and spent an afternoon trying to coax it back to life in VICE — only to wrestle with disk drive autoboot, joystick mapping, and emulator timing — this is for you.
+If you've tried to recapture that fun on a C64 emulator, you probably noticed
+the joystick based UI on the original is tough to put up with today, and the
+disk operations are still slow enough to be a drag.
+
+gmc64 solves this. It's a fully modern JavaScript recreation of GameMaker
+with modern convenience: use your mouse or trackpad, instantly preview, load,
+and save files, Copy, paste, and undo, and more. It's not an emulator, it's a
+recreation, and the stumbling blocks are gone.
+
+## If you have your original work on disk
+
+Do you have your original work on a `.d64`? gmc64 reads `.d64` files and all
+the GameMaker formats. Drag and drop a disk or use the built-in file browser.
+It can save files back to disk as well, and you can import them *back* to the
+original GameMaker. All GameMaker file formats have been fully reverse engineered.
 
 Drop your old disk in. Pick your program. Click run. It just plays.
 
-You can also open it up, edit it, change the music, add a sprite, save it back to the disk image, and export it as a single self-contained HTML file you can email to someone or post on a forum. Send your game to a friend the way you wish you could in 1986.
+Then you can also open the editor, change the music, add a sprite, save it back
+to the disk image. You can even export it as a single self-contained HTML file
+you can post online and embed anywhere. Send your game to a friend the way you
+wish you could in 1985.
 
 ## If you're new to GameMaker
 
-GameMaker was a game-creation tool for the Commodore 64, published by Activision in 1985 and written by Garry Kitchen. It let kids build real, runnable C64 games without learning assembly. You drew sprites and backgrounds, composed music, recorded sound effects, and wrote game logic as a list of plain-English instructions:
+GameMaker was a game-creation tool for the Commodore 64 created by
+Garry Kitchen and published by Activision in 1985. It let users build real,
+runnable C64 games without learning assembly. One of the very first graphical
+developent environments, you drew sprites and backgrounds, composed music,
+recorded sound effects, and wrote game logic as a list of plain-English instructions.
 
 ```
 sprite 1 is PLAYER
@@ -38,13 +61,16 @@ sprite 1 y position = 100
 if joystick 1 is left then sprite 1 direction = left
 ```
 
-Many people who grew up to be game developers got their start here. It's been mostly inaccessible since.
+Many people who grew up to be game developers got their start here. It's been
+largely inaccessible in the modern age, and even through emulation, usability
+suffers from limitations of the original C64.
 
-GMC64 brings it back — same sprites, same instructions, same sound, in your browser.
+gmc64 brings it back — same sprites, same instructions, same sound, in your
+browser.
 
 ## Two-way compatibility
 
-GMC64 isn't only an emulator for old files. It implements the same on-disk formats — `.D64`, `.PRG`, `.SPR`, `.PIC`, `.SND`, `.SNG` — and they round-trip cleanly in both directions.
+gmc64 isn't only an emulator for old files. It implements the same on-disk formats — `.D64`, `.PRG`, `.SPR`, `.PIC`, `.SND`, `.SNG` — and they round-trip cleanly in both directions.
 
 A game built here saves to a real disk image that loads on an actual Commodore 64 running the original 1985 GameMaker disk. Anything authored on that hardware loads here without translation. New creations can ship to a 1541. Old creations can ship to a tweet.
 
@@ -55,7 +81,7 @@ Open `editor.html` in any modern browser. That's it. No install.
 Then either:
 
 - **Drop a `.d64` on any tool** — editor, sprite-maker, scene-maker, sound-maker, music-maker, `play.html`. A file picker pops up filtered to that tool's file type. Same behavior via URL: `editor.html?disk=https://your-host/game.d64` opens the picker without a specific file.
-- **Try the demos** — `disks/GMC64-DEMO.d64` ships with the project and includes runnable programs and editable sprites, scenes, and songs
+- **Try the demos** — `disks/gmc64-demo.d64` ships with the project and includes runnable programs and editable sprites, scenes, and songs
 - **Start from scratch** — author sprites, scenes, music, and a program from blank
 
 When your game is ready, hit **Export Game** to get a single HTML file that boots straight into your creation, embeddable anywhere.
@@ -87,7 +113,7 @@ https://gmc64.com/play.html?disk=demo&file=ALIENS/PRG&nocredit=1
 | `file` | Same as above |
 | `play=1` | Show a play-button overlay with a poster preview when the page opens. Visitor clicks play to run, clicks the stop button to drop into the editor. Without this flag the file just opens for editing. |
 | `poster_seconds` | Same as above; only meaningful with `play=1` |
-| `play_demo=1` | Alias — expands to `disk=demo&file=GMC64I/PRG&play=1&poster_seconds=8.5` |
+| `play_demo=1` | Alias — expands to `disk=demo&file=gmc64i/prg&play=1&poster_seconds=8.5` |
 
 Example — send someone a runnable link that still lets them peek behind the curtain:
 
@@ -185,12 +211,12 @@ All documented in [`CLAUDE.md`](CLAUDE.md) — written for both AI coding assist
 
 ## Disclaimer
 
-GMC64 is an independent, unaffiliated, clean-room re-implementation made for preservation, education, and fun. It is not affiliated with, endorsed by, or connected to Activision, Activision Blizzard, Microsoft, or any other rights holder. "GameMaker" and any related marks are property of their respective owners. None of the original 1985 code is used or included.
+gmc64 is an independent, unaffiliated, clean-room re-implementation made for preservation, education, and fun. It is not affiliated with, endorsed by, or connected to Activision, Activision Blizzard, Microsoft, or any other rights holder. "GameMaker" and any related marks are property of their respective owners. None of the original 1985 code is used or included.
 
-The repository does not contain any commercial disk images or programs. If you have an original GameMaker disk, you can use it with GMC64 yourself; obtain disk images through legal channels.
+The repository does not contain any commercial disk images or programs. If you have an original GameMaker disk, you can use it with gmc64 yourself; obtain disk images through legal channels.
 
 ## License
 
 [MIT](LICENSE). Do what you like with the engine and editors.
 
-The included demos (`disks/GMC64-DEMO.d64`) are original work, also under MIT.
+The included demos (`disks/gmc64-demo.d64`) are original work, also under MIT.
