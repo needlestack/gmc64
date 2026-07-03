@@ -99,10 +99,8 @@ class gmSound {
                 break;
             }
         }
-        if (!magicValid) {
-            // Only log at debug level since sounds still work
-            // console.debug('Sound file magic number mismatch (may be alternate format)');
-        }
+        // Magic mismatch is tolerated (some period disks have alternate
+        // header formats and the sound still plays), so no branch here.
 
         // Header fields
         this.name = this._decodeString(fileData.slice(5, 11));

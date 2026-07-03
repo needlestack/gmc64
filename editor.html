@@ -3897,9 +3897,7 @@ function copyProgramListing() {
     }
 
     const text = lines.join('\n');
-    navigator.clipboard.writeText(text).then(() => {
-        console.log(`Copied ${lines.length} lines to clipboard`);
-    }).catch(err => {
+    navigator.clipboard.writeText(text).catch(err => {
         console.error('Failed to copy:', err);
     });
 }

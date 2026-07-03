@@ -199,13 +199,16 @@ class gmVM {
         //
         // Key fields:
         //   spriteInstance: The gmSprite object for this slot (null for subsprite slots)
-        //   spriteName: Display name (for debugging - not used for lookups)
+        //   spriteName: Media-store name of the currently-loaded sprite. Compared
+        //               on assignment to detect a sprite *change* — new sprite
+        //               resets frame state, same sprite keeps it (so re-issuing
+        //               `sprite N is X` doesn't restart X's animation).
         //   isSubsprite: True if this slot is reserved for a multi-part sprite's quad
         //   parentSlotIdx: For subsprites, which slot owns the parent sprite
         this.sprites = [];
         for (let i = 0; i < 8; i++) {
             this.sprites[i] = {
-                spriteName: null,     // Name of sprite (for debugging/display only)
+                spriteName: null,     // See docblock above — used for change detection.
                 spriteInstance: null, // gmSprite instance (each slot gets its own copy for independent colors)
                 x: 0,
                 y: 0,
@@ -1904,7 +1907,7 @@ class gmVM {
 
     // Check pixel-perfect collision between two sprites
     // Uses gmSprite.hasPixelAt() to check individual pixels in overlap region
-    checkPixelOverlap(gmSprite1, gmSprite2, box1, box2, frame1, frame2, debugLabel = '') {
+    checkPixelOverlap(gmSprite1, gmSprite2, box1, box2, frame1, frame2) {
         // Calculate overlap region (all in 320×200 coordinates)
         // Floor all values to ensure integer pixel coordinates
         const left = Math.floor(Math.max(box1.x, box2.x));
