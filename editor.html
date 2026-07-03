@@ -693,6 +693,12 @@ body.kbd-active .program-line .instruction:hover {
     border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
+#settingsPopup input[type="range"] {
+    width: 120px;
+    accent-color: rgba(255, 255, 255, 0.85);
+    cursor: pointer;
+}
+
 /* Export Game dialog. Full-viewport modal (needs to escape #screen's
    720×520 clip, same reason #gameOverlay does), centered content, closes
    on backdrop click or Escape. Two-section layout: Download the standalone
@@ -925,6 +931,11 @@ body.kbd-active .program-line .instruction:hover {
                 <!-- Audio indicator mounts here (rightmost). -->
             </div>
             <div id="settingsPopup">
+                <div class="settings-section-label">Audio</div>
+                <div class="row">
+                    <label>Volume</label>
+                    <input type="range" id="volumeSlider" min="0" max="100" step="1" value="75">
+                </div>
                 <div class="settings-section-label">Controls</div>
                 <div class="row">
                     <label>Joystick 1</label>
@@ -1154,11 +1165,19 @@ let masterGain = null;
 // audio state. Bound in initApp; refreshed any time audio state changes.
 let audioIndicator = null;
 
+// User volume 0..1. Shared with play.html via the same localStorage key
+// so a preference set in one context carries to the other.
+const VOLUME_KEY = 'gmc64-volume';
+let userVolume = parseFloat(localStorage.getItem(VOLUME_KEY));
+if (!isFinite(userVolume) || userVolume < 0 || userVolume > 1) userVolume = 0.75;
+// SFX_BASELINE is the pre-slider gain — the "100% user volume" ceiling.
+const SFX_BASELINE = 0.3;
+
 function initAudio() {
     if (!audioContext) {
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
         masterGain = audioContext.createGain();
-        masterGain.gain.value = 0.3;
+        masterGain.gain.value = SFX_BASELINE * userVolume;
         masterGain.connect(audioContext.destination);
     }
     if (audioContext.state === 'suspended') {
@@ -1261,6 +1280,19 @@ document.addEventListener('DOMContentLoaded', () => {
             GMPlayerChrome.saveInputSettings(INPUT_SETTINGS_KEY, inputSettings);
         });
     }
+
+    // Volume slider — shared localStorage key with play.html, applies to
+    // both the host masterGain (SFX) and vm.config.userVolume (music).
+    const slider = document.getElementById('volumeSlider');
+    if (slider) {
+        slider.value = Math.round(userVolume * 100);
+        slider.addEventListener('input', () => {
+            userVolume = slider.value / 100;
+            localStorage.setItem(VOLUME_KEY, String(userVolume));
+            if (masterGain) masterGain.gain.value = SFX_BASELINE * userVolume;
+            if (vm) vm.setConfig({ userVolume });
+        });
+    }
 });
 
 // Load file by name (required by gmParser for scene loading)
@@ -1317,7 +1349,7 @@ function initApp() {
                 try {
                     vm.currentSong.stop();
                     vm.currentSong.play();
-                    vm.currentSong.setVolume(vm.songVolume);
+                    vm.currentSong.setVolume(vm._effectiveSongVolume());
                 } catch (e) {
                     console.warn('Failed to restart song after audio unlock:', e.message);
                 }
@@ -4675,7 +4707,8 @@ function runProgram() {
         vm.loadProgram(ast, currentFileData, {
             skipPauseInstructions,
             showHitboxes,
-            audioMuted
+            audioMuted,
+            userVolume
         });
 
         // Show game overlay and reset chrome state. The play-button

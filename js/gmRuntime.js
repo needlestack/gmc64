@@ -79,6 +79,12 @@ class gmVM {
             skipPauseInstructions: false,
             showHitboxes: false,
             audioMuted: false,
+            // 0..1 user-facing volume scalar applied on top of whatever
+            // the program sets via the song-volume opcode. The host owns
+            // the value (localStorage-persisted) and pushes it in via
+            // setConfig; the runtime factors it into every music.setVolume
+            // and into the host masterGain (which SFX route through).
+            userVolume: 1,
             rngSeed: undefined,
             ...config
         };
@@ -95,12 +101,27 @@ class gmVM {
         // restart, no jump-to-top). Sound effects use the gate at their
         // play site (transient one-shots — no point playing them silently
         // just so they can finish during a mute window).
-        if (typeof updates.audioMuted === 'boolean' && this.currentSong) {
+        // Any of audioMuted, userVolume, or (implicitly) songVolume can
+        // change the effective playing volume. When any come in via
+        // setConfig, re-push the combined value to the current song.
+        const volumeTouched =
+            typeof updates.audioMuted === 'boolean' ||
+            typeof updates.userVolume === 'number';
+        if (volumeTouched && this.currentSong) {
             try {
-                this.currentSong.setVolume(updates.audioMuted ? 0 : this.songVolume);
+                this.currentSong.setVolume(this._effectiveSongVolume());
             } catch (e) { /* gmMusic may be mid-teardown — ignore */ }
         }
         if (seedChanged) this._installRng();
+    }
+
+    // Combined volume the current song should be played at: 0 when
+    // muted, else program-controlled song volume (0-15) scaled by the
+    // host's user volume (0-1). Called from setConfig and from the
+    // song-start / song-volume opcodes so all three paths agree.
+    _effectiveSongVolume() {
+        if (this.config.audioMuted) return 0;
+        return this.songVolume * (this.config.userVolume ?? 1);
     }
 
     // Initialize the RNG used by opcode 0x09 (rnd) based on config.rngSeed.
@@ -868,7 +889,7 @@ class gmVM {
                         // unmute without a restart.
                         if (typeof audioContext !== 'undefined' && audioContext) {
                             music.play();
-                            music.setVolume(this.config.audioMuted ? 0 : this.songVolume);
+                            music.setVolume(this._effectiveSongVolume());
                         }
                     } else {
                     }
@@ -879,7 +900,7 @@ class gmVM {
                 // arg2 = volume (0-15)
                 this.songVolume = arg2;
                 if (this.currentSong) {
-                    this.currentSong.setVolume(arg2);
+                    this.currentSong.setVolume(this._effectiveSongVolume());
                 }
                 break;
 

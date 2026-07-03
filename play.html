@@ -234,6 +234,15 @@ body {
     border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
+/* Range input tuned to fit the dark hamburger popup. accent-color lets
+   modern browsers restyle the track/thumb without a full custom shadow-
+   DOM rebuild — good enough for a soft-launch. */
+#settingsPopup input[type="range"] {
+    width: 120px;
+    accent-color: rgba(255, 255, 255, 0.85);
+    cursor: pointer;
+}
+
 /* Subtle attribution corner. Suppressed when ?nocredit is in the URL. */
 /* Credit link — anchored to the left of #bottomBar, vertically centred.
    No z-index needed: the bar sits below playArea entirely, so the play
@@ -291,6 +300,11 @@ body {
         <!-- audio indicator mounts here at first play -->
     </div>
     <div id="settingsPopup">
+        <div class="settings-section-label">Audio</div>
+        <div class="row">
+            <label>Volume</label>
+            <input type="range" id="volumeSlider" min="0" max="100" step="1" value="75">
+        </div>
         <div class="settings-section-label">Controls</div>
         <div class="row">
             <label>Joystick 1</label>
@@ -366,6 +380,18 @@ let currentProgramData = null;
 let currentFileData = null;
 let currentFileName = null;
 let animationFrameToggle = false;
+
+// User volume 0..1. Shared localStorage key across editor + player so a
+// user's preference travels between the two contexts. Default: comfortable
+// mid-range so first-visit isn't loud, isn't silent.
+const VOLUME_KEY = 'gmc64-volume';
+let userVolume = parseFloat(localStorage.getItem(VOLUME_KEY));
+if (!isFinite(userVolume) || userVolume < 0 || userVolume > 1) userVolume = 0.75;
+
+// SFX_BASELINE is the pre-user-volume gain the host masterGain was pinned
+// at before we introduced the slider. Keep it as the "100% user volume"
+// ceiling so cranking to 100 doesn't blow out ears vs the old default.
+const SFX_BASELINE = 0.3;
 // Handle to the mounted GMDiskPicker (assigned in init).
 let picker = null;
 
@@ -399,6 +425,7 @@ async function init() {
     document.getElementById('hamburgerBtn').innerHTML = GMPlayerChrome.ICONS.hamburger;
 
     populateJoystickSelects();
+    setupVolumeSlider();
 
     // Mount the shared disk picker inside the game border. Window-level
     // drops are enabled here too so someone with a game already loaded
@@ -452,6 +479,20 @@ async function init() {
 function toggleSettingsPopup(e) {
     if (e) e.stopPropagation();   // don't trip the click-outside handler
     document.getElementById('settingsPopup').classList.toggle('active');
+}
+
+// Volume slider — reads current userVolume, applies changes to both
+// audio paths (SFX via host masterGain, music via vm.setConfig →
+// _effectiveSongVolume), persists on 'input' so drags feel live.
+function setupVolumeSlider() {
+    const slider = document.getElementById('volumeSlider');
+    slider.value = Math.round(userVolume * 100);
+    slider.addEventListener('input', () => {
+        userVolume = slider.value / 100;
+        localStorage.setItem(VOLUME_KEY, String(userVolume));
+        if (masterGain) masterGain.gain.value = SFX_BASELINE * userVolume;
+        if (vm) vm.setConfig({ userVolume });
+    });
 }
 
 // Fill the joy1/joy2 dropdowns from the shared PRESET_LABELS. Runs once
@@ -592,12 +633,17 @@ async function startGame() {
     if (!audioContext) {
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
         masterGain = audioContext.createGain();
-        masterGain.gain.value = 0.3;
+        masterGain.gain.value = SFX_BASELINE * userVolume;
         masterGain.connect(audioContext.destination);
     }
     if (audioContext.state === 'suspended') {
         audioContext.resume();
     }
+
+    // Push the persisted user volume into the fresh vm's config so the
+    // very first song starts at the right level (rather than defaulting
+    // to 1.0 and then getting corrected on the first slider tick).
+    vm.setConfig({ userVolume });
 
     if (!audioIndicator) {
         // Mount inside #gameControls so it flexes with the other icons.
@@ -613,7 +659,7 @@ async function startGame() {
                     try {
                         vm.currentSong.stop();
                         vm.currentSong.play();
-                        vm.currentSong.setVolume(vm.songVolume);
+                        vm.currentSong.setVolume(vm._effectiveSongVolume());
                     } catch (e) {
                         console.warn('Failed to restart song after audio unlock:', e.message);
                     }
