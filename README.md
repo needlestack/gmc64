@@ -54,7 +54,7 @@ Open `editor.html` in any modern browser. That's it. No install.
 
 Then either:
 
-- **Load a `.d64`** you already have, pick a `.PRG`, and hit run
+- **Drop a `.d64` on any tool** — editor, sprite-maker, scene-maker, sound-maker, music-maker, `play.html`. A file picker pops up filtered to that tool's file type. Same behavior via URL: `editor.html?disk=https://your-host/game.d64` opens the picker without a specific file.
 - **Try the demos** — `disks/GMC64-DEMO.d64` ships with the project and includes runnable programs and editable sprites, scenes, and songs
 - **Start from scratch** — author sprites, scenes, music, and a program from blank
 
@@ -62,7 +62,7 @@ When your game is ready, hit **Export Game** to get a single HTML file that boot
 
 ## Sharing your game
 
-Every editor takes URL parameters, so you can hand someone a direct link to a specific program or drop the player into a page you're building.
+Every editor takes URL parameters, so you can hand someone a direct link to a specific program or drop the player into a page you're building. And every editor accepts a `.d64` dropped onto its window — the file picker will open filtered to that tool's file type (`.PRG` in the editor, `.SPR` in sprite-maker, and so on).
 
 ### Player (`play.html`) — chrome-free, iframe-friendly
 

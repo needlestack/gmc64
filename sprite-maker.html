@@ -379,6 +379,7 @@
 <script src="js/gmDisk.js"></script>
 <script src="js/c64lib.js"></script>
 <script src="js/gmTools.js"></script>
+<script src="js/gmDiskPicker.js"></script>
 <script src="js/c64Screen.js"></script>
 <script src="js/gmSprite.js"></script>
 <script src="js/gif.js"></script>
@@ -2282,17 +2283,34 @@ function initApp() {
     newSprite();
     restoreSpriteSession();
 
+    // Shared disk picker: URL-driven ?disk=X with 2+ SPRs falls back to
+    // this; drag-and-drop of a .d64 anywhere in the window shows it too.
+    picker = GMDiskPicker.mount(document.body, {
+        extension: '/SPR',
+        disk,
+        windowDropEnabled: true,
+        onPickFile: (name, bytes) => loadSpriteFromDisk(name, bytes),
+        // Multi-match drop drops the user straight into the GameMaker-
+        // authentic browsable preview: arrow-keys cycle through sprites
+        // on the disk with live preview on the canvas. Same UI as the
+        // in-app "load" button (file menu → btn3), so users see one
+        // browsing UI regardless of entry point.
+        showPicker: () => enterLoadMode()
+    });
+
     // URL-driven loading: ?disk=<url>&file=<name> — fetches the disk and
     // opens the named sprite. Fire-and-forget; messages on failure.
     initFromUrl();
 }
 
+let picker = null;
+
 async function initFromUrl() {
     await GMTools.initFromUrl({
         disk, showMessage, expectedExt: '/SPR', loadFile: loadSpriteFromDisk,
-        // ?disk=X with no ?file= and multiple SPRs on the disk: fall back
-        // to the standard sprite-filtered popup.
-        showPicker: () => showDiskPopup()
+        // ?disk=X with no ?file= and multiple SPRs: drop into the
+        // browsable preview mode (arrow-keys cycle through sprites).
+        showPicker: () => enterLoadMode()
     });
 }
 

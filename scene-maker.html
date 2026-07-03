@@ -384,6 +384,7 @@
 <script src="js/gmDisk.js"></script>
 <script src="js/c64lib.js"></script>
 <script src="js/gmTools.js"></script>
+<script src="js/gmDiskPicker.js"></script>
 <script src="js/gmScene.js"></script>
 <script src="js/gmCharset.js"></script>
 
@@ -486,6 +487,21 @@ function init() {
     // restored scene instead of the blank one.
     restoreSceneSession();
 
+    // Shared disk picker: URL-driven ?disk=X with 2+ PICs falls back to
+    // this; drag-and-drop of a .d64 anywhere in the window shows it too.
+    picker = GMDiskPicker.mount(document.body, {
+        extension: '/PIC',
+        disk,
+        windowDropEnabled: true,
+        onPickFile: (name, bytes) => loadSceneFromDisk(name, bytes),
+        // Multi-match drop drops the user straight into the GameMaker-
+        // authentic browsable preview: arrow-keys cycle through scenes
+        // on the disk with live preview on the canvas. Same UI as the
+        // in-app "load" button, so users see one browsing UI regardless
+        // of entry point.
+        showPicker: () => enterLoadMode()
+    });
+
     // URL-driven loading: ?disk=<url>&file=<name>. Fire-and-forget;
     // GMTools.initFromUrl handles errors via showMessage.
     initFromUrl();
@@ -523,12 +539,14 @@ function init() {
 
 }
 
+let picker = null;
+
 async function initFromUrl() {
     await GMTools.initFromUrl({
         disk, showMessage, expectedExt: '/PIC', loadFile: loadSceneFromDisk,
-        // ?disk=X with no ?file= and multiple PICs on the disk: fall back
-        // to the standard scene-filtered popup.
-        showPicker: () => showDiskPopup()
+        // ?disk=X with no ?file= and multiple PICs: drop into the
+        // browsable preview mode (arrow-keys cycle through scenes).
+        showPicker: () => enterLoadMode()
     });
 }
 

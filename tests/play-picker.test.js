@@ -1,10 +1,10 @@
 /**
- * play.html picker / drop-zone tests
+ * gmDiskPicker mount + play.html-specific behavior
  *
- * Verifies the fallback UI when the visitor arrives without a game to
- * play:
  *   - bare play.html (no ?disk=) shows the drop-zone
  *   - the file input inside the drop-zone accepts .d64 files
+ *   - every editor (editor / sprite / scene / sound / music) mounts the
+ *     picker on load, but keeps it hidden until a drag/URL triggers it
  */
 
 import { describe, test, expect, afterAll } from 'vitest';
@@ -33,13 +33,15 @@ async function loadPage(pathAndQuery) {
     return page;
 }
 
+// GMDiskPicker uses class-based DOM (`.gmdp-*`) rather than IDs so that
+// multiple pickers or hosts can't collide. Test against those class hooks.
 describe('play.html picker', () => {
     test('bare visit shows the drop-zone overlay', async () => {
         const page = await loadPage('');
         const state = await page.evaluate(() => {
-            const overlay = document.getElementById('pickerOverlay');
-            const drop = document.getElementById('dropContent');
-            const pick = document.getElementById('pickContent');
+            const overlay = document.querySelector('.gmdp-overlay');
+            const drop = document.querySelector('.gmdp-drop-section');
+            const pick = document.querySelector('.gmdp-pick-section');
             return {
                 overlayActive: overlay?.classList.contains('active'),
                 dropVisible: drop && drop.style.display !== 'none',
@@ -54,8 +56,36 @@ describe('play.html picker', () => {
 
     test('drop-zone hosts a file input accepting .d64', async () => {
         const page = await loadPage('');
-        const accept = await page.$eval('#dropInput', el => el.accept);
+        const accept = await page.$eval('.gmdp-drop-input', el => el.accept);
         await page.close();
         expect(accept).toBe('.d64');
     }, 15000);
+});
+
+// Every editor mounts the picker at init (used by both the ?disk= URL
+// fallback and the window-level drag-and-drop). Verify it exists but
+// stays hidden on a bare visit.
+describe('editor picker mounts', () => {
+    const HTMLS = ['editor.html', 'sprite-maker.html', 'scene-maker.html',
+                   'sound-maker.html', 'music-maker.html'];
+    for (const html of HTMLS) {
+        test(`${html} mounts the picker hidden`, async () => {
+            if (!browser) browser = await puppeteer.launch({ headless: true });
+            const page = await browser.newPage();
+            await page.goto(`file://${join(PROJECT_ROOT, html)}`, {
+                waitUntil: 'domcontentloaded', timeout: 10000
+            });
+            await new Promise(r => setTimeout(r, 300));
+            const state = await page.evaluate(() => {
+                const overlay = document.querySelector('.gmdp-overlay');
+                return {
+                    exists: !!overlay,
+                    active: overlay?.classList.contains('active'),
+                };
+            });
+            await page.close();
+            expect(state.exists).toBe(true);
+            expect(state.active).toBe(false);
+        }, 15000);
+    }
 });

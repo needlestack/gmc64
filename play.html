@@ -14,6 +14,12 @@
        playfield symmetrically without stealing room for controls. */
     --bar-height: 44px;
     --top-height: 22px;
+
+    /* #gameBorder's actual height — mirrors the canvas sizing formula so
+       gmDiskPicker's responsive padding keys off the real available
+       space rather than raw viewport height. The picker's CSS falls
+       back to 100vh when this var isn't defined (editor pages don't). */
+    --gameborder-h: min(75vw, calc(100vh - var(--bar-height) - var(--top-height)));
 }
 html, body {
     margin: 0;
@@ -63,10 +69,14 @@ body {
 /* Canvas wrapper — no padding: the bottom bar acts as the bottom border,
    and the black body background surrounds the canvas on the other sides.
    Kept as an element mostly for structural symmetry with editor.html and
-   in case we want to reintroduce a runtime-tinted border later. */
+   in case we want to reintroduce a runtime-tinted border later.
+   overflow: hidden clips the picker-overlay if the viewport is too small
+   to fit the mini-screen at its minimum size — better than letting it
+   spill outside the play area. */
 #gameBorder {
     display: inline-block;
     position: relative;
+    overflow: hidden;
 }
 
 /* Canvas scales to fit viewport while preserving the CRT-authentic 6:5
@@ -89,21 +99,29 @@ body {
     image-rendering: pixelated;
     image-rendering: crisp-edges;
     max-width: 960px;
+    /* Never render smaller than the editor's canonical 480×400 canvas.
+       Below this viewport size the canvas overflows #gameBorder and clips
+       against body's overflow: hidden — a deliberate contract that the
+       app is designed for at least 480×400 of visible game area. */
+    min-width: 480px;
 }
 
 /* Full-canvas overlay with the play button. Sits above the game until the
    user clicks — at which point the click both starts the VM and unlocks
-   the AudioContext in the same gesture (browser autoplay policy). */
+   the AudioContext in the same gesture (browser autoplay policy). Hidden
+   by default so it doesn't cover the drop-zone; add `.active` once a
+   program is loaded and ready to play, or on an error we want to surface. */
 #playOverlay {
+    display: none;
     position: absolute;
     inset: 0;
     background: rgba(0, 0, 0, 0.55);
-    display: flex;
     align-items: center;
     justify-content: center;
     z-index: 100;
     cursor: pointer;
 }
+#playOverlay.active { display: flex; }
 
 #playButton {
     width: 96px;
@@ -131,96 +149,6 @@ body {
     opacity: 0.85;
 }
 #playButton svg { width: 44px; height: 44px; display: block; }
-
-/* Same overlay geometry as #playOverlay but semantically different:
-   this one is shown when we don't yet have a game to play — either to
-   drop / pick a .d64 file, or to choose one of several programs on it.
-   Never shown in the exported HTML (embedded data path bypasses it). */
-#pickerOverlay {
-    display: none;
-    position: absolute;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.85);
-    align-items: center;
-    justify-content: center;
-    z-index: 90;
-    padding: 24px;
-    box-sizing: border-box;
-}
-#pickerOverlay.active { display: flex; }
-
-#pickerOverlay .picker-content {
-    width: 100%;
-    max-width: 420px;
-    color: rgba(255, 255, 255, 0.9);
-    font-family: system-ui, -apple-system, sans-serif;
-    text-align: center;
-}
-
-#pickerOverlay h2 {
-    font-size: 16px;
-    margin: 0 0 8px 0;
-    font-weight: normal;
-    letter-spacing: 0.3px;
-}
-#pickerOverlay p {
-    font-size: 13px;
-    margin: 0 0 16px 0;
-    color: rgba(255, 255, 255, 0.6);
-}
-
-/* Drop target — dashed border, hover state, "or choose file" fallback. */
-#dropTarget {
-    padding: 32px 20px;
-    border: 2px dashed rgba(255, 255, 255, 0.3);
-    border-radius: 8px;
-    cursor: pointer;
-    transition: border-color 0.15s, background 0.15s;
-}
-#dropTarget:hover,
-#dropTarget.drag-over {
-    border-color: rgba(255, 255, 255, 0.7);
-    background: rgba(255, 255, 255, 0.05);
-}
-#dropTarget .drop-hint {
-    font-size: 14px;
-    margin-bottom: 4px;
-}
-#dropTarget .drop-sub {
-    font-size: 12px;
-    color: rgba(255, 255, 255, 0.5);
-}
-#dropTarget input[type="file"] { display: none; }
-
-/* Program picker (shown after a disk is loaded with 2+ PRGs). */
-#programList {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    max-height: 60vh;
-    overflow-y: auto;
-    text-align: left;
-}
-#programList li {
-    padding: 10px 14px;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 4px;
-    margin-bottom: 6px;
-    cursor: pointer;
-    font-family: monospace;
-    font-size: 13px;
-    transition: background 0.1s, border-color 0.1s;
-}
-#programList li:hover {
-    background: rgba(255, 255, 255, 0.08);
-    border-color: rgba(255, 255, 255, 0.4);
-}
-
-#pickerOverlay .picker-error {
-    color: #ff9090;
-    font-size: 13px;
-    margin-top: 12px;
-}
 
 /* Right-side control cluster in the bottom bar. Visual order DOM=left→right:
    hamburger, pause, mute (audio indicator mounts last). */
@@ -343,27 +271,8 @@ body {
             </svg>
         </button>
     </div>
-    <!-- Only shown when the visitor arrives without a disk. Toggles
-         between a drop-zone (state 1) and a program picker (state 2)
-         via .mode-drop / .mode-pick classes set from JS. -->
-    <div id="pickerOverlay">
-        <div class="picker-content">
-            <div id="dropContent">
-                <h2>Play a .d64 disk</h2>
-                <label id="dropTarget" for="dropInput">
-                    <div class="drop-hint">Drop a <code>.d64</code> here</div>
-                    <div class="drop-sub">or click to choose a file</div>
-                    <input type="file" id="dropInput" accept=".d64">
-                </label>
-                <div id="dropError" class="picker-error" style="display: none;"></div>
-            </div>
-            <div id="pickContent" style="display: none;">
-                <h2>Choose a program</h2>
-                <p id="pickDiskName"></p>
-                <ul id="programList"></ul>
-            </div>
-        </div>
-    </div>
+    <!-- GMDiskPicker mounts its overlay here at init time (state managed
+         from JS: drop-zone → program-picker → error). -->
 </div>
 <!-- Bottom border strip. Holds the credit link, control cluster (hamburger,
      pause, audio indicator), and the settings popup (opens above the bar).
@@ -414,6 +323,7 @@ body {
 <script src="js/gmAudioIndicator.js"></script>
 <script src="js/gmPoster.js"></script>
 <script src="js/gmPlayerChrome.js"></script>
+<script src="js/gmDiskPicker.js"></script>
 
 <script>
 // Chrome-free game player. Two run modes:
@@ -456,6 +366,8 @@ let currentProgramData = null;
 let currentFileData = null;
 let currentFileName = null;
 let animationFrameToggle = false;
+// Handle to the mounted GMDiskPicker (assigned in init).
+let picker = null;
 
 // Input preset settings — persisted in localStorage. Different key from
 // the editor so per-context choices don't leak between them.
@@ -487,7 +399,27 @@ async function init() {
     document.getElementById('hamburgerBtn').innerHTML = GMPlayerChrome.ICONS.hamburger;
 
     populateJoystickSelects();
-    setupDropZone();
+
+    // Mount the shared disk picker inside the game border. Window-level
+    // drops are enabled here too so someone with a game already loaded
+    // can drag a fresh .d64 to swap games.
+    picker = GMDiskPicker.mount(document.getElementById('gameBorder'), {
+        extension: '/PRG',
+        // Promote dropped disks into the shared localStorage pool + make
+        // them the current disk. Other editors see the same pool.
+        disk,
+        windowDropEnabled: true,
+        onPickFile: (name, bytes, d64 /*, diskLabel */) => {
+            // gmParser needs loadFileByName to resolve multi-part sprite
+            // references etc. — module wired it too, but re-set here so
+            // we're consistent regardless of code path.
+            globalThis.loadFileByName = (n) => {
+                try { return d64.readFile(n); } catch (e) { return null; }
+            };
+            proceedWithProgram(name, bytes);
+        }
+    });
+
     document.getElementById('hamburgerBtn').addEventListener('click', toggleSettingsPopup);
     document.getElementById('playOverlay').addEventListener('click', startGame);
 
@@ -563,7 +495,7 @@ async function loadGame() {
 
     const params = new URLSearchParams(location.search);
     if (!params.has('disk')) {
-        showDropZone();
+        picker.showDropZone();
         return;
     }
 
@@ -581,9 +513,18 @@ async function loadGame() {
 
     const fileName = params.get('file');
     if (!fileName) {
-        // No specific file requested — hand off to the auto/picker path
-        // over whatever's on the fetched disk.
-        handleProgramList(disk.disk, disk.diskFileName || params.get('disk'));
+        // No specific file requested — enumerate PRGs and auto-load if
+        // there's only one, or hand off to the picker for multiple.
+        const prgs = GMTools.listFilesByExtension(disk.disk, '/PRG');
+        if (prgs.length === 0) {
+            showPlayButtonError('no programs on disk');
+            return;
+        }
+        if (prgs.length === 1) {
+            proceedWithProgram(prgs[0], disk.disk.readFile(prgs[0]));
+            return;
+        }
+        picker.showProgramPicker(disk.disk, prgs, disk.diskFileName || params.get('disk'));
         return;
     }
 
@@ -607,108 +548,16 @@ async function loadGame() {
 }
 
 // Once we have a name + bytes for the program we want to run, this
-// commits it, kicks off the poster, and hides any drop-zone / picker
-// overlay so the user sees the play button. Shared by all three entry
-// modes (embedded, URL, drop).
+// commits it, kicks off the poster, and reveals the play button.
+// Shared by all three entry modes (embedded, URL, drop).
 function proceedWithProgram(name, bytes) {
     currentFileName = name;
     currentFileData = bytes;
     currentProgramData = parseProgramData(bytes);
-    document.getElementById('pickerOverlay').classList.remove('active');
+    picker.hide();
+    document.getElementById('playOverlay').classList.add('active');
     // Fire-and-forget — a poster failure never blocks the play button.
     generatePoster();
-}
-
-// Called when we have a disk but no specific file. Enumerate PRGs and
-// decide: auto-load a single one, show the picker for many, or error
-// out if there are none.
-function handleProgramList(d64, diskLabel) {
-    const prgs = GMTools.listFilesByExtension(d64, '/PRG');
-    if (prgs.length === 0) {
-        showPlayButtonError('no programs on disk');
-        return;
-    }
-    if (prgs.length === 1) {
-        const bytes = d64.readFile(prgs[0]);
-        if (!bytes) { showPlayButtonError('read failed'); return; }
-        proceedWithProgram(prgs[0], bytes);
-        return;
-    }
-    showProgramPicker(d64, prgs, diskLabel);
-}
-
-// State 1 of pickerOverlay: drop-zone. Shown when the visitor arrives
-// without any disk source at all.
-function showDropZone() {
-    document.getElementById('dropContent').style.display = '';
-    document.getElementById('pickContent').style.display = 'none';
-    document.getElementById('dropError').style.display = 'none';
-    document.getElementById('pickerOverlay').classList.add('active');
-}
-
-// State 2 of pickerOverlay: program picker. Shown when a disk is loaded
-// (via URL or drop) and has multiple PRGs. Clicking a row proceeds.
-function showProgramPicker(d64, prgs, diskLabel) {
-    document.getElementById('dropContent').style.display = 'none';
-    document.getElementById('pickContent').style.display = '';
-    document.getElementById('pickDiskName').textContent = diskLabel || '';
-
-    const list = document.getElementById('programList');
-    list.innerHTML = '';
-    for (const name of prgs) {
-        const li = document.createElement('li');
-        li.textContent = name;
-        li.addEventListener('click', () => {
-            const bytes = d64.readFile(name);
-            if (!bytes) return;
-            proceedWithProgram(name, bytes);
-        });
-        list.appendChild(li);
-    }
-    document.getElementById('pickerOverlay').classList.add('active');
-}
-
-// Drop-zone wiring — attached at page load. File input + drag/drop
-// both funnel through the same handleDroppedFile path.
-function setupDropZone() {
-    const target = document.getElementById('dropTarget');
-    const input = document.getElementById('dropInput');
-
-    input.addEventListener('change', () => {
-        if (input.files && input.files[0]) handleDroppedFile(input.files[0]);
-    });
-
-    target.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        target.classList.add('drag-over');
-    });
-    target.addEventListener('dragleave', () => target.classList.remove('drag-over'));
-    target.addEventListener('drop', (e) => {
-        e.preventDefault();
-        target.classList.remove('drag-over');
-        const file = e.dataTransfer?.files?.[0];
-        if (file) handleDroppedFile(file);
-    });
-}
-
-// Handle a File object (from drop or picker). Read the bytes, validate
-// it's a plausible D64, then run the same enumerate/auto/pick flow the
-// URL path uses.
-async function handleDroppedFile(file) {
-    const err = document.getElementById('dropError');
-    err.style.display = 'none';
-    try {
-        const bytes = new Uint8Array(await file.arrayBuffer());
-        // D64 constructor will throw on garbage input; catch below.
-        const d64 = new D64(bytes);
-        globalThis.loadFileByName = (name) => {
-            try { return d64.readFile(name); } catch (e) { return null; }
-        };
-        handleProgramList(d64, file.name);
-    } catch (e) {
-        err.textContent = "that doesn't look like a valid .d64";
-        err.style.display = '';
-    }
 }
 
 // Decode a base64 string to a Uint8Array. Chunk-loop because atob
@@ -725,6 +574,9 @@ function showPlayButtonError(text) {
     btn.textContent = text;
     btn.disabled = true;
     btn.setAttribute('aria-label', text);
+    // The play overlay is hidden by default now — surface it so the
+    // error message is actually visible.
+    document.getElementById('playOverlay').classList.add('active');
 }
 
 // The play button is the user gesture that both starts the VM and
@@ -732,7 +584,7 @@ function showPlayButtonError(text) {
 // this handler so browser autoplay policies stay satisfied.
 async function startGame() {
     if (!currentProgramData) return;
-    document.getElementById('playOverlay').style.display = 'none';
+    document.getElementById('playOverlay').classList.remove('active');
 
     if (!screen) screen = new c64Screen('gameCanvas');
     if (!vm) vm = new gmVM(screen);

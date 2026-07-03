@@ -732,6 +732,7 @@
 <script src="js/gmSound.js"></script>
 <script src="js/gmMusic.js"></script>
 <script src="js/gmTools.js"></script>
+<script src="js/gmDiskPicker.js"></script>
 <script src="js/midiImport.js"></script>
 <script>
 // ============================================================================
@@ -853,18 +854,31 @@ function initApp() {
     setupNavButtons();
     updateUndoButton();
 
+    // Shared disk picker: URL-driven ?disk=X with 2+ SNGs falls back to
+    // this; drag-and-drop of a .d64 anywhere in the window shows it too.
+    picker = GMDiskPicker.mount(document.body, {
+        extension: '/SNG',
+        disk,
+        windowDropEnabled: true,
+        onPickFile: (name, bytes) => loadSongFromDisk(name, bytes),
+        // Multi-match drop opens the music-filtered file popup.
+        showPicker: () => showFilePopup()
+    });
+
     // URL-driven loading: ?disk=<url>&file=<name>. Fire-and-forget;
     // GMTools.initFromUrl handles errors via showMessage.
     initFromUrl();
 }
+
+let picker = null;
 
 async function initFromUrl() {
     // music-maker has no plain showMessage helper; GMTools.initFromUrl
     // falls back to console.warn when one isn't provided.
     await GMTools.initFromUrl({
         disk, expectedExt: '/SNG', loadFile: loadSongFromDisk,
-        // ?disk=X with no ?file= and multiple SNGs on the disk: fall back
-        // to the standard music-filtered popup.
+        // ?disk=X with no ?file= and multiple SNGs: open the music-
+        // filtered file popup.
         showPicker: () => showFilePopup()
     });
 }

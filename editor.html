@@ -510,6 +510,11 @@ body.kbd-active .program-line .instruction:hover {
     image-rendering: pixelated;
     image-rendering: crisp-edges;
     max-width: 960px;
+    /* Never render smaller than the editor's canonical 480×400 canvas.
+       Below this viewport size the canvas overflows and clips against
+       body — a deliberate contract that the app is designed for at
+       least 480×400 of visible game area. */
+    min-width: 480px;
 }
 
 /* Play-button overlay for ?play=1 / ?play_demo=1. Poster preview renders
@@ -1005,6 +1010,7 @@ body.kbd-active .program-line .instruction:hover {
 <script src="js/d64lib.js"></script>
 <script src="js/gmDisk.js"></script>
 <script src="js/gmTools.js"></script>
+<script src="js/gmDiskPicker.js"></script>
 <script src="js/gmOpcodes.js"></script>
 <script src="js/gmSprite.js"></script>
 <script src="js/gmScene.js"></script>
@@ -1280,6 +1286,24 @@ function initApp() {
     // Mount the audio indicator at the end of the bottom-bar control
     // cluster (rightmost icon). onUnlock restarts any song whose schedule
     // window was missed during AudioContext suspension.
+    // Shared disk picker: fallback for URL-driven ?disk=X with 2+ PRGs,
+    // plus window-level drag-and-drop of .d64 files anywhere in the
+    // editor. On pick, loadProgramData + saveProgram mirror what
+    // showFilePopup's onSelect used to do.
+    picker = GMDiskPicker.mount(document.body, {
+        extension: '/PRG',
+        disk: gmDisk,
+        windowDropEnabled: true,
+        onPickFile: (name, bytes) => {
+            loadProgramData(name, bytes);
+            saveProgram(name, bytes);
+            updateStatusInfo();
+        },
+        // Multi-match drop hands off to the standard file popup rather
+        // than the module's overlay picker — one file browser to learn.
+        showPicker: () => showFilePopup()
+    });
+
     audioIndicator = new GMAudioIndicator(document.getElementById('gameControls'));
     audioIndicator.bind({
         getMuted: () => audioMuted,
@@ -1334,16 +1358,18 @@ function initApp() {
 // up the editor-specific "load into editor, optionally show play overlay"
 // step. Accepts synthesized `params` so the `?play_demo=1` alias can
 // dispatch a demo load without rewriting the browser URL.
+let picker = null;
+
 async function autoLoadFromUrl(params) {
     await GMTools.initFromUrl({
         disk: gmDisk,
         showMessage,
         expectedExt: '/PRG',
         params,
-        // ?disk=X with no ?file= and multiple PRGs on the disk: hand off
-        // to the standard file popup filtered to programs. Its onSelect
-        // routes back through loadProgramData, so the picked file lands
-        // in the editor the same way as an explicit ?file= would.
+        // ?disk=X with no ?file= and multiple PRGs: open the standard
+        // file popup. Its onSelect routes back through loadProgramData,
+        // so the picked file lands in the editor the same way as an
+        // explicit ?file= would.
         showPicker: () => showFilePopup(),
         loadFile: (actualName, fileData, params) => {
             loadProgramData(actualName, fileData);

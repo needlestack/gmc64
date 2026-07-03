@@ -987,6 +987,7 @@ td:has(.slider-speed) {
 <script src="js/c64lib.js"></script>
 <script src="js/gmSound.js"></script>
 <script src="js/gmTools.js"></script>
+<script src="js/gmDiskPicker.js"></script>
 <script>
 
 // GMDisk instance
@@ -1831,13 +1832,15 @@ function restoreSoundSession() {
     }
 }
 
+let picker = null;
+
 async function initFromUrl() {
     // sound-maker has no visible message area; GMTools.initFromUrl falls
     // back to console.warn when showMessage isn't provided.
     await GMTools.initFromUrl({
         disk, expectedExt: '/SND', loadFile: loadSoundFromDisk,
-        // ?disk=X with no ?file= and multiple SNDs on the disk: fall back
-        // to the standard sound-filtered popup.
+        // ?disk=X with no ?file= and multiple SNDs: open the sound-
+        // filtered file popup.
         showPicker: () => showDiskPopup()
     });
 }
@@ -1845,6 +1848,16 @@ async function initFromUrl() {
 // Initialize with a new sound, then try to restore last session
 newSound();
 restoreSoundSession();
+// Shared disk picker: URL-driven ?disk=X with 2+ SNDs falls back to this;
+// drag-and-drop of a .d64 anywhere in the window shows it too.
+picker = GMDiskPicker.mount(document.body, {
+    extension: '/SND',
+    disk,
+    windowDropEnabled: true,
+    onPickFile: (name, bytes) => loadSoundFromDisk(name, bytes),
+    // Multi-match drop opens the sound-filtered file popup.
+    showPicker: () => showDiskPopup()
+});
 initFromUrl();
 
 </script>
