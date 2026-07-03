@@ -10,6 +10,12 @@
 
 const GMTools = {
 
+    // Filename used when the bundled demo disk is mounted into the shared
+    // pool — shown to users in the disk picker and stored in localStorage.
+    // Kept lowercase to match the on-disk file (disks/gmc64-demo.d64) and
+    // the project's lowercase branding.
+    DEMO_DISK_FILENAME: 'gmc64-demo.d64',
+
     // =========================================================================
     // COLOR PICKER
     // =========================================================================
@@ -1370,7 +1376,7 @@ const GMTools = {
                     msg(`couldn't load demo disk bundle`);
                     return false;
                 }
-                displayName = 'GMC64-DEMO.d64';
+                displayName = GMTools.DEMO_DISK_FILENAME;
             } else {
                 const response = await fetch(diskUrl);
                 if (!response.ok) {
@@ -1457,7 +1463,7 @@ const GMTools = {
         if (GMDisk.getPool().length > 0) return;
         const bytes = await GMTools.getDemoDiskBytes();
         if (!bytes) return;
-        const id = await GMDisk.addToPool(bytes, 'GMC64-DEMO.d64');
+        const id = await GMDisk.addToPool(bytes, GMTools.DEMO_DISK_FILENAME);
         // Only claim the seeded disk if no URL-driven load beat us to it.
         if (!gmDisk.hasDisk()) gmDisk.selectDisk(id);
     },

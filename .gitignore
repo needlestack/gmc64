@@ -19,7 +19,6 @@ tools/test-frame-*.png
 tools/golden-frame-*.png
 
 # Local-only working notes
-CLAUDE.md
 TODO.md
 
 # ---------------------------------------------------------------------------
