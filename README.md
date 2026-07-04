@@ -237,18 +237,22 @@ are welcome.
 The overall user experience should be significantly better than running
 GameMaker under an emulator.
 
+However, there is no mobile support. I have not implemented any touch controls.
+gmc64 is currently desktop/laptop only. This will change in the future.
+
 **Known limitations:**
 
-- **Instruction timing is not cycle-accurate.** The JavaScript engine runs at 60fps and
-executes 50 ops (GameMaker instructions) per frame. This is very close to the
-original, but programs that rely on precise timing loops may have some timing
-issues. 
-- **Music-maker instrument sounds aren't fine-tuned.** The song instruments are very rough
-approximations of the original GameMaker tones. They sound similar in most cases but songs
-will sound somewhat different.
-- **Music and sound effects polyphony.** The original C64 could only generate 3 voices at
-once, so sound effects would steal voices temporarily from music. gmc64 does not emulate this
-and so you have three channels for music and three more channels for sound.
+- **Instruction timing is not cycle-accurate.** The JavaScript engine runs at
+  60fps and executes 50 ops (GameMaker instructions) per frame. This is very
+close to the original, but programs that rely on precise timing loops may have
+some timing issues. 
+- **Music-maker instrument sounds aren't fine-tuned.** The song instruments are
+  very rough approximations of the original GameMaker tones. They sound similar
+in most cases but songs will sound somewhat different.
+- **Music and sound effects polyphony.** The original C64 could only generate 3
+  voices at once, so sound effects would steal voices temporarily from music.
+gmc64 does not emulate this and so you have three channels for music and three
+more channels for sound.
 
 ## Technical notes
 
