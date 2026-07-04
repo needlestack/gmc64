@@ -38,3 +38,10 @@ TODO.md
 # Public-facing demo disks (curated content, may evolve over time)
 !disks/
 !disks/**
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
