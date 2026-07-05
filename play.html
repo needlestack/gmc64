@@ -851,7 +851,9 @@ async function startGame() {
     const programData = parseProgramData(currentFileData);
     const ast = buildAST(programData);
     vm.loadProgram(ast, currentFileData);
-    vm.start({ opsPerFrame: 50, frameMs: 16 });
+    // frameMs pinned to NTSC C64 rate (59.94Hz), catchup on so game speed
+    // is wall-clock consistent even under browser throttling.
+    vm.start({ opsPerFrame: 50, frameMs: 1000 / 59.94, catchup: true });
     GMPlayerChrome.setPauseIcon(pauseBtn, false);
 }
 

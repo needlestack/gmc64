@@ -1245,7 +1245,10 @@ let vm = null;
 let screen = null;
 const charset = new gmCharset();
 let animationFrameToggle = false;
-const FRAME_TIME = 16; // ms (~60fps)
+// NTSC C64 vertical blank rate — the hardware clock GameMaker programs
+// were authored against. 1000/60 (16.667) would be close but overshoots
+// slightly; the exact NTSC rate is 59.94Hz. setTimeout accepts floats.
+const FRAME_TIME = 1000 / 59.94; // ~16.683 ms
 let maxInstructionsPerFrame = 50;
 
 // FPS tracking
@@ -4843,9 +4846,13 @@ function runProgram() {
         lastFpsUpdate = Date.now();
 
         // VM owns its loop now. onFrame keeps the stats readout alive.
+        // catchup:true → run as many virtual frames per browser tick as
+        // wall-clock time has passed, keeping in-game speed independent of
+        // browser drift/throttling. Paired with the NTSC frameMs above.
         vm.start({
             opsPerFrame: maxInstructionsPerFrame,
             frameMs: FRAME_TIME,
+            catchup: true,
             onFrame: onVmFrame
         });
         showMessage('Running...');
