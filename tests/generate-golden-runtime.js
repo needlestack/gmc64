@@ -291,7 +291,7 @@ saveGolden('runtime-GMC64I-5000steps.json', captureState(vm));
 // plotted content so a regression in scene plotting would change the
 // snapshot.
 const gmc64iFrame = { ...captureState(vm) };
-vm.render(false);
+vm.renderPixels();
 gmc64iFrame.sampleIndices = frameSampleIndices();
 gmc64iFrame.pixelSamples = gmc64iFrame.sampleIndices.map(i => vm.screen.pixels[i]);
 console.log('  GMC64I frame samples: ' + (gmc64iFrame.sampleIndices.length / 4) + ' pixels');
@@ -309,7 +309,7 @@ saveGolden('runtime-ALIENS-100steps.json', captureState(vm));
 // start of the game with the starfield scene live.
 function frameWithSamples(vm) {
     const out = { ...captureState(vm) };
-    vm.render(false);
+    vm.renderPixels();
     out.sampleIndices = frameSampleIndices();
     out.pixelSamples = out.sampleIndices.map(i => vm.screen.pixels[i]);
     return out;

@@ -4,7 +4,9 @@
 <meta charset="utf-8">
 <title>gmc64 — player</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+CiAgPGRlZnM+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9ImciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjNDAzMThkIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iLjI1IiBzdG9wLWNvbG9yPSIjNDAzMThkIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iLjI1IiBzdG9wLWNvbG9yPSIjNzg2OWM0Ii8+CiAgICAgIDxzdG9wIG9mZnNldD0iLjUiIHN0b3AtY29sb3I9IiM3ODY5YzQiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIuNSIgc3RvcC1jb2xvcj0iIzY3YjZiZCIvPgogICAgICA8c3RvcCBvZmZzZXQ9Ii43NSIgc3RvcC1jb2xvcj0iIzY3YjZiZCIvPgogICAgICA8c3RvcCBvZmZzZXQ9Ii43NSIgc3RvcC1jb2xvcj0iIzQwMzE4ZCIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiM0MDMxOGQiLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgPC9kZWZzPgogIDxyZWN0IHdpZHRoPSIzMiIgaGVpZ2h0PSIzMiIgcng9IjQiIGZpbGw9InVybCgjZykiLz4KPC9zdmc+Cg==">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- user-scalable=no + maximum-scale=1 stop iOS from pinch-zooming the game
+     surface. Without this the joystick hitboxes shift under the finger. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="description" content="Play Commodore 64 GameMaker programs in the browser — no install, no emulator setup.">
 
 <!-- Social preview cards for shared game links (?disk=…&file=…). The
@@ -53,6 +55,15 @@ html, body {
     color: #eee;
     font-family: system-ui, -apple-system, sans-serif;
     overflow: hidden;
+    /* Stop iOS from rubber-banding when a finger drags the joystick past
+       the visible edge. touch-action: none on body prevents the browser
+       from claiming any gesture; game controls fully own touch input. */
+    overscroll-behavior: contain;
+    touch-action: none;
+    /* Respect notches/home indicators in landscape when fullscreen. */
+    padding: env(safe-area-inset-top) env(safe-area-inset-right)
+             env(safe-area-inset-bottom) env(safe-area-inset-left);
+    box-sizing: border-box;
 }
 
 body {
@@ -282,6 +293,104 @@ body {
     font-family: monospace;
 }
 .credit:hover { color: rgba(255, 255, 255, 0.9); }
+
+/* === TOUCH CONTROLS OVERLAY ===
+   Rendered by js/gmTouchControls.js. Positioned absolutely over
+   #playArea so it floats atop the canvas. pointer-events on children
+   only — a passthrough parent lets tap-anywhere-else behaviour still
+   reach the underlying canvas (e.g. the play overlay). */
+.gm-touch-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 50;      /* under playOverlay(100), above canvas */
+    pointer-events: none;
+    touch-action: none;
+}
+.gm-touch-joystick,
+.gm-touch-fire {
+    position: absolute;
+    pointer-events: auto;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+/* Left-anchored joystick base. Semi-translucent ring with a puck in the
+   middle. Sized generously so it's usable with a thumb — thumb-friendly
+   touch targets need ≥ 48pt/64px minimum, this is ~140. */
+.gm-touch-joystick {
+    left: 24px;
+    bottom: 24px;
+    width: 140px;
+    height: 140px;
+    border: 2px solid rgba(255, 255, 255, 0.25);
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.05);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.1s;
+}
+.gm-touch-joystick.gm-touch-active { background: rgba(255, 255, 255, 0.12); }
+.gm-touch-joystick-puck {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.35);
+    border: 2px solid rgba(255, 255, 255, 0.55);
+    pointer-events: none;    /* parent handles the touches */
+    transition: transform 0.05s linear;
+}
+/* Right-anchored fire button. Round, large, tinted red for at-a-glance
+   recognition. Pressed state darkens without shifting position. */
+.gm-touch-fire {
+    right: 24px;
+    bottom: 40px;
+    width: 96px;
+    height: 96px;
+    border-radius: 50%;
+    background: rgba(200, 40, 40, 0.35);
+    border: 2px solid rgba(255, 255, 255, 0.55);
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 42px;
+    line-height: 92px;
+    text-align: center;
+    transition: background 0.05s;
+}
+.gm-touch-fire.gm-touch-active { background: rgba(200, 40, 40, 0.65); }
+
+/* === PHONE LAYOUT MODE ===
+   When body.mobile-phone is set (by JS at init after device detection):
+     - top + bottom bars collapse to zero so the canvas fills the viewport
+     - credit link + hamburger + volume popup are hidden (real estate)
+     - canvas grows past its normal min-width limit and drops the 6:5
+       aspect ratio in favour of contain-fit on the phone screen. */
+body.mobile-phone #topBar { display: none; }
+body.mobile-phone #bottomBar {
+    height: 0;
+    /* Keep positioned children (settings popup) but hide the bar itself. */
+    background: transparent;
+}
+body.mobile-phone .credit,
+body.mobile-phone #hamburgerBtn,
+body.mobile-phone #settingsPopup { display: none !important; }
+/* Canvas fills phone viewport, preserving 6:5 aspect but no min-width. */
+body.mobile-phone #gameCanvas {
+    width: min(100vw, calc(100vh * 6 / 5));
+    height: min(100vh, calc(100vw * 5 / 6));
+    max-width: none;
+    min-width: 0;
+}
+/* On a phone we want the game controls (pause, fullscreen, mute)
+   floating in the top-right rather than fighting for the bottom bar. */
+body.mobile-phone #gameControls {
+    top: 8px;
+    right: 8px;
+    bottom: auto;
+    z-index: 60;
+    opacity: 0.55;
+}
+body.mobile-phone #gameControls:hover { opacity: 1; }
 </style>
 </head>
 <body>
@@ -313,13 +422,23 @@ body {
      covers these controls. -->
 <div id="bottomBar">
     <a class="credit" href="https://gmc64.com" target="_blank" rel="noopener">gmc64.com</a>
-    <!-- Hamburger, pause, audio-indicator (mounted). Hidden until first play. -->
+    <!-- Hamburger, pause, fullscreen, audio-indicator (mounted). Hidden
+         until first play. On phone layout mode the hamburger is hidden. -->
     <div id="gameControls" style="display: none;">
         <button id="hamburgerBtn" type="button" aria-label="Settings">
             <!-- icon injected in init() -->
         </button>
         <button id="pauseToggle" type="button" aria-label="Pause">
             <!-- icon injected on first pause state change -->
+        </button>
+        <button id="fullscreenToggle" type="button" aria-label="Fullscreen">
+            <!-- fullscreen icon; toggles between "enter" and "exit" glyph
+                 based on document.fullscreenElement -->
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M4 9 L4 4 L9 4 M15 4 L20 4 L20 9 M20 15 L20 20 L15 20 M9 20 L4 20 L4 15"
+                      fill="none" stroke="currentColor" stroke-width="2"
+                      stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
         </button>
         <!-- audio indicator mounts here at first play -->
     </div>
@@ -362,6 +481,7 @@ body {
 <script src="js/gmPoster.js"></script>
 <script src="js/gmPlayerChrome.js"></script>
 <script src="js/gmDiskPicker.js"></script>
+<script src="js/gmTouchControls.js"></script>
 
 <script>
 // Chrome-free game player. Two run modes:
@@ -418,6 +538,8 @@ if (!isFinite(userVolume) || userVolume < 0 || userVolume > 1) userVolume = 0.75
 const SFX_BASELINE = 0.3;
 // Handle to the mounted GMDiskPicker (assigned in init).
 let picker = null;
+// Handle to the mounted touch controls (null until startGame, no-op on desktop).
+let touchControls = null;
 
 // Input preset settings — persisted in localStorage. Different key from
 // the editor so per-context choices don't leak between them.
@@ -442,6 +564,13 @@ async function init() {
 
     if (new URLSearchParams(location.search).get('nocredit') === '1') {
         document.querySelector('.credit').style.display = 'none';
+    }
+
+    // Tag body with phone-layout class before any layout math runs so
+    // gameborder-h resolves against the mobile CSS from the first paint.
+    // Tablets keep the desktop layout (they have room for chrome).
+    if (GMTouchControls.isPhoneLayout()) {
+        document.body.classList.add('mobile-phone');
     }
 
     // Populate hamburger button icon (declared as empty in HTML). Pause
@@ -473,6 +602,13 @@ async function init() {
 
     document.getElementById('hamburgerBtn').addEventListener('click', toggleSettingsPopup);
     document.getElementById('playOverlay').addEventListener('click', startGame);
+    document.getElementById('fullscreenToggle').addEventListener('click', toggleFullscreen);
+    // Refresh fullscreen icon when the state actually changes (Escape key,
+    // browser gesture) so it doesn't stick showing "enter fullscreen"
+    // after the user has exited via a native path.
+    document.addEventListener('fullscreenchange', refreshFullscreenIcon);
+    document.addEventListener('webkitfullscreenchange', refreshFullscreenIcon);
+    refreshFullscreenIcon();
 
     // Shared input listener — gates on vm being present and running so
     // key presses before start / after end don't leak into inputState.
@@ -701,6 +837,15 @@ async function startGame() {
         pauseBtn.addEventListener('click', togglePause);
     }
 
+    // Mount touch controls on the play area (idempotent — no-op on desktop
+    // and if already mounted). We wait until startGame rather than mounting
+    // in init so the joystick doesn't appear on top of the play overlay.
+    if (!touchControls) {
+        touchControls = GMTouchControls.mount(
+            document.getElementById('playArea'),
+            { inputState, port: 1 });
+    }
+
     // Re-parse so the real run gets a fresh mediaStore, unmutated by
     // whatever the poster VM did.
     const programData = parseProgramData(currentFileData);
@@ -715,6 +860,40 @@ function togglePause() {
     if (vm.paused) vm.resume();
     else vm.pause();
     GMPlayerChrome.setPauseIcon(document.getElementById('pauseToggle'), vm.paused);
+}
+
+// Fullscreen toggle — targets documentElement so the game AND any floating
+// touch controls both scale into the fullscreen box. Uses webkit prefix
+// as fallback for iPad Safari, which supports Fullscreen API only under
+// that name. iOS iPhone Safari doesn't support it at all (silent no-op).
+function toggleFullscreen() {
+    const el = document.documentElement;
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+        (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    } else {
+        const req = el.requestFullscreen || el.webkitRequestFullscreen;
+        if (req) req.call(el);
+    }
+}
+
+function refreshFullscreenIcon() {
+    const btn = document.getElementById('fullscreenToggle');
+    if (!btn) return;
+    const active = !!(document.fullscreenElement || document.webkitFullscreenElement);
+    // "Enter" icon: outward arrows. "Exit" icon: inward arrows. Chosen for
+    // shape recognition rather than reading — the fine strokes render fine
+    // even in the reduced-opacity mobile chrome.
+    btn.innerHTML = active
+        ? `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+             <path d="M9 4 L9 9 L4 9 M15 4 L15 9 L20 9 M20 15 L15 15 L15 20 M4 15 L9 15 L9 20"
+                   fill="none" stroke="currentColor" stroke-width="2"
+                   stroke-linecap="round" stroke-linejoin="round"/>
+           </svg>`
+        : `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+             <path d="M4 9 L4 4 L9 4 M15 4 L20 4 L20 9 M20 15 L20 20 L15 20 M9 20 L4 20 L4 15"
+                   fill="none" stroke="currentColor" stroke-width="2"
+                   stroke-linecap="round" stroke-linejoin="round"/>
+           </svg>`;
 }
 
 // Kick off a poster render on the game canvas. Screen has to exist first

@@ -412,22 +412,42 @@ class gmVM {
         // This allows each slot to have independent colors
     }
 
-    // === RUN LOOP ===
-    // Embedders call start() to begin executing; the loop owns its own
-    // setTimeout chain so editor and standalone share one definition of
-    // game speed. Game speed = opsPerFrame * (1000 / frameMs) ops/sec;
-    // both knobs matter — changing only one halves or doubles speed.
+    // === RUN LOOP — fixed timestep with catch-up + variable-rate render ===
     //
-    // The loop also early-exits when the elapsed wall clock for a frame
-    // exceeds frameMs, so a slow vm.step() can't starve render.
+    // Game logic runs at exactly frameMs virtual rate (16ms = 60 Hz). Each
+    // browser tick, we consume as much wall-clock time as has passed and
+    // run that many "virtual frames" of logic before rendering once. This
+    // keeps in-game timing wall-clock-consistent even when the browser
+    // can't sustain 60fps render — e.g. when Safari on iPhone drops to
+    // 30fps under thermal pressure, we run 2 virtual frames per render
+    // and gameplay proceeds at the correct pace, just with fewer visible
+    // in-between states.
     //
-    // onFrame({ opsExecuted }) is optional — the editor uses it to drive
-    // its FPS / ops-per-frame sidebar dashboard.
+    // This is the pattern real emulators use: the C64 clocks at 60 Hz
+    // hardware-fixed and always did; our virtual clock does the same and
+    // the browser samples that state at whatever rate it can manage.
+    //
+    // MAX_CATCHUP_FRAMES caps how many virtual frames we'll run per browser
+    // tick — prevents "spiral of death" where a slow device permanently
+    // falls further behind trying to catch up. Also prevents a tab-switch
+    // (browsers may fire setTimeout LATE by many seconds) from triggering
+    // hundreds of virtual frames when the tab wakes.
+    //
+    // onFrame({ opsExecuted, virtualFrames }) — optional callback for
+    // sidebar dashboards. opsExecuted totals across all virtual frames
+    // this browser tick; virtualFrames tells you how many logic steps ran.
     start({ opsPerFrame = 50, frameMs = 16, onFrame = null } = {}) {
         this._loopOpsPerFrame = opsPerFrame;
         this._loopFrameMs = frameMs;
         this._loopOnFrame = onFrame;
         this._loopAnimToggle = false;
+        this._loopMaxCatchup = 4;                    // 4 virtual frames max per browser tick
+        // Bind once so setTimeout doesn't allocate a fresh closure per tick.
+        this._loopTickBound = () => this._loopTick();
+        // Seed the accumulator with one frame's worth so the first tick
+        // always runs at least one virtual frame.
+        this._loopLastTickTime = Date.now();
+        this._loopTimeAccumulator = frameMs;
         if (this._loopHandle) clearTimeout(this._loopHandle);
         this._loopHandle = null;
         this.running = true;
@@ -445,18 +465,58 @@ class gmVM {
     _loopTick() {
         this._loopHandle = null;
         if (!this.running || this.paused) return;
-        const frameStart = Date.now();
-        let opsExecuted = 0;
-        while (this.running && !this.paused && opsExecuted < this._loopOpsPerFrame) {
-            this.step();
-            opsExecuted++;
-            if (Date.now() - frameStart >= this._loopFrameMs) break;
+
+        // === Accumulate wall-clock time since last tick ===
+        const now = Date.now();
+        let delta = now - this._loopLastTickTime;
+        this._loopLastTickTime = now;
+
+        // Cap the accepted delta so a huge pause (tab switch, sleep, big
+        // GC hit) can't push us into a long catch-up. Anything beyond
+        // MAX_CATCHUP × frameMs is dropped — the game just continues from
+        // "now" as if that gap didn't exist.
+        const maxDelta = this._loopFrameMs * this._loopMaxCatchup;
+        if (delta > maxDelta) delta = maxDelta;
+        this._loopTimeAccumulator += delta;
+
+        // === Run virtual frames until the accumulator is drained ===
+        let virtualFramesRun = 0;
+        let opsExecutedTotal = 0;
+        while (
+            this._loopTimeAccumulator >= this._loopFrameMs &&
+            virtualFramesRun < this._loopMaxCatchup &&
+            this.running && !this.paused
+        ) {
+            // One virtual frame of game logic:
+            //   - step() up to opsPerFrame times
+            //   - sprite position update (movement physics)
+            //   - animation advance (every other virtual frame — matches the
+            //     ~30fps animation cadence of the original)
+            let opsExecuted = 0;
+            while (this.running && !this.paused && opsExecuted < this._loopOpsPerFrame) {
+                this.step();
+                opsExecuted++;
+            }
+            opsExecutedTotal += opsExecuted;
+
+            this.updateSpritePositions();
+
+            this._loopAnimToggle = !this._loopAnimToggle;
+            this.advanceSpriteAnimations(this._loopAnimToggle);
+
+            this._loopTimeAccumulator -= this._loopFrameMs;
+            virtualFramesRun++;
         }
-        this._loopAnimToggle = !this._loopAnimToggle;
-        this.render(this._loopAnimToggle);
-        if (this._loopOnFrame) this._loopOnFrame({ opsExecuted });
+
+        // === Render once — the "camera sampling" of current virtual state ===
+        this.renderPixels();
+
+        if (this._loopOnFrame) {
+            this._loopOnFrame({ opsExecuted: opsExecutedTotal, virtualFrames: virtualFramesRun });
+        }
+
         if (this.running && !this.paused) {
-            this._loopHandle = setTimeout(() => this._loopTick(), this._loopFrameMs);
+            this._loopHandle = setTimeout(this._loopTickBound, this._loopFrameMs);
         }
     }
 
@@ -484,6 +544,11 @@ class gmVM {
         if (!this.paused) return;
         this.paused = false;
         this.resumeAudio();
+        // Reset timing state so we don't try to "catch up" the time spent
+        // paused. Seeding the accumulator with one frame's worth ensures
+        // the resumed tick runs at least one virtual frame right away.
+        this._loopLastTickTime = Date.now();
+        this._loopTimeAccumulator = this._loopFrameMs || 16;
         // Only restart the loop if start() owns it. If we were paused via
         // a vm.pause() called by an embedder that uses its own loop, that
         // embedder must restart its loop itself.
@@ -2259,11 +2324,30 @@ class gmVM {
         }
     }
 
-    render(advanceAnimation = true) {
-        // Update sprite positions (movement physics) - runs every frame at 60fps
-        // Must happen even when screen updates are off, so sprites keep moving
+    // Convenience wrapper: one full frame of state advance + render.
+    // Equivalent to calling updateSpritePositions() + advanceSpriteAnimations()
+    // + renderPixels() in sequence. Handy for embedders driving a manual
+    // frame loop, or paused-preview modes.
+    //
+    // The main game loop (_loopTick) does NOT call this — it drives the
+    // three pieces separately so state can advance at virtual-frame rate
+    // (potentially multiple times per render) while pixels are painted
+    // once per browser tick.
+    //
+    // Callers who want state advance without a paint (or the reverse)
+    // should use the individual methods directly instead of a boolean
+    // parameter here.
+    updateAndRender() {
         this.updateSpritePositions();
+        this.advanceSpriteAnimations(true);
+        this.renderPixels();
+    }
 
+    // Pure pixel work — no state mutation. Blits scene + sprites and calls
+    // present(). Called by _loopTick after it's already driven the virtual-
+    // frame state updates. External callers who want a paint without state
+    // advance can also use this directly.
+    renderPixels() {
         if (!this.screenUpdateOn) return;
 
         // === 320×200 NATIVE RESOLUTION RENDERING ===
@@ -2308,11 +2392,6 @@ class gmVM {
                 }
             }
         }
-
-        // Advance animation state now that everything's been drawn. Kept
-        // AFTER blit so the current frame renders with its "in-flight"
-        // animFrame, then advances for the next call.
-        this.advanceSpriteAnimations(advanceAnimation);
 
         // Present the composited frame to the canvas
         this.screen.present();

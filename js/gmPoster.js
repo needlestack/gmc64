@@ -62,9 +62,10 @@ globalThis.GMPoster = {
                 simulatedNow += frameMs;
             }
             // Only the final frame matters — intermediate paints inside a
-            // sync loop never composite anyway. advanceAnimation=false so
-            // render doesn't nudge past what we already simulated.
-            vm.render(false);
+            // sync loop never composite anyway. renderPixels() paints the
+            // current state without touching sprite positions or animation
+            // (both already advanced in the loop above).
+            vm.renderPixels();
         } catch (e) {
             console.warn('poster generation failed:', e.message);
         } finally {

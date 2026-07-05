@@ -462,6 +462,11 @@ body.kbd-active .program-line .instruction:hover {
     background: var(--c64-black);
     z-index: 100;
     flex-direction: column;
+    /* Suppress iOS rubber-band scroll and browser gestures during play so
+       the joystick doesn't drag the whole page. Editor UI is unaffected —
+       gameOverlay is display:none until play mode is entered. */
+    overscroll-behavior: contain;
+    touch-action: none;
 }
 #gameOverlay.active { display: flex; }
 
@@ -635,6 +640,66 @@ body.play-mode #gameControls #stopBtn::after {
     letter-spacing: 0.02em;
     white-space: nowrap;
 }
+
+/* === TOUCH CONTROLS ===
+   Rendered by js/gmTouchControls.js on top of #playArea when a game runs.
+   Only relevant in play mode (mount happens from runProgram / play overlay
+   only when on a touch device). Sizing mirrors play.html for parity —
+   the controls should feel the same in either host. */
+.gm-touch-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 50;
+    pointer-events: none;
+    touch-action: none;
+}
+.gm-touch-joystick,
+.gm-touch-fire {
+    position: absolute;
+    pointer-events: auto;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+.gm-touch-joystick {
+    left: 24px;
+    bottom: 24px;
+    width: 140px;
+    height: 140px;
+    border: 2px solid rgba(255, 255, 255, 0.25);
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.05);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.1s;
+}
+.gm-touch-joystick.gm-touch-active { background: rgba(255, 255, 255, 0.12); }
+.gm-touch-joystick-puck {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.35);
+    border: 2px solid rgba(255, 255, 255, 0.55);
+    pointer-events: none;
+    transition: transform 0.05s linear;
+}
+.gm-touch-fire {
+    right: 24px;
+    bottom: 40px;
+    width: 96px;
+    height: 96px;
+    border-radius: 50%;
+    background: rgba(200, 40, 40, 0.35);
+    border: 2px solid rgba(255, 255, 255, 0.55);
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 42px;
+    line-height: 92px;
+    text-align: center;
+    transition: background 0.05s;
+}
+.gm-touch-fire.gm-touch-active { background: rgba(200, 40, 40, 0.65); }
 
 /* Audio indicator sits at the end of the flex row — override the shared
    CSS's absolute positioning so it flexes with the other icons. */
@@ -1065,6 +1130,7 @@ body.play-mode #gameControls #stopBtn::after {
 <script src="js/gmAudioIndicator.js"></script>
 <script src="js/gmPoster.js"></script>
 <script src="js/gmPlayerChrome.js"></script>
+<script src="js/gmTouchControls.js"></script>
 <!-- play.html snapshot (with all its <script src> tags inlined), exposed
      as window._standaloneSource. The "Export Game" flow patches two
      const placeholders in this string with the current game's base64
@@ -1223,6 +1289,12 @@ function initAudio() {
 let showHitboxes = false;
 let skipPauseInstructions = false;
 let audioMuted = false;
+
+// Handle to mounted touch controls (mount happens in runProgram on touch
+// devices; unmount in stopProgram to free the joystick overlay from
+// covering the editor UI once the game exits). null on desktop — the
+// module returns a no-op sentinel that doesn't need an unmount call.
+let touchControls = null;
 
 // Input state for VM
 const inputState = {
@@ -4778,6 +4850,14 @@ function runProgram() {
         });
         showMessage('Running...');
 
+        // Mount touch controls over the play area. GMTouchControls returns
+        // a no-op sentinel on desktop (no visible overlay). Mount idempotent.
+        if (!touchControls) {
+            touchControls = GMTouchControls.mount(
+                document.getElementById('playArea'),
+                { inputState, port: 1 });
+        }
+
     } catch (e) {
         showMessage('Error: ' + e.message);
         console.error(e);
@@ -4808,6 +4888,13 @@ function stopProgram() {
     document.getElementById('settingsPopup').classList.remove('active');
     setPauseButtonIcon(false);
     document.getElementById('stepBtn').disabled = true;
+    // Tear down touch controls so the joystick overlay doesn't linger
+    // over the editor UI once the game stops. Cheap to remount on next
+    // run — mount lazily reads device state, no persistent listeners.
+    if (touchControls) {
+        touchControls.unmount();
+        touchControls = null;
+    }
     // Drop the play-mode label the moment the visitor lands in the editor.
     // The label was a one-time affordance to reveal the way in from the
     // demo; subsequent manual runs from the editor keep the compact
@@ -4858,12 +4945,16 @@ document.addEventListener('click', (e) => {
 
 function stepFrame() {
     if (!vm || !vm.paused) return;
-    // Execute one frame worth of instructions
+    // Execute one frame worth of instructions, then a full frame's worth
+    // of state advance + render. Animation toggle alternates each preview
+    // tick so sprites animate at ~30fps like on real hardware.
     for (let i = 0; i < maxInstructionsPerFrame && vm.running; i++) {
         vm.step();
     }
+    vm.updateSpritePositions();
     animationFrameToggle = !animationFrameToggle;
-    vm.render(animationFrameToggle);
+    vm.advanceSpriteAnimations(animationFrameToggle);
+    vm.renderPixels();
     updateBorderColor();
     updateInputDisplay();
 }

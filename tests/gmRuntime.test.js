@@ -267,16 +267,21 @@ function loadProgram(disk, programName) {
 }
 
 // Helper to run VM for N steps
-// Batches steps like the browser does (50 steps per frame, then updateSpritePositions)
+// Batches steps like the browser does: 50 steps per virtual frame, then
+// updateSpritePositions + advanceSpriteAnimations (toggle alternating each
+// virtual frame to match the real ~30fps animation cadence).
 const STEPS_PER_FRAME = 50;
 function runSteps(vm, steps) {
     let remaining = steps;
+    let animToggle = false;
     while (remaining > 0 && vm.running) {
         const batch = Math.min(remaining, STEPS_PER_FRAME);
         for (let i = 0; i < batch && vm.running; i++) {
             vm.step();
         }
         vm.updateSpritePositions();
+        animToggle = !animToggle;
+        vm.advanceSpriteAnimations(animToggle);
         remaining -= batch;
     }
 }
@@ -347,7 +352,7 @@ describe('gmRuntime - GMC64I (intro demo) execution', () => {
     test('rendered frame after 5000 steps matches golden (verifies plotting visible)', () => {
         const { vm } = loadProgram(disk, 'GMC64I/PRG');
         runSteps(vm, 5000);
-        vm.render(false);
+        vm.renderPixels();
 
         const golden = loadGoldenJSON('runtime-GMC64I-5000-frame.json');
         if (golden) {
@@ -428,7 +433,7 @@ describe('gmRuntime - ALIENS execution', () => {
     // checks pixel samples against its golden — same logic as the per-test
     // version above, factored so the input-driven scenarios stay readable.
     function assertFrameMatchesGolden(vm, goldenName) {
-        vm.render(false);
+        vm.renderPixels();
         const golden = loadGoldenJSON(goldenName);
         if (!golden) {
             expect(vm.screen.pixels.length).toBe(320 * 200 * 4);

@@ -70,6 +70,16 @@ class gmSound {
     // This makes each noise trigger sound different (like real SID)
     static noiseLfsr = 0x7FFFFF;
 
+    // Haptic feedback: fire the mobile vibration API when a sound uses the
+    // noise waveform (0x80) or contains a low-frequency (< HAPTIC_LOW_FREQ_HZ)
+    // frame. Only relevant on touch devices — desktop browsers ignore
+    // navigator.vibrate. Music (gmMusic) is deliberately excluded — this
+    // fires from gmSound.play() only, so a laser or explosion buzzes but
+    // a bass note in a song doesn't.
+    static HAPTIC_ENABLED = true;
+    static HAPTIC_LOW_FREQ_HZ = 100;   // sub-100Hz counts as "bass thump"
+    static HAPTIC_MAX_MS = 40;          // cap so a long explosion doesn't rattle for seconds
+
     constructor(fileData) {
         this.name = "";
         this.repeatCount = 0;
@@ -339,6 +349,11 @@ class gmSound {
 
         this.stop();
 
+        // Fire haptic feedback before we schedule audio — the vibration
+        // should feel synchronous with the "trigger" event, not delayed
+        // to when the first sample comes out of the mixer.
+        this._triggerHaptic();
+
         const repeatDelaySeconds = (this.repeatDelay / 255) * 8;
 
         // Schedule repeats in batches to avoid overwhelming the audio system
@@ -357,6 +372,33 @@ class gmSound {
     // callback receives (frameIndex, repeatIndex)
     setOnFrameChange(callback) {
         this._onFrameChange = callback;
+    }
+
+    // Scan frames for noise waveform or sub-100Hz frequency and, if found,
+    // trigger a short vibration. Duration scales with the loudest frame's
+    // envelope volume so a whisper-quiet sample doesn't get a punchy buzz.
+    // No-op silently if the browser has no vibration API (all desktops).
+    _triggerHaptic() {
+        if (!gmSound.HAPTIC_ENABLED) return;
+        if (typeof navigator === 'undefined' || !navigator.vibrate) return;
+
+        let hasNoise = false;
+        let hasLowFreq = false;
+        let peakVol = 0;
+        for (const frame of this.frames) {
+            if (frame.wave === gmSound.WAVE_NOISE) hasNoise = true;
+            const hz = this._freqToHz(frame.freqHi, frame.freqLo);
+            if (hz > 0 && hz < gmSound.HAPTIC_LOW_FREQ_HZ) hasLowFreq = true;
+            // frame.sus is 0-15; approximates the loudness we care about
+            if (frame.sus > peakVol) peakVol = frame.sus;
+        }
+        if (!hasNoise && !hasLowFreq) return;
+
+        // Scale 8..HAPTIC_MAX_MS by peak sustain — noise-only chirps get a
+        // brief tick, thunder-y explosions get the full buzz.
+        const volFactor = Math.max(0.25, peakVol / 15);
+        const ms = Math.round(8 + (gmSound.HAPTIC_MAX_MS - 8) * volFactor);
+        try { navigator.vibrate(ms); } catch (e) { /* some browsers throw in iframes */ }
     }
 
     // Schedule a batch of repeats
