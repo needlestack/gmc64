@@ -38,24 +38,22 @@ It's not an emulator, it's a recreation, with the stumbling blocks gone.
 
 Do you have your original work on a disk? gmc64 reads `.d64` disk images and all
 GameMaker file formats. Drag and drop a disk or use the built-in file browser.
-gmc64 can save files back to disk as well, and you can even import them back to the
-original GameMaker.
-
-Drop your `.d64` on to gmc64, pick your program, click run. It just plays.
 
 Then you can open the editor, add a sprite, change the music, and save it back
 to the disk image. You can even export your creations as a single self-contained
-HTML file that you can post online and embed anywhere. Send your game to a friend
-the way you wish you could in 1985.
+HTML file that you can post online.
+
+gmc64 can save files back to `.d64` images as well, and you can even import them
+back to the original GameMaker.
 
 ## If you're new to GameMaker
 
 GameMaker was a game-creation tool for the Commodore 64 created by Garry
 Kitchen and published by Activision in 1985. It let users build real, runnable
 C64 games without learning assembly or having to hand code graphics and sounds.
-An early graphical development environment, you drew sprites and
+An early graphical IDE, you drew sprites and
 backgrounds, composed music, recorded sound effects, and wrote game logic from
-a list of plain-English instructions.
+a list of simple instructions.
 
 ```
 sprite 1 is player
@@ -70,7 +68,8 @@ Many people who grew up to be game developers got their start here. It's been
 largely inaccessible in the modern age, and even through emulation the usability
 suffers from the limitations of the original C64.
 
-gmc64 brings it back — same sprites, same instructions, same sound, in your browser.
+gmc64 brings it back. The same sprites, same instructions, same sounds, all instantly
+in your browser.
 
 ## Two-way compatibility
 
@@ -81,11 +80,11 @@ directions.
 A game built here saves to a real disk image that loads on an actual Commodore
 64 running the original 1985 GameMaker disk. Anything authored on that hardware
 loads here without translation. New creations can ship to a 1541. Old creations
-can ship to social media.
+can ship to the web.
 
 ## Quick start
 
-Click any of the image links at the top of this page to dive in. That's it.
+Click any of the image links at the top of this page to dive in.
 
 Then:
 
@@ -98,7 +97,7 @@ Then:
 - **Host a `.d64`** - you can point to an online `d64` as
   well: `editor.html?disk=https://your-host/game.d64` opens the same file picker
 
-When your game is ready, hit **Export Game** to get a single HTML file that boots straight into your creation, embeddable anywhere.
+When your game is ready, hit **Export Game** to get a single HTML file of your creation.
 
 ## Sharing your creations
 
@@ -133,14 +132,14 @@ https://gmc64.com/play.html?disk=demo&file=aliens/prg&nocredit=1
 | `poster_seconds` | Same as above; only meaningful with `play=1` |
 | `play_demo=1` | Alias — expands to `disk=demo&file=gmc64i/prg&play=1&poster_seconds=8.5` |
 
-Example — send someone a runnable link that still lets them peek behind the curtain:
+Example — send someone a runnable link that still lets them drop into the editor and see the code:
 
 ```
 https://gmc64.com/editor.html?disk=https://your-host.com/game.d64&file=GAME/PRG&play=1
 ```
 
 The other editors (`sprite-maker.html`, `scene-maker.html`, `sound-maker.html`,
-`music-maker.html`) accept `disk` and `file` too — deep-linking straight to a
+`music-maker.html`) accept `disk` and `file` too, deep-linking straight to a
 specific asset for editing.
 
 ### Iframe embed
@@ -183,7 +182,7 @@ the HTML.
 |------|---------------|
 | `editor.html` | Program instructions + runtime + asset assignment |
 | `sprite-maker.html` | Sprites (multi-color, multi-frame, multi-part) |
-| `scene-maker.html` | Backgrounds (160×200 indexed-color scenes) |
+| `scene-maker.html` | Backgrounds (160×200 4 indexed-color scenes) |
 | `sound-maker.html` | Sound effects (SID-style) |
 | `music-maker.html` | Songs (3 channels, score-style staff editor) |
 
@@ -192,9 +191,9 @@ sprites flow into scenes flow into programs the same way they did on the C64.
 
 ## Dependencies
 
-**To play and edit: none.** It's static HTML and JavaScript. No build step, no
-server, no npm. Open the files in a browser and use them. They also run from
-`file://` (just double-click).
+**To play and edit: none.** It's static HTML and JavaScript. Just
+open the files in a browser and use them. They also run locally from
+`file://`.
 
 **To rebuild the standalone bundle:** Node.js. Pure built-ins, no `npm install`
 needed. After editing `play.html` or any file it loads from `js/`, run:
@@ -237,13 +236,10 @@ are welcome.
 The overall user experience should be significantly better than running
 GameMaker under an emulator.
 
-However, there is no mobile support. I have not implemented any touch controls.
-gmc64 is currently desktop/laptop only. This will change in the future.
-
 **Known limitations:**
 
 - **Instruction timing is not cycle-accurate.** The JavaScript engine runs at
-  60fps and executes 50 ops (GameMaker instructions) per frame. This is very
+  59.94fps and executes 50 ops (GameMaker instructions) per frame. This is very
 close to the original, but programs that rely on precise timing loops may have
 some timing issues. 
 - **Music-maker instrument sounds aren't fine-tuned.** The song instruments are
@@ -256,11 +252,11 @@ more channels for sound.
 
 ## Technical notes
 
-- File format details (`.PRG`, `.SPR`, `.SND`, `.SNG`, `.PIC`, `.D64`)
+- File format details (`.D64`, `/PRG`, `/SPR`, `/SND`, `/SNG`, `/PIC`)
 - Architecture decisions
 - Coordinate system, timing formulas, multi-part sprites
 
-All documented in [`CLAUDE.md`](CLAUDE.md) — written for both AI coding assistants and humans who want to dig in.
+All documented in [`CLAUDE.md`](CLAUDE.md) — written for both humans and AI coding assistants.
 
 ## Disclaimer
 
