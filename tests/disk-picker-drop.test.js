@@ -90,11 +90,11 @@ describe('drop → pool + select', () => {
 });
 
 describe('drop → multi-match handoff', () => {
-    test('sprite-maker.html: 2+ SPRs drops the user into browsable load mode', async () => {
+    test('sprite-maker.html: 2+ SPRs drops the user into browsable preview mode', async () => {
         const page = await openPage('sprite-maker.html');
         await simulateDrop(page, TEST_DISK_BYTES, 'gmc64-test.d64');
 
-        // enterLoadMode → GMTools.previewLoader.enter(...) → sets
+        // enterPreviewMode → GMTools.previewLoader.enter(...) → sets
         // isActive() to true and loads the SPR file list.
         const state = await page.evaluate(() => ({
             previewActive: GMTools.previewLoader.isActive(),

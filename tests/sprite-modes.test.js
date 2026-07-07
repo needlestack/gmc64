@@ -81,7 +81,7 @@ describe('sprite-maker — loading a hi-res sprite shows hi-res palette UI', () 
         await writeHiResSpriteToDisk(page, 'HIRES/SPR');
 
         const visibility = await page.evaluate(() => {
-            enterLoadMode();
+            enterPreviewMode();
             // The previewLoader auto-previews the first file alphabetically;
             // HIRES is the only sprite on the test disk.
             return {

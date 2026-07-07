@@ -755,9 +755,11 @@ const GMTools = {
         enter(options) {
             if (this._active) return false;
 
-            const files = options.disk.listFiles(options.fileType);
+            // No disk mounted OR disk has no files of this type — either way,
+            // flash the same "empty" message. Caller sees the same "there's
+            // nothing to preview here" outcome without having to distinguish.
+            const files = options.disk ? options.disk.listFiles(options.fileType) : [];
             if (files.length === 0) {
-                // No files of this type — flash a message, dismiss on any click.
                 GMTools.flashingMessage.show(options.messageArea, options.emptyMessage || 'no files on disk');
                 const dismiss = () => {
                     GMTools.flashingMessage.hide();
@@ -852,10 +854,15 @@ const GMTools = {
             const display = (ext ? entry.fileName.replace(new RegExp(ext.replace('/', '\\/') + '$', 'i'), '') : entry.fileName).toLowerCase();
 
             const area = opts.messageArea;
+            // Down-arrow trick: C64 font only ships ↑ (matches the historical
+            // C64 keyboard) — no ↓. Rotating a ↑ span 180° via CSS gives a
+            // pixel-perfect ↓ in the same C64 style, since it IS the same
+            // glyph. Cheaper than an inline SVG or font patch.
+            const arrowDown = '<span style="display:inline-block; transform:rotate(180deg)">↑</span>';
             area.innerHTML =
                 '<span style="color: var(--c64-yellow)">load </span>' +
                 '<span class="load-filename" style="color: var(--c64-white); background: var(--c64-blue); padding: 0 4px">' + display + '</span>' +
-                '<span style="color: var(--c64-yellow)">?</span><br>' +
+                '<span style="color: var(--c64-yellow)">? (↑' + arrowDown + ' to preview)</span><br>' +
                 '<span class="load-yes gm-yes-no">yes</span>' +
                 '<span style="display: inline-block; width: 80px"></span>' +
                 '<span class="load-no gm-yes-no">no</span>';
@@ -1019,184 +1026,11 @@ const GMTools = {
         }
     },
 
-    // =========================================================================
-    // SAVE DIALOG
-    // =========================================================================
-    // In-app GM-style save UI: filename input with yes/no, overwrite confirmation
-    // step when the name collides with an existing file. Used by sprite-maker
-    // and scene-maker; both used to carry near-identical copies of this code.
-    //
-    // The dialog renders into a caller-provided element. Existence checking
-    // and serialisation are delegated via callbacks — the dialog only owns the
-    // UI, keyboard handling, validation, and overwrite prompt.
-    //
-    // Usage:
-    //   GMTools.saveDialog.enter({
-    //       disk,                     // GMDisk instance (used to check for collisions)
-    //       fileType,                 // GMDisk.FILE_TYPES.X (provides the extension)
-    //       messageArea,              // DOM element to render the prompt into
-    //       suggestedName: 'PLAYER',  // initial value (without extension)
-    //       onSave:  (fullFileName) => boolean,  // serialise+save; return success
-    //       onExit:  () => void                  // called after exit (success or cancel)
-    //   });
-
-    saveDialog: {
-        _active: false,
-        _options: null,
-        _fileName: '',
-        _confirmingOverwrite: false,
-        _keyHandler: null,
-
-        isActive() { return this._active; },
-        confirmingOverwrite() { return this._confirmingOverwrite; },
-
-        enter(options) {
-            if (this._active) return;
-            this._active = true;
-            this._options = options;
-            this._fileName = (options.suggestedName || '').toUpperCase();
-            this._confirmingOverwrite = false;
-
-            this._keyHandler = (e) => this._onKey(e);
-            document.addEventListener('keydown', this._keyHandler);
-
-            this._renderNamePrompt();
-        },
-
-        cancel() {
-            if (!this._active) return;
-            this._exit();
-        },
-
-        confirm() {
-            if (!this._active) return;
-            if (this._confirmingOverwrite) { this._doSave(); return; }
-
-            // Don't trim — internal spaces (and even leading/trailing within
-            // the 6-char slot) are significant. Only check that there's any
-            // non-whitespace content at all.
-            if (!this._fileName.trim()) {
-                // Flash and re-prompt — keep the user in save mode
-                GMTools.flashingMessage.show(this._options.messageArea, 'enter a name');
-                setTimeout(() => {
-                    GMTools.flashingMessage.hide();
-                    if (this._active) this._renderNamePrompt();
-                }, 1500);
-                return;
-            }
-
-            const ext = (this._options.fileType.extension || '').replace(/^\//, '');
-            const fullName = ext ? GMTools.formatFileName(this._fileName, ext) : this._fileName.toUpperCase();
-            const exists = this._options.disk.listFiles(this._options.fileType)
-                .some(f => f.fileName.toUpperCase() === fullName.toUpperCase());
-            if (exists) this._renderOverwritePrompt(this._fileName.toUpperCase());
-            else this._doSave();
-        },
-
-        _doSave() {
-            const ext = (this._options.fileType.extension || '').replace(/^\//, '');
-            const fullName = ext ? GMTools.formatFileName(this._fileName, ext) : this._fileName.toUpperCase();
-            const success = this._options.onSave(fullName);
-            if (success) {
-                this._exit();
-            } else {
-                // Flash and re-prompt at the name-entry step
-                GMTools.flashingMessage.show(this._options.messageArea, 'disk error');
-                setTimeout(() => {
-                    GMTools.flashingMessage.hide();
-                    if (this._active) {
-                        this._confirmingOverwrite = false;
-                        this._renderNamePrompt();
-                    }
-                }, 1500);
-            }
-        },
-
-        _exit() {
-            if (!this._active) return;
-            this._active = false;
-            const opts = this._options;
-            document.removeEventListener('keydown', this._keyHandler);
-            this._keyHandler = null;
-            this._options = null;
-            this._fileName = '';
-            this._confirmingOverwrite = false;
-            if (opts.messageArea) opts.messageArea.innerHTML = '';
-            if (opts.onExit) opts.onExit();
-        },
-
-        _renderNamePrompt() {
-            const area = this._options.messageArea;
-            const display = this._fileName.toLowerCase().padEnd(6, ' ').substring(0, 6).trim();
-            area.innerHTML =
-                '<span style="color: var(--c64-yellow)">save </span>' +
-                '<input type="text" class="save-filename" maxlength="6" ' +
-                // width: 7ch (one ch wider than maxlength) so the caret has room
-                // after the 6th character — at exactly 6ch the last typed char
-                // gets visually clipped by the cursor.
-                'style="font-family: inherit; font-size: inherit; width: 7ch; ' +
-                'color: var(--c64-white); background: var(--c64-blue); border: none; ' +
-                'padding: 0 2px; text-transform: lowercase; outline: none;" ' +
-                'value="' + display + '">' +
-                '<span style="color: var(--c64-yellow)">?</span><br>' +
-                '<span class="save-yes gm-yes-no">yes</span>' +
-                '<span style="display: inline-block; width: 80px"></span>' +
-                '<span class="save-no gm-yes-no">no</span>';
-
-            const input = area.querySelector('.save-filename');
-            input.focus();
-            input.select();
-            input.addEventListener('input', (e) => {
-                this._fileName = e.target.value.toUpperCase();
-            });
-            input.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter')  { e.preventDefault(); e.stopPropagation(); this.confirm(); }
-                else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); this.cancel(); }
-            });
-            area.querySelector('.save-yes').addEventListener('click', () => this.confirm());
-            area.querySelector('.save-no').addEventListener('click', () => this.cancel());
-        },
-
-        _renderOverwritePrompt(name) {
-            this._confirmingOverwrite = true;
-            const area = this._options.messageArea;
-            area.innerHTML =
-                '<span style="color: var(--c64-yellow)">overwrite </span>' +
-                '<span style="color: var(--c64-white); background: var(--c64-blue); padding: 0 4px">' + name.toLowerCase() + '</span>' +
-                '<span style="color: var(--c64-yellow)">?</span><br>' +
-                '<span class="save-yes gm-yes-no">yes</span>' +
-                '<span style="display: inline-block; width: 80px"></span>' +
-                '<span class="save-no gm-yes-no">no</span>';
-            area.querySelector('.save-yes').addEventListener('click', () => this.confirm());
-            area.querySelector('.save-no').addEventListener('click', () => this._cancelOverwrite());
-        },
-
-        _cancelOverwrite() {
-            this._confirmingOverwrite = false;
-            this._renderNamePrompt();
-        },
-
-        _onKey(e) {
-            if (!this._active) return;
-            if (this._confirmingOverwrite) {
-                switch (e.key) {
-                    case 'Enter': case 'y': case 'Y':
-                        e.preventDefault(); this.confirm(); break;
-                    case 'Escape': case 'n': case 'N':
-                        e.preventDefault(); this._cancelOverwrite(); break;
-                }
-                return;
-            }
-            // Input handles its own Enter/Escape; this catches y/n outside the input
-            if (document.activeElement === document.querySelector('.save-filename')) return;
-            switch (e.key) {
-                case 'Enter': case 'y': case 'Y':
-                    e.preventDefault(); this.confirm(); break;
-                case 'Escape': case 'n': case 'N':
-                    e.preventDefault(); this.cancel(); break;
-            }
-        }
-    },
+    // === SAVE DIALOG (removed) ===
+    // Was an in-app GM-style save UI (filename input + overwrite confirm).
+    // Save now happens exclusively through the d64 popup's Save button,
+    // which handles the same input + confirm flow natively. `git log --all
+    // -S "saveDialog:"` to recover the code if the two paths ever diverge.
 
     // =========================================================================
     // FLASHING MESSAGE

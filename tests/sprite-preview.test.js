@@ -1,7 +1,7 @@
 /**
- * Sprite-maker load preview tests
+ * Sprite-maker preview tests
  *
- * Pins down the behaviour of sprite-maker's load mode so we can confidently
+ * Pins down the behaviour of sprite-maker's preview mode so we can confidently
  * lift the framework into a shared GMTools.previewLoader and have sprite-maker
  * delegate to it. Each test exercises one slice of the user-facing behaviour
  * (entry, cycling, confirm, cancel, empty-disk, draggable filename, keyboard
@@ -60,23 +60,23 @@ async function openSpriteMaker({ withSprites = true } = {}) {
     }
 
     await page.goto(SPRITE_MAKER_URL, { waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(() => typeof disk !== 'undefined' && typeof loadMode !== 'undefined');
+    await page.waitForFunction(() => typeof disk !== 'undefined' && typeof previewMode !== 'undefined');
     return page;
 }
 
-describe('sprite-maker load mode entry', () => {
-    test('entering load mode populates spriteFiles and previews the first one', async () => {
+describe('sprite-maker preview mode entry', () => {
+    test('entering preview mode populates spriteFiles and previews the first one', async () => {
         const page = await openSpriteMaker();
 
         const state = await page.evaluate(() => {
-            enterLoadMode();
+            enterPreviewMode();
             return {
-                active: loadMode.active,
-                fileCount: loadMode.spriteFiles.length,
-                currentIndex: loadMode.currentIndex,
-                firstFileName: loadMode.spriteFiles[0].fileName,
-                previewLoaded: !!loadMode.previewSprite,
-                currentSpriteIsPreview: currentSprite === loadMode.previewSprite
+                active: previewMode.active,
+                fileCount: previewMode.spriteFiles.length,
+                currentIndex: previewMode.currentIndex,
+                firstFileName: previewMode.spriteFiles[0].fileName,
+                previewLoaded: !!previewMode.previewSprite,
+                currentSpriteIsPreview: currentSprite === previewMode.previewSprite
             };
         });
 
@@ -89,7 +89,7 @@ describe('sprite-maker load mode entry', () => {
         await page.close();
     });
 
-    test('load mode saves the prior sprite/filename/colors for cancel-restore', async () => {
+    test('preview mode saves the prior sprite/filename/colors for cancel-restore', async () => {
         const page = await openSpriteMaker();
 
         const state = await page.evaluate(() => {
@@ -98,12 +98,12 @@ describe('sprite-maker load mode entry', () => {
             currentSprite.setColor(0, 7);
             currentFrame = 3;
             currentQuad = 1;
-            enterLoadMode();
+            enterPreviewMode();
             return {
-                savedFileName: loadMode.savedFileName,
-                savedColors0: loadMode.savedSpriteColors[0],
-                savedFrame: loadMode.savedCurrentFrame,
-                savedQuad: loadMode.savedCurrentQuad
+                savedFileName: previewMode.savedFileName,
+                savedColors0: previewMode.savedSpriteColors[0],
+                savedFrame: previewMode.savedCurrentFrame,
+                savedQuad: previewMode.savedCurrentQuad
             };
         });
 
@@ -114,7 +114,7 @@ describe('sprite-maker load mode entry', () => {
         await page.close();
     });
 
-    test('entering load mode with no sprites flashes "no sprites on disk"', async () => {
+    test('entering preview mode with no sprites flashes "no sprites on current disk"', async () => {
         const page = await openSpriteMaker({ withSprites: false });
 
         // Create a blank disk (no sprites) and select it
@@ -123,36 +123,57 @@ describe('sprite-maker load mode entry', () => {
         });
 
         const msg = await page.evaluate(() => {
-            enterLoadMode();
+            enterPreviewMode();
             return {
-                active: loadMode.active,
+                active: previewMode.active,
                 messageText: document.getElementById('messageArea').textContent
             };
         });
 
-        expect(msg.active).toBe(false); // didn't enter load mode
-        expect(msg.messageText).toMatch(/no sprites on disk/i);
+        expect(msg.active).toBe(false); // didn't enter preview mode
+        expect(msg.messageText).toMatch(/no sprites on current disk/i);
+        await page.close();
+    });
+
+    test('entering preview mode with no d64 mounted flashes the same "no sprites" message', async () => {
+        // Same message as the empty-disk case — user sees "there's nothing to
+        // preview here" regardless of whether the disk is empty or missing.
+        // GMDisk.listFiles() returns [] when there's no d64 attached, which
+        // hits the empty-branch in previewLoader.enter naturally.
+        const page = await openSpriteMaker({ withSprites: false });
+
+        const msg = await page.evaluate(() => {
+            disk.disk = null;  // detach the mounted d64 from the GMDisk wrapper
+            enterPreviewMode();
+            return {
+                active: previewMode.active,
+                messageText: document.getElementById('messageArea').textContent
+            };
+        });
+
+        expect(msg.active).toBe(false);
+        expect(msg.messageText).toMatch(/no sprites on current disk/i);
         await page.close();
     });
 });
 
-describe('sprite-maker load mode cycling', () => {
+describe('sprite-maker preview mode cycling', () => {
     test('ArrowDown advances to the next sprite, ArrowUp goes back', async () => {
         const page = await openSpriteMaker();
 
         const trace = await page.evaluate(async () => {
-            enterLoadMode();
-            const startName = loadMode.spriteFiles[loadMode.currentIndex].fileName;
+            enterPreviewMode();
+            const startName = previewMode.spriteFiles[previewMode.currentIndex].fileName;
 
-            // Dispatch real keydown events on document so loadModeKeyHandler picks them up
+            // Dispatch real keydown events on document so previewModeKeyHandler picks them up
             const press = (key) => document.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
 
             press('ArrowDown');
-            const after1 = loadMode.spriteFiles[loadMode.currentIndex].fileName;
+            const after1 = previewMode.spriteFiles[previewMode.currentIndex].fileName;
             press('ArrowDown');
-            const after2 = loadMode.spriteFiles[loadMode.currentIndex].fileName;
+            const after2 = previewMode.spriteFiles[previewMode.currentIndex].fileName;
             press('ArrowUp');
-            const after3 = loadMode.spriteFiles[loadMode.currentIndex].fileName;
+            const after3 = previewMode.spriteFiles[previewMode.currentIndex].fileName;
 
             return { startName, after1, after2, after3 };
         });
@@ -168,16 +189,16 @@ describe('sprite-maker load mode cycling', () => {
         const page = await openSpriteMaker();
 
         const trace = await page.evaluate(() => {
-            enterLoadMode();
+            enterPreviewMode();
             const press = (key) => document.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
 
             press('ArrowUp'); // already at 0, nothing happens
-            const afterUpAtTop = loadMode.currentIndex;
+            const afterUpAtTop = previewMode.currentIndex;
 
             // Jump to last via the framework's API so its internal index advances too
-            GMTools.previewLoader.previewAtIndex(loadMode.spriteFiles.length - 1);
+            GMTools.previewLoader.previewAtIndex(previewMode.spriteFiles.length - 1);
             press('ArrowDown'); // already at last
-            const afterDownAtBottom = loadMode.currentIndex;
+            const afterDownAtBottom = previewMode.currentIndex;
 
             return { afterUpAtTop, afterDownAtBottom };
         });
@@ -191,7 +212,7 @@ describe('sprite-maker load mode cycling', () => {
         const page = await openSpriteMaker();
 
         const msg = await page.evaluate(() => {
-            enterLoadMode();
+            enterPreviewMode();
             const area = document.getElementById('messageArea');
             return {
                 filename: area.querySelector('.load-filename').textContent,
@@ -216,14 +237,14 @@ describe('sprite-maker load mode cycling', () => {
         // gmc64-test disk has fewer, so derive from the actual length.
         const lastIdx = testDiskSpriteFiles.length - 1;
         const result = await page.evaluate((targetIdx) => {
-            enterLoadMode();
+            enterPreviewMode();
             const fileEl = document.querySelector('.load-filename');
             const opts = fileEl._draggableOptions;
-            const target = loadMode.spriteFiles[targetIdx].fileName;
+            const target = previewMode.spriteFiles[targetIdx].fileName;
             opts.setValue(target);
             return {
-                currentIndex: loadMode.currentIndex,
-                currentFile: loadMode.spriteFiles[loadMode.currentIndex].fileName
+                currentIndex: previewMode.currentIndex,
+                currentFile: previewMode.spriteFiles[previewMode.currentIndex].fileName
             };
         }, lastIdx);
 
@@ -233,20 +254,20 @@ describe('sprite-maker load mode cycling', () => {
     });
 });
 
-describe('sprite-maker load mode confirm', () => {
+describe('sprite-maker preview mode confirm', () => {
     test('Enter commits the previewed sprite as the current one and exits', async () => {
         const page = await openSpriteMaker();
 
         const state = await page.evaluate(() => {
-            enterLoadMode();
+            enterPreviewMode();
             // Move to the 3rd sprite, then confirm
             document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
             document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
             document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
             return {
-                active: loadMode.active,
+                active: previewMode.active,
                 currentSpriteFileName,
-                savedSpriteCleared: loadMode.savedSprite === null
+                savedSpriteCleared: previewMode.savedSprite === null
             };
         });
 
@@ -260,10 +281,10 @@ describe('sprite-maker load mode confirm', () => {
         const page = await openSpriteMaker();
 
         const state = await page.evaluate(() => {
-            enterLoadMode();
+            enterPreviewMode();
             document.querySelector('.load-yes').click();
             return {
-                active: loadMode.active,
+                active: previewMode.active,
                 currentSpriteFileName
             };
         });
@@ -274,7 +295,7 @@ describe('sprite-maker load mode confirm', () => {
     });
 });
 
-describe('sprite-maker load mode cancel', () => {
+describe('sprite-maker preview mode cancel', () => {
     test('Escape restores saved sprite, filename, colors, frame, and quad', async () => {
         const page = await openSpriteMaker();
 
@@ -286,13 +307,13 @@ describe('sprite-maker load mode cancel', () => {
             currentQuad = 2;
             const baselineSprite = currentSprite;
 
-            enterLoadMode();
+            enterPreviewMode();
             // Cycle and then cancel
             document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
             document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 
             return {
-                active: loadMode.active,
+                active: previewMode.active,
                 spriteRestored: currentSprite === baselineSprite,
                 fileName: currentSpriteFileName,
                 color0: currentSprite.getColor(0),
@@ -315,10 +336,10 @@ describe('sprite-maker load mode cancel', () => {
 
         const state = await page.evaluate(() => {
             currentSpriteFileName = 'KEEPME/SPR';
-            enterLoadMode();
+            enterPreviewMode();
             document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
             document.querySelector('.load-no').click();
-            return { active: loadMode.active, fileName: currentSpriteFileName };
+            return { active: previewMode.active, fileName: currentSpriteFileName };
         });
 
         expect(state.active).toBe(false);
@@ -330,9 +351,9 @@ describe('sprite-maker load mode cancel', () => {
         const page = await openSpriteMaker();
 
         const yResult = await page.evaluate(() => {
-            enterLoadMode();
+            enterPreviewMode();
             document.dispatchEvent(new KeyboardEvent('keydown', { key: 'y', bubbles: true }));
-            return { active: loadMode.active, fileName: currentSpriteFileName };
+            return { active: previewMode.active, fileName: currentSpriteFileName };
         });
         expect(yResult.active).toBe(false);
         expect(yResult.fileName).toBe(testDiskSpriteFiles[0]);
@@ -341,9 +362,9 @@ describe('sprite-maker load mode cancel', () => {
         const page2 = await openSpriteMaker();
         const nResult = await page2.evaluate(() => {
             currentSpriteFileName = 'KEEPME/SPR';
-            enterLoadMode();
+            enterPreviewMode();
             document.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', bubbles: true }));
-            return { active: loadMode.active, fileName: currentSpriteFileName };
+            return { active: previewMode.active, fileName: currentSpriteFileName };
         });
         expect(nResult.active).toBe(false);
         expect(nResult.fileName).toBe('KEEPME/SPR');

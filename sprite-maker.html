@@ -545,11 +545,11 @@ let fileMenuMode = {
     active: false
 };
 
-// Load mode state (within file menu)
+// Preview mode state (invoked from the file menu's "preview" button).
 // The cycling/keyboard/UI framework lives in GMTools.previewLoader; this object
 // mirrors the relevant state so the rest of sprite-maker (click guards, tests)
 // can read it without reaching into the framework's internals.
-let loadMode = {
+let previewMode = {
     active: false,
     spriteFiles: [],        // List of sprite filenames on disk
     currentIndex: 0,        // Currently previewed sprite index
@@ -564,13 +564,6 @@ let loadMode = {
     savedSpriteColors: null,
     savedCurrentFrame: 0,
     savedCurrentQuad: 0
-};
-
-// Save mode state
-let saveMode = {
-    active: false,
-    fileName: '',           // The filename being edited
-    confirmingOverwrite: false  // True when showing overwrite confirmation
 };
 
 // c64Screen for preview rendering
@@ -780,7 +773,7 @@ function btn1Click() {
     if (clearMode.active) return; // Disabled during clear
     if (copyMode.active) return;  // Disabled during copy
     if (swapMode.active) return;  // Disabled during color swap
-    if (loadMode.active) return;  // Disabled during load
+    if (previewMode.active) return;  // Disabled during preview
     if (GMTools.quitMenu.isOpen()) return;  // Disabled during quit menu
     if (fileMenuMode.active) {
         // disk - show disk popup
@@ -810,8 +803,8 @@ function btn2Click() {
     } else if (copyMode.active) {
         // ok - cancel copy (same as clicking no)
         confirmCopy(false);
-    } else if (loadMode.active) {
-        // Buttons disabled during load mode (yes/no are in message area)
+    } else if (previewMode.active) {
+        // Buttons disabled during preview mode (yes/no are in message area)
         return;
     } else if (positioningMode.active) {
         // ok - confirm positioning
@@ -838,11 +831,11 @@ function btn3Click() {
     if (clearMode.active) return; // Disabled during clear
     if (copyMode.active) return;  // Disabled during copy
     if (swapMode.active) return;  // Disabled during color swap
-    if (loadMode.active) return;  // Disabled during load (yes/no are in message area)
+    if (previewMode.active) return;  // Disabled during preview (yes/no are in message area)
     if (GMTools.quitMenu.isOpen()) return;  // Disabled during quit menu
     if (fileMenuMode.active) {
-        // load - enter load mode
-        enterLoadMode();
+        // preview - enter preview mode
+        enterPreviewMode();
     } else if (cmdMode) {
         // anima - enter animation mode
         enterAnimaMode();
@@ -859,14 +852,10 @@ function btn4Click() {
     if (clearMode.active) return; // Already in clear confirmation
     if (copyMode.active) return;  // Disabled during copy
     if (swapMode.active) return;  // Disabled during color swap
-    if (loadMode.active) return;  // Disabled during load
+    if (previewMode.active) return;  // Disabled during preview
     if (GMTools.quitMenu.isOpen()) return;  // Disabled during quit menu
-    if (saveMode.active) return;  // Already in save mode
-    if (fileMenuMode.active) {
-        // save - enter save mode
-        enterSaveMode();
-        return;
-    } else if (cmdMode) {
+    if (fileMenuMode.active) return; // btn4 is blank in file menu
+    if (cmdMode) {
         // clear - show confirmation
         showClearConfirmation();
     } else {
@@ -882,7 +871,7 @@ function btn5Click() {
     if (shiftMode.active) return; // Already in shift mode
     if (copyMode.active) return;  // Disabled during copy
     if (swapMode.active) return;  // Disabled during color swap
-    if (loadMode.active) return;  // Disabled during load
+    if (previewMode.active) return;  // Disabled during preview
     if (GMTools.quitMenu.isOpen()) return;  // Disabled during quit menu
     if (fileMenuMode.active) return; // btn5 is blank in file menu
     if (cmdMode) {
@@ -900,7 +889,7 @@ function btn6Click() {
     if (shiftMode.active) return; // Disabled during shift
     if (clearMode.active) return; // Disabled during clear
     if (copyMode.active) return;  // Already in copy mode
-    if (loadMode.active) return;  // Disabled during load
+    if (previewMode.active) return;  // Disabled during preview
     if (GMTools.quitMenu.isOpen()) return;  // Disabled during quit menu
     if (fileMenuMode.active) return; // btn6 is blank in file menu
     if (cmdMode) {
@@ -1015,14 +1004,16 @@ function enterFileMenuMode() {
     document.getElementById('btn2').textContent = ' ok ';
     document.getElementById('btn2').classList.add('cmd-mode');
 
-    document.getElementById('btn3').textContent = 'load';
+    document.getElementById('btn3').textContent = 'preview';
     document.getElementById('btn3').classList.add('cmd-mode');
 
-    document.getElementById('btn4').textContent = 'save';
+    // btn4 (save), btn5 (init), btn6 (del) all blank + inactive. Save is
+    // reached exclusively through the d64 popup (invoked via "disk" here).
+    // init and del were never implemented; del belongs in the d64 popup
+    // eventually anyway.
+    document.getElementById('btn4').innerHTML = '&nbsp;';
     document.getElementById('btn4').classList.add('cmd-mode');
 
-    // btn5 and btn6 stay blank — init and del are not implemented.
-    // del belongs in the d64 popup eventually anyway.
     document.getElementById('btn5').innerHTML = '&nbsp;';
     document.getElementById('btn5').classList.add('cmd-mode');
 
@@ -1055,13 +1046,14 @@ function exitFileMenuMode() {
     document.getElementById('btn6').classList.remove('cmd-mode');
 }
 
-// ==================== LOAD MODE ====================
+// ==================== PREVIEW MODE ====================
 // Cycling / keyboard / yes-no prompt UI is handled by GMTools.previewLoader.
-// This wrapper just supplies the sprite-specific preview rendering and the
-// save/restore-state hooks, plus syncs a few fields back into loadMode so the
-// existing click guards (`if (loadMode.active) return`) and tests keep working.
+// This wrapper supplies the sprite-specific preview rendering and the
+// save/restore-state hooks, and mirrors a few fields into previewMode so the
+// rest of sprite-maker (click guards, tests) can read them without reaching
+// into the shared framework.
 
-function enterLoadMode() {
+function enterPreviewMode() {
     // Snapshot of everything that needs to come back if the user cancels.
     const snapshot = {
         sprite: currentSprite,
@@ -1069,7 +1061,7 @@ function enterLoadMode() {
         setupState: { ...setupState },
         // The palette lives on the sprite itself, so the sprite reference
         // already preserves it for restore. Snapshot the array anyway for
-        // any test/UI code that inspects loadMode.savedSpriteColors.
+        // any test/UI code that inspects previewMode.savedSpriteColors.
         spriteColors: currentSprite ? currentSprite.getPalette() : [...DEFAULT_SPRITE_COLORS],
         currentFrame,
         currentQuad
@@ -1079,12 +1071,12 @@ function enterLoadMode() {
         disk,
         fileType: GMDisk.FILE_TYPES.SPRITE,
         messageArea: document.getElementById('messageArea'),
-        emptyMessage: 'no sprites on disk',
+        emptyMessage: 'no sprites on current disk',
         saveState: () => snapshot,
         onPreview: (fileName, fileData) => {
             try {
                 const previewSprite = new gmSprite(fileData);
-                loadMode.previewSprite = previewSprite;
+                previewMode.previewSprite = previewSprite;
                 currentSprite = previewSprite;
                 currentFrame = 0;
                 currentQuad = 0;
@@ -1101,11 +1093,11 @@ function enterLoadMode() {
                 updatePaletteDisplay();
                 updatePaletteForColorMode();
                 updatePreview();
-                startLoadAnimation();
+                startPreviewAnimation();
 
-                // Mirror framework state into loadMode for click guards & tests
-                loadMode.spriteFiles = GMTools.previewLoader.files();
-                loadMode.currentIndex = GMTools.previewLoader.currentIndex();
+                // Mirror framework state into previewMode for click guards & tests
+                previewMode.spriteFiles = GMTools.previewLoader.files();
+                previewMode.currentIndex = GMTools.previewLoader.currentIndex();
             } catch (e) {
                 console.error('Failed to preview sprite:', e);
             }
@@ -1140,19 +1132,19 @@ function enterLoadMode() {
         },
         onExit: () => {
             // Stop the load-mode animation loop
-            if (loadMode.animationId) {
-                cancelAnimationFrame(loadMode.animationId);
-                loadMode.animationId = null;
+            if (previewMode.animationId) {
+                cancelAnimationFrame(previewMode.animationId);
+                previewMode.animationId = null;
             }
             // Reset the mirror
-            loadMode.active = false;
-            loadMode.spriteFiles = [];
-            loadMode.currentIndex = 0;
-            loadMode.previewSprite = null;
-            loadMode.savedSprite = null;
-            loadMode.savedFileName = null;
-            loadMode.savedSetupState = null;
-            loadMode.savedSpriteColors = null;
+            previewMode.active = false;
+            previewMode.spriteFiles = [];
+            previewMode.currentIndex = 0;
+            previewMode.previewSprite = null;
+            previewMode.savedSprite = null;
+            previewMode.savedFileName = null;
+            previewMode.savedSetupState = null;
+            previewMode.savedSpriteColors = null;
             // Drop back out of the file menu too
             exitFileMenuMode();
         }
@@ -1160,14 +1152,14 @@ function enterLoadMode() {
 
     if (!entered) return; // empty disk — previewLoader already flashed the message
 
-    // Mirror state into loadMode so guards/tests can observe it
-    loadMode.active = true;
-    loadMode.savedSprite = snapshot.sprite;
-    loadMode.savedFileName = snapshot.fileName;
-    loadMode.savedSetupState = snapshot.setupState;
-    loadMode.savedSpriteColors = snapshot.spriteColors;
-    loadMode.savedCurrentFrame = snapshot.currentFrame;
-    loadMode.savedCurrentQuad = snapshot.currentQuad;
+    // Mirror state into previewMode so guards/tests can observe it
+    previewMode.active = true;
+    previewMode.savedSprite = snapshot.sprite;
+    previewMode.savedFileName = snapshot.fileName;
+    previewMode.savedSetupState = snapshot.setupState;
+    previewMode.savedSpriteColors = snapshot.spriteColors;
+    previewMode.savedCurrentFrame = snapshot.currentFrame;
+    previewMode.savedCurrentQuad = snapshot.currentQuad;
 
     // Blank toolbar buttons except 'load' (matches anima-mode behaviour)
     document.getElementById('btn1').innerHTML = '&nbsp;';
@@ -1177,36 +1169,36 @@ function enterLoadMode() {
     document.getElementById('btn6').innerHTML = '&nbsp;';
 }
 
-function startLoadAnimation() {
+function startPreviewAnimation() {
     // Stop any existing animation
-    if (loadMode.animationId) {
-        cancelAnimationFrame(loadMode.animationId);
+    if (previewMode.animationId) {
+        cancelAnimationFrame(previewMode.animationId);
     }
 
-    loadMode.currentFrame = 0;
-    loadMode.lastFrameTime = performance.now();
+    previewMode.currentFrame = 0;
+    previewMode.lastFrameTime = performance.now();
 
     function animateLoad(timestamp) {
-        if (!loadMode.active) return;
+        if (!previewMode.active) return;
 
         // Animation speed 28: frame delay = (32 - 28) * 33 = 132ms
         const frameDelay = (32 - 28) * 33;
 
-        if (timestamp - loadMode.lastFrameTime >= frameDelay) {
-            loadMode.lastFrameTime = timestamp;
+        if (timestamp - previewMode.lastFrameTime >= frameDelay) {
+            previewMode.lastFrameTime = timestamp;
 
             // Advance frame
             const numFrames = currentSprite ? currentSprite.getNumFrames() : 1;
-            loadMode.currentFrame = (loadMode.currentFrame + 1) % numFrames;
+            previewMode.currentFrame = (previewMode.currentFrame + 1) % numFrames;
 
             // Update preview with animated frame
             updateAnimatedLoadPreview();
         }
 
-        loadMode.animationId = requestAnimationFrame(animateLoad);
+        previewMode.animationId = requestAnimationFrame(animateLoad);
     }
 
-    loadMode.animationId = requestAnimationFrame(animateLoad);
+    previewMode.animationId = requestAnimationFrame(animateLoad);
 }
 
 function updateAnimatedLoadPreview() {
@@ -1226,66 +1218,10 @@ function updateAnimatedLoadPreview() {
         c64Screen.HEIGHT,
         gmX,
         gmY,
-        loadMode.currentFrame
+        previewMode.currentFrame
     );
 
     previewScreen.present();
-}
-
-// ==================== SAVE MODE ====================
-// Thin wrapper over GMTools.saveDialog — sprite-maker provides the empty-disk
-// pre-check, button blanking, and per-tool serialise/restore via callbacks.
-
-function enterSaveMode() {
-    if (!currentSprite) {
-        GMTools.flashingMessage.show(
-            document.getElementById('messageArea'),
-            'no sprite to save'
-        );
-        const dismissHandler = () => {
-            GMTools.flashingMessage.hide();
-            clearMessage();
-            document.removeEventListener('click', dismissHandler, true);
-        };
-        document.addEventListener('click', dismissHandler, true);
-        return;
-    }
-
-    saveMode.active = true;
-
-    // Blank out toolbar buttons; save label stays visible
-    document.getElementById('btn1').innerHTML = '&nbsp;';
-    document.getElementById('btn2').innerHTML = '&nbsp;';
-    document.getElementById('btn3').innerHTML = '&nbsp;';
-    document.getElementById('btn5').innerHTML = '&nbsp;';
-    document.getElementById('btn6').innerHTML = '&nbsp;';
-
-    GMTools.saveDialog.enter({
-        disk,
-        fileType: GMDisk.FILE_TYPES.SPRITE,
-        messageArea: document.getElementById('messageArea'),
-        suggestedName: currentSpriteFileName
-            ? currentSpriteFileName.replace(/\/SPR$/i, '').trim()
-            : '',
-        // Same path as the d64 popup's Save button — single source of truth
-        // for serialization (strips trailing blank frames via serializeSprite)
-        // and disk write.
-        onSave: saveSprite,
-        onExit: () => {
-            saveMode.active = false;
-            saveMode.confirmingOverwrite = false;
-            exitFileMenuMode();
-        }
-    });
-}
-
-// confirmSave is referenced by sprite-save.test.js to drive the save flow
-// from test scripts; the dialog owns the actual implementation. The mirror
-// keeps saveMode.confirmingOverwrite in sync for any sprite-maker code that
-// observes it.
-function confirmSave() {
-    GMTools.saveDialog.confirm();
-    saveMode.confirmingOverwrite = GMTools.saveDialog.confirmingOverwrite();
 }
 
 // Flip and shift are "any-click-exits" modes: the user is committing to a
@@ -2116,7 +2052,7 @@ function enterSwapMode(fromSlot) {
     if (!currentSprite) return;
     // Refuse if another mutually-exclusive mode is active.
     if (animaMode.active || flipMode.active || clearMode.active ||
-        shiftMode.active || copyMode.active || loadMode.active ||
+        shiftMode.active || copyMode.active || previewMode.active ||
         cmdMode || fileMenuMode.active || swapMode.active) return;
 
     swapMode.active = true;
@@ -2301,7 +2237,7 @@ function initApp() {
         // on the disk with live preview on the canvas. Same UI as the
         // in-app "load" button (file menu → btn3), so users see one
         // browsing UI regardless of entry point.
-        showPicker: () => enterLoadMode()
+        showPicker: () => enterPreviewMode()
     });
 
     // URL-driven loading: ?disk=<url>&file=<name> — fetches the disk and
@@ -2316,7 +2252,7 @@ async function initFromUrl() {
         disk, showMessage, expectedExt: '/SPR', loadFile: loadSpriteFromDisk,
         // ?disk=X with no ?file= and multiple SPRs: drop into the
         // browsable preview mode (arrow-keys cycle through sprites).
-        showPicker: () => enterLoadMode()
+        showPicker: () => enterPreviewMode()
     });
 }
 
@@ -2553,8 +2489,7 @@ document.onmouseup = function(event) {
 // pointer handler can call the right one for the same paint work either way.
 function _paintCellOnDown(cell) {
     if (animaMode.active) return; // No drawing during animation
-    if (loadMode.active) return;  // No drawing during load
-    if (saveMode.active) return;  // No drawing during save
+    if (previewMode.active) return;  // No drawing during preview
     // Any click during flip/shift is "I'm done" — exit and don't draw.
     if (_exitTransientCmdSubmode()) return;
     const x = parseInt(cell.getAttribute("data-x"));
@@ -3003,8 +2938,8 @@ document.addEventListener('click', (e) => {
     closeQuadDropdown();
 
     // Dismiss file menu mode when clicking outside buttons
-    // But not during load mode - clicking should only affect yes/no in message area
-    if (fileMenuMode.active && !loadMode.active && !e.target.closest('#buttons')) {
+    // But not during preview mode - clicking should only affect yes/no in message area
+    if (fileMenuMode.active && !previewMode.active && !e.target.closest('#buttons')) {
         exitFileMenuMode();
     }
 
@@ -3408,10 +3343,8 @@ function exportGif() {
     gif.render();
 }
 
-// Save sprite to D64. Returns true on success so callers (notably the in-app
-// save dialog via GMTools.saveDialog.onSave) can branch on the result. The
-// d64 popup's Save button also uses this — same path, same serializer, no
-// divergence between the two save UIs.
+// Save sprite to D64. Wired as the d64 popup's onSave callback. Returns
+// true on success so the popup can decide whether to close.
 function saveSprite(fileName) {
     if (!currentSprite) {
         disk.showInfoMessage('No sprite to save');

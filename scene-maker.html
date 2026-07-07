@@ -532,7 +532,7 @@ function init() {
         // on the disk with live preview on the canvas. Same UI as the
         // in-app "load" button, so users see one browsing UI regardless
         // of entry point.
-        showPicker: () => enterLoadMode()
+        showPicker: () => enterPreviewMode()
     });
 
     // URL-driven loading: ?disk=<url>&file=<name>. Fire-and-forget;
@@ -579,7 +579,7 @@ async function initFromUrl() {
         disk, showMessage, expectedExt: '/PIC', loadFile: loadSceneFromDisk,
         // ?disk=X with no ?file= and multiple PICs: drop into the
         // browsable preview mode (arrow-keys cycle through scenes).
-        showPicker: () => enterLoadMode()
+        showPicker: () => enterPreviewMode()
     });
 }
 
@@ -1913,16 +1913,15 @@ GMTools.ensureDemoDiskInPool(disk);
 
 let currentSceneFileName = null;
 
-// File menu mode — clicking 'file' swaps the 4 action buttons to: disk, ok, load, save
+// File menu mode — clicking 'file' swaps the 4 action buttons to: disk, ok, preview, (blank).
 let fileMenuMode = { active: false };
-let saveMode = { active: false, fileName: '', confirmingOverwrite: false };
 
 // Each action button has a stable click dispatcher so we can swap behaviour
-// when entering/exiting file menu mode without rebuilding the DOM. Once a
-// sub-mode (load/save) is active, disk/load/save are locked out so you can't
-// trample one sub-mode by entering another — only 'ok' stays interactive.
+// when entering/exiting file menu mode without rebuilding the DOM. While a
+// sub-mode (preview) is active, disk/preview are locked out so you can't
+// trample the preview by entering another — only 'ok' stays interactive.
 function _subModeActive() {
-    return GMTools.previewLoader.isActive() || saveMode.active;
+    return GMTools.previewLoader.isActive();
 }
 function actionBtn1Click() {
     if (fileMenuMode.active) {
@@ -1934,14 +1933,14 @@ function actionBtn2Click() { fileMenuMode.active ? exitFileMenuMode() : quitEdit
 function actionBtn3Click() {
     if (fileMenuMode.active) {
         if (_subModeActive()) return;
-        enterLoadMode();
+        enterPreviewMode();
     } else undo();
 }
 function actionBtn4Click() {
-    if (fileMenuMode.active) {
-        if (_subModeActive()) return;
-        enterSaveMode();
-    } else clearScene();
+    // In file menu, this button is blank/inactive — save now happens exclusively
+    // through the d64 popup (invoked via the "disk" button in file menu).
+    if (fileMenuMode.active) return;
+    clearScene();
 }
 
 function fileMenu() {
@@ -1949,10 +1948,12 @@ function fileMenu() {
     else enterFileMenuMode();
 }
 
-// Labels padded to a uniform 6-char width so the grid columns don't shrink
-// when swapping between normal and file-menu mode (requires white-space: pre).
-const ACTION_LABELS_NORMAL = [' file ', ' menu ', ' undo ', 'clear '];
-const ACTION_LABELS_FILE   = [' disk ', '  ok  ', ' load ', ' save '];
+// Labels padded so the grid columns don't shrink when swapping between normal
+// and file-menu mode (requires white-space: pre). NORMAL labels are 6-char;
+// FILE labels sit at 7 because "preview" is 7 chars and we don't want to
+// abbreviate it.
+const ACTION_LABELS_NORMAL = [' file ',  ' menu ',  ' undo ',  'clear '];
+const ACTION_LABELS_FILE   = [' disk  ', '  ok   ', 'preview', '       '];
 
 function enterFileMenuMode() {
     fileMenuMode.active = true;
@@ -1964,14 +1965,10 @@ function enterFileMenuMode() {
 }
 
 function exitFileMenuMode() {
-    // If a sub-mode is active, cancel it first so its UI clears cleanly.
+    // If preview is active, cancel it first so its UI clears cleanly.
     if (GMTools.previewLoader.isActive()) {
         GMTools.previewLoader.cancel();
         return; // previewLoader.cancel → onExit → recursive exitFileMenuMode
-    }
-    if (saveMode.active) {
-        cancelSave();
-        return; // cancelSave → recursive exitFileMenuMode
     }
 
     fileMenuMode.active = false;
@@ -1998,7 +1995,7 @@ function showDiskFromMenu() {
 // Helper used by tool/color clicks: bail out of any file-menu sub-mode.
 // Returns true if the click should be consumed (i.e. we were in a sub-mode).
 function maybeExitFileMenu() {
-    if (GMTools.previewLoader.isActive() || saveMode.active || fileMenuMode.active) {
+    if (GMTools.previewLoader.isActive() || fileMenuMode.active) {
         exitFileMenuMode();
         return true;
     }
@@ -2089,11 +2086,11 @@ function saveScene(fileName) {
     return false;
 }
 
-// ==================== LOAD MODE (GM-style in-app preview loader) ====================
+// ==================== PREVIEW MODE (GM-style in-app preview loader) ====================
 // Delegates the cycling/UI/keyboard framework to GMTools.previewLoader and
 // plugs in scene-specific rendering and state save/restore.
 
-function enterLoadMode() {
+function enterPreviewMode() {
     const snapshot = {
         scene: currentScene,
         fileName: currentSceneFileName,
@@ -2151,57 +2148,6 @@ function _blankAndDisable(btn) {
     // Drop the red cmd-mode color — blanked buttons should look neutrally
     // disabled, not still part of the active menu palette.
     btn.classList.remove('cmd-mode');
-}
-
-// ==================== SAVE MODE (GM-style in-app save with overwrite prompt) ====================
-
-function enterSaveMode() {
-    if (!currentScene) {
-        GMTools.flashingMessage.show(document.getElementById('message'), 'no scene to save');
-        const dismiss = () => {
-            GMTools.flashingMessage.hide();
-            document.getElementById('message').innerHTML = '';
-            document.removeEventListener('click', dismiss, true);
-        };
-        document.addEventListener('click', dismiss, true);
-        return;
-    }
-
-    saveMode.active = true;
-    saveMode.confirmingOverwrite = false;
-
-    // Only the active mode label ('save') stays visible — yes/no in the
-    // message area and Enter/Esc handle the exit.
-    _blankAndDisable(document.getElementById('actionBtn1'));
-    _blankAndDisable(document.getElementById('actionBtn2'));
-    _blankAndDisable(document.getElementById('actionBtn3'));
-
-    GMTools.saveDialog.enter({
-        disk,
-        fileType: GMDisk.FILE_TYPES.SCENE,
-        messageArea: document.getElementById('message'),
-        suggestedName: currentSceneFileName
-            ? currentSceneFileName.replace(/\/PIC$/i, '').trim()
-            : '',
-        onSave: (fullName) => {
-            // saveScene handles colour sync and the disk write
-            saveScene(fullName);
-            return true;
-        },
-        onExit: () => {
-            saveMode.active = false;
-            saveMode.confirmingOverwrite = false;
-            exitFileMenuMode();
-        }
-    });
-}
-
-// cancelSave is called from exitFileMenuMode when bailing out of a sub-mode.
-// confirmSave is used by tests to drive the save flow programmatically.
-function cancelSave()   { GMTools.saveDialog.cancel(); }
-function confirmSave()  {
-    GMTools.saveDialog.confirm();
-    saveMode.confirmingOverwrite = GMTools.saveDialog.confirmingOverwrite();
 }
 
 function clearScene() {

@@ -1,8 +1,8 @@
 /**
- * Scene-maker file menu + load preview tests
+ * Scene-maker file menu + preview tests
  *
- * Covers the GM-style file menu (file → disk/ok/load/save) and the load-mode
- * delegation through GMTools.previewLoader.
+ * Covers the GM-style file menu (file → disk/ok/preview/blank) and the
+ * preview-mode delegation through GMTools.previewLoader.
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'vitest';
@@ -54,7 +54,7 @@ async function openSceneMaker() {
 }
 
 describe('scene-maker file menu', () => {
-    test('clicking "file" swaps the four action buttons to disk/ok/load/save in red', async () => {
+    test('clicking "file" swaps the four action buttons to disk/ok/preview/(blank) in red', async () => {
         const page = await openSceneMaker();
 
         const labels = await page.evaluate(() => {
@@ -65,7 +65,9 @@ describe('scene-maker file menu', () => {
             });
         });
 
-        expect(labels.map(l => l.text)).toEqual(['disk', 'ok', 'load', 'save']);
+        // btn4 is blank (all spaces) now that save-through-in-app-dialog is gone;
+        // save goes through the d64 popup exclusively.
+        expect(labels.map(l => l.text)).toEqual(['disk', 'ok', 'preview', '']);
         expect(labels.every(l => l.red)).toBe(true);
         await page.close();
     });
@@ -128,7 +130,7 @@ describe('scene-maker file menu', () => {
     });
 });
 
-describe('scene-maker load mode', () => {
+describe('scene-maker preview mode', () => {
     test('clicking load enters preview mode and previews first scene', async () => {
         const page = await openSceneMaker();
 
@@ -222,7 +224,7 @@ describe('scene-maker load mode', () => {
         await page.close();
     });
 
-    test('clicking a tool button during load mode cancels the load', async () => {
+    test('clicking a tool button during preview mode cancels the load', async () => {
         const page = await openSceneMaker();
 
         const state = await page.evaluate(() => {
@@ -245,43 +247,3 @@ describe('scene-maker load mode', () => {
     });
 });
 
-describe('scene-maker save mode', () => {
-    test('clicking save enters save mode with input prefilled from current filename', async () => {
-        const page = await openSceneMaker();
-
-        const state = await page.evaluate(() => {
-            currentSceneFileName = 'MYPIC/PIC';
-            fileMenu();
-            actionBtn4Click(); // save
-            const input = document.querySelector('.save-filename');
-            return {
-                saveActive: saveMode.active,
-                inputValue: input ? input.value : null
-            };
-        });
-
-        expect(state.saveActive).toBe(true);
-        expect(state.inputValue).toBe('mypic');
-        await page.close();
-    });
-
-    test('Escape cancels save mode and exits file menu', async () => {
-        const page = await openSceneMaker();
-
-        const state = await page.evaluate(() => {
-            fileMenu();
-            actionBtn4Click();
-            // Blur the input so the document-level handler picks up Escape
-            document.querySelector('.save-filename').blur();
-            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-            return {
-                saveActive: saveMode.active,
-                fileMenuActive: fileMenuMode.active
-            };
-        });
-
-        expect(state.saveActive).toBe(false);
-        expect(state.fileMenuActive).toBe(false);
-        await page.close();
-    });
-});

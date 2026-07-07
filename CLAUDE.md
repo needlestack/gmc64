@@ -636,7 +636,7 @@ restyle.
 Contracts differ slightly per editor:
 - `editor.html`: on pick → `loadProgramData` + `saveProgram`. Multi-match hands off to `showFilePopup()`.
 - `play.html`: bare visit shows the picker's drop-zone overlay (game-runner has no file menu of its own).
-- Sprite/scene-maker: multi-match → `enterLoadMode()` (browsable preview).
+- Sprite/scene-maker: multi-match → `enterPreviewMode()` (browsable preview).
 - Sound/music-maker: multi-match → `showFilePopup()` / `showDiskPopup()`.
 
 ### URL parameters
@@ -725,10 +725,8 @@ Editor UI tests (puppeteer):
 |------|---------|
 | `editor-edit.test.js` | Editor: arg editing, copy/paste, find, multi-quad swap, save round-trip |
 | `disk-popup.test.js` | Shared disk popup: save row, overwrite, prefill, directory listing, pool migration |
-| `scene-load.test.js` | Scene-maker: file menu + load preview mode |
-| `scene-save.test.js` | Scene-maker: save mode + overwrite prompt |
-| `sprite-load.test.js` | Sprite-maker: file menu + load preview mode |
-| `sprite-save.test.js` | Sprite-maker: save mode + overwrite prompt |
+| `scene-preview.test.js` | Scene-maker: file menu + preview mode |
+| `sprite-preview.test.js` | Sprite-maker: file menu + preview mode |
 | `sprite-draw.test.js` | Sprite-maker: pixel drawing, tools, color slot selection |
 | `sprite-frames.test.js` | Sprite-maker: frame management (add/del/copy/navigate) |
 | `sprite-modes.test.js` | Sprite-maker: multicolor/hi-res mode toggle, x/y double |
