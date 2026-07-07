@@ -199,6 +199,62 @@ The address is calculated from the instruction's position in the bytecode.
 - End of file: Pointer table (read backwards from byte -81)
 - Total file size: `PROGRAM_END + DATA_END + 623` (623 = gap + pointer table + slot names)
 
+### Standalone files (GameMaker "export to standalone" output)
+
+A standalone is a full ~48KB C64 memory image ($0302..$BFFE) that boots
+itself via the `LOAD ",8,1"` trick — load address $0302 overwrites the IRQ
+vector so the next interrupt jumps into user code. The image bundles the
+GameMaker runtime + a program together, so it plays without needing the
+editor.
+
+`standaloneToPRG(bytes)` in `gmParser.js` extracts an editor-format `.PRG`
+from a standalone file. Once extracted, the result parses through
+`parseProgramData` exactly like any editor-saved program.
+
+Fixed offsets used by the extractor (verified against the demo disk's
+ALIENS/PRG exported to standalone):
+
+| standalone file | standalone memory | content |
+|---|---|---|
+| 0x8000–0x81FF | $8300–$84FF | label table (512 bytes) |
+| 0x8200–0x8208 | $8500–$8508 | programLen, dataSize, 5 reserved |
+| 0x8209–0x84FC | $8509–$87FC | bytecode HEAD (ins 0..188) |
+| 0x05FD+       | $08FD+      | bytecode TAIL (ins 189..end, runtime working copy) |
+| dataSize→$3D90 | $[dataSize]..$3D8F | data section content |
+| $3F9C+        | $3F9C+      | pointer table (2-byte entries, sentinel 0x3D90) |
+| $3FB0+        | $3FB0+      | slot names region (79 bytes editor state) |
+
+Why the bytecode is split across two chunks: runtime machine code starts
+at memory $8800 and clobbers the tail of the loaded PRG at $8509. Only
+ins 0..188 survive there. The runtime keeps a working copy of the rest
+at $08FD onward. The two chunks overlap at ~ins 127..188 (both valid);
+the extractor splices at ins 189 for a clean boundary.
+
+Header value quirk: `programLen` field's high byte is stored `+6` from
+its true value. `parseProgramData` and `standaloneToPRG` both undo that
+(`decode16bit(low, high - 6)`) when computing PROGRAM_END.
+
+**Scene recovery** (`standaloneToScenes`): scenes are referenced by disk
+filename (e.g. `STARS /PIC`) in the .PRG format, so `parseProgramData`
+tries to load them via `loadFileByName`. Standalones don't ship with a
+disk — but the runtime reserves TWO fixed scene slots in the C64 VIC-II
+address space:
+
+| slot | bitmap | footer | notes |
+|---|---|---|---|
+| 1 | $6000 | $7F40 | VIC bank 1 hi-res bitmap |
+| 2 | $A000 | $BF40 | VIC bank 2 hi-res bitmap |
+
+Both are always allocated (the 191-block standalone file size is fixed).
+Each slot is 8000 pixel bytes + 10-byte palette+name footer.
+`standaloneToScenes` probes both and returns whichever have valid names,
+keyed by disk filename convention (`{NAME  }/PIC`). Games using one
+scene return one entry; games using two return both.
+
+Verified byte-perfect on ALIENS (one scene, STARS) and on multi-scene
+game exports (both slots populated with distinct names). Single-scene
+games return just one entry at $A000.
+
 ### PRG Multi-Part Sprite Parsing (CRITICAL)
 
 **ARCHITECTURAL RULE: Multi-part sprites are ALWAYS a single gmSprite object.**

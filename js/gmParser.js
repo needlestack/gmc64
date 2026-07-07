@@ -573,6 +573,235 @@ function parseProgramData(fileData) {
     return { instructions, labelMap, mediaStore, dataTables, missingScenes };
 }
 
+// =============================================================================
+// STANDALONE FILE EXTRACTION
+// =============================================================================
+//
+// A "standalone" GameMaker file is a full memory image (~48KB) of a running
+// C64 with a GameMaker program loaded. Instead of the editor's compact `.PRG`
+// format (which needs the editor to run), a standalone file contains the
+// runtime + the program together and self-boots via the `LOAD ",8,1"`
+// convention (load address $0302 overwrites the IRQ vector so the next
+// interrupt jumps into the file's code).
+//
+// We can play standalones in the browser by extracting the editor `.PRG`
+// structure that lives embedded inside the memory image at known offsets,
+// then handing the reconstructed `.PRG` to parseProgramData like any other.
+//
+// STANDALONE MEMORY LAYOUT (verified against ALIENS/PRG):
+//
+//   file offset    memory       content
+//   -----------    ----------   -------
+//   0x0000-0x0001  $0302        load address ($0302 → IRQ vector trick)
+//   0x05FD+        $08FD+       runtime's WORKING COPY of bytecode tail
+//                                (ins 189 onward — contiguous to end)
+//   ...            $36D2-$3D8F  data section content (media entries, etc.)
+//   ...            $3F9C-$3FAE  pointer table (2-byte entries, sentinel 0x3D90)
+//   ...            $3FB0-$3FFE  slot names region (79 bytes editor state)
+//   0x8000-0x81FF  $8300-$84FF  ORIGINAL loaded .PRG label table — 512 bytes
+//   0x8200-0x8208  $8500-$8508  ORIGINAL loaded .PRG header
+//                                (programLen@0x8200, dataSize@0x8202, 5 reserved)
+//   0x8209-0x84FF  $8509-$87FF  ORIGINAL loaded .PRG bytecode HEAD (ins 0..188)
+//   0x8500+        $8800+       runtime machine code — clobbers .PRG tail here
+//
+// Both chunks of bytecode are needed to reconstruct the full program:
+//   - ORIGINAL PRG head at $8509 holds ins 0..188 (before runtime clobbers $8800)
+//   - Runtime working-copy at $08FD holds ins 189..end (past where head was clobbered)
+//
+// The two chunks OVERLAP for ins ~127..188 (both valid), but we splice at
+// ins 189 because that's the clean boundary between "chunk A ends" and
+// "chunk B tail begins."
+//
+// Data section content and pointer table live in specific memory regions
+// with fixed addresses ($36D2..$3D8F for data content, $3F9C+ for pointer
+// table, $3FB0+ for slot names). We copy them into the reconstructed
+// editor `.PRG` at the offsets parseProgramData expects.
+//
+// Extracts an editor-format `.PRG` from a standalone file. Result parses
+// with parseProgramData like any editor-saved program.
+//
+// Throws if the input doesn't look like a GameMaker standalone (checks
+// load address is $0302 and the header at $8500 has a nonzero programLen).
+function standaloneToPRG(standaloneBytes) {
+    // Standalone-specific offsets (all confirmed against demo ALIENS export).
+    const STANDALONE_LOAD    = 0x0302;
+    const LABEL_TABLE_OFFSET = 0x8000;   // memory $8300 — original .PRG pre-header
+    const HEADER_OFFSET      = 0x8200;   // memory $8500 — programLen/dataSize/reserved
+    const BYTECODE_HEAD_OFFSET = 0x8209; // memory $8509 — bytecode head (ins 0..188)
+    const BYTECODE_HEAD_INS_COUNT = 189; // instructions preserved before $8800 clobber
+    const BYTECODE_TAIL_OFFSET = 0x05FD; // memory $08FD — bytecode tail (ins 189..end)
+    const SLOT_NAMES_MEMORY  = 0x3FB0;   // where editor-state region starts in memory
+
+    // Same OFFSET constant parseProgramData uses. Every editor `.PRG` and
+    // every standalone treats this as the fixed base for data pointers.
+    const OFFSET = 0x3D90;
+
+    // Rough sanity checks.
+    if (standaloneBytes.length < 0x8300) {
+        throw new Error(`standaloneToPRG: file too short (${standaloneBytes.length} bytes; expected ~48KB memory image)`);
+    }
+    const loadAddr = decode16bit(standaloneBytes[0], standaloneBytes[1]);
+    if (loadAddr !== STANDALONE_LOAD) {
+        throw new Error(`standaloneToPRG: load address is $${loadAddr.toString(16)}, expected $0302 (not a standalone GameMaker file?)`);
+    }
+
+    // Header: same layout the editor .PRG uses at bytes 514-522, verbatim.
+    // programLen field encodes the actual program section length + 0x600
+    // (high byte offset by 6) — parseProgramData undoes that same way. See
+    // its PROGRAM_END computation.
+    const programLenField = decode16bit(standaloneBytes[HEADER_OFFSET],
+                                        standaloneBytes[HEADER_OFFSET + 1]);
+    const dataSizeField   = decode16bit(standaloneBytes[HEADER_OFFSET + 2],
+                                        standaloneBytes[HEADER_OFFSET + 3]);
+    if (programLenField === 0) {
+        throw new Error('standaloneToPRG: header at $8500 is zeroed (not a standalone GameMaker file?)');
+    }
+
+    const PROGRAM_END = 514 + decode16bit(standaloneBytes[HEADER_OFFSET],
+                                          standaloneBytes[HEADER_OFFSET + 1] - 6);
+    const DATA_END = OFFSET - dataSizeField;   // size of data section
+    const bytecodeLen = PROGRAM_END - 523;
+    const dataStartInStandalone = dataSizeField - STANDALONE_LOAD + 2;  // memory→file
+
+    // Editor `.PRG` layout (mirrors what serializeProgram would produce):
+    //   [0..1]   load address ($0400)
+    //   [2..513] label table (512 bytes)
+    //   [514..522] header (9 bytes: programLen, dataSize, 5 reserved)
+    //   [523..PROGRAM_END-1] bytecode + strings
+    //   [PROGRAM_END..PROGRAM_END+DATA_END-1] data section
+    //   [tail 623 bytes] gap + pointer table + slot names
+    const totalSize = PROGRAM_END + DATA_END + 623;
+    const prg = new Uint8Array(totalSize);
+
+    // Load address stays $0400 to match every other editor .PRG on disk.
+    prg[0] = 0x00;
+    prg[1] = 0x04;
+
+    // Label table — copy from original LOAD position (never clobbered by runtime).
+    for (let i = 0; i < 512; i++) {
+        prg[2 + i] = standaloneBytes[LABEL_TABLE_OFFSET + i];
+    }
+
+    // Header — same source.
+    for (let i = 0; i < 9; i++) {
+        prg[514 + i] = standaloneBytes[HEADER_OFFSET + i];
+    }
+
+    // Bytecode: stitched from two chunks. The original PRG load at $8509
+    // holds ins 0..188 cleanly (bytes 0..755). Past ins 189, runtime machine
+    // code has clobbered it. The runtime's working-copy tail at $08FD holds
+    // ins 189..end (bytes 756..bytecodeLen-1).
+    const headBytes = BYTECODE_HEAD_INS_COUNT * 4;
+    for (let i = 0; i < headBytes && i < bytecodeLen; i++) {
+        prg[523 + i] = standaloneBytes[BYTECODE_HEAD_OFFSET + i];
+    }
+    for (let i = headBytes; i < bytecodeLen; i++) {
+        prg[523 + i] = standaloneBytes[BYTECODE_TAIL_OFFSET + (i - headBytes)];
+    }
+
+    // Data section — sits at memory $[dataSizeField]..$3D8F in the standalone.
+    // parseProgramData will read it back the same way editor .PRGs do.
+    for (let i = 0; i < DATA_END; i++) {
+        prg[PROGRAM_END + i] = standaloneBytes[dataStartInStandalone + i];
+    }
+
+    // Tail region: pointer table + slot names. parseProgramData walks the
+    // pointer table backwards via `fileData.at(-81)` (low byte of sentinel).
+    // Layout: last 79 bytes = slot names; byte at -80/-81 = sentinel high/low;
+    // preceding pairs = media pointer entries; then 0x0000 marker; then padding.
+    //
+    // In the standalone memory image these sit at fixed memory $3FB0
+    // (slot names). The pointer table's sentinel high byte is at $3FAF,
+    // low byte at $3FAE, and entries grow backward from there. We copy
+    // the whole tail region back-aligned.
+    const slotNamesInStandalone = SLOT_NAMES_MEMORY - STANDALONE_LOAD + 2;
+    // Slot names: last 79 bytes of both files.
+    for (let i = 0; i < 79; i++) {
+        prg[totalSize - 79 + i] = standaloneBytes[slotNamesInStandalone + i];
+    }
+    // Pointer table: copy backward from the byte immediately before slot
+    // names (that byte is the sentinel's high byte, i.e. 0x3D). Loop covers
+    // ~100 bytes back — enough for up to ~50 pointer entries. Extras remain
+    // zero, which terminates parseProgramData's backward walk.
+    for (let i = 0; i < 100; i++) {
+        const src = slotNamesInStandalone - 1 - i;
+        const dst = totalSize - 79 - 1 - i;
+        if (src < 0 || dst < 0) break;
+        prg[dst] = standaloneBytes[src];
+    }
+
+    return prg;
+}
+
+// Extract embedded scene(s) from a standalone file.
+//
+// Scenes are referenced by filename in editor `.PRG` format (e.g.
+// "STARS /PIC" → loaded from a separate .PIC file on disk). Standalones
+// don't ship with a disk, so the scene pixel data has to be recovered
+// from the memory image.
+//
+// The runtime reserves TWO scene slots at fixed C64 VIC-II bitmap
+// addresses — $6000 (bank 1) and $A000 (bank 2). Each holds an 8000-byte
+// hi-res bitmap followed by a 10-byte palette+name footer. Both slots are
+// always allocated (the 191-block standalone file size is fixed), so we
+// probe both and return whichever contain a valid scene name.
+//
+// Returns `{ [filename]: Uint8Array }` keyed by the disk filename the
+// program will ask for at load time. Host can merge into loadFileByName:
+//
+//     const embedded = standaloneToScenes(saBytes);
+//     const oldLoad = globalThis.loadFileByName;
+//     globalThis.loadFileByName = (name) => embedded[name] || oldLoad(name);
+//
+// Games using only one scene return one entry; games using two return both.
+function standaloneToScenes(standaloneBytes) {
+    const STANDALONE_LOAD = 0x0302;
+    const BITMAP_BYTES  = 8000;          // 160×200 packed, 4 pixels/byte
+    const FOOTER_BYTES  = 10;
+    const HEADER_BYTES  = 6;
+    const SLOT_ADDRS    = [0x6000, 0xA000];  // scene 1 (VIC bank 1) + scene 2 (VIC bank 2)
+
+    const out = {};
+    for (const slotMem of SLOT_ADDRS) {
+        const bitmapOffset = slotMem - STANDALONE_LOAD + 2;
+        const footerOffset = bitmapOffset + BITMAP_BYTES;
+        if (footerOffset + FOOTER_BYTES > standaloneBytes.length) continue;
+
+        const footer = standaloneBytes.slice(footerOffset, footerOffset + FOOTER_BYTES);
+        // Scene name is 6 PETSCII bytes at footer[3..8]. Valid chars are
+        // letters (0x01-0x1A), digits (0x30-0x39), or space (0x20). Require
+        // at least 2 name-shaped bytes to reject empty/garbage slots.
+        const nameBytes = footer.slice(3, 9);
+        let nameLikeCount = 0;
+        for (const b of nameBytes) {
+            if ((b >= 0x01 && b <= 0x1A) || (b >= 0x30 && b <= 0x39) || b === 0x20) {
+                nameLikeCount++;
+            }
+        }
+        if (nameLikeCount < 2) continue;
+
+        const name = decodeString(nameBytes).trim().toUpperCase();
+        if (!name) continue;
+
+        // Synthesize a `.PIC` file: 6-byte header (byte 5 != 0xFF so gmScene
+        // skips RLE decoding), 8000 image bytes from the slot, 10-byte footer.
+        // Header stays zero — real .PIC files have magic bytes here but
+        // gmScene.parseSceneFile only cares about byte 5's RLE flag.
+        const pic = new Uint8Array(HEADER_BYTES + BITMAP_BYTES + FOOTER_BYTES);
+        for (let i = 0; i < BITMAP_BYTES; i++) {
+            pic[HEADER_BYTES + i] = standaloneBytes[bitmapOffset + i];
+        }
+        for (let i = 0; i < FOOTER_BYTES; i++) {
+            pic[HEADER_BYTES + BITMAP_BYTES + i] = footer[i];
+        }
+
+        // Filename convention: 6-char name (space-padded) + '/PIC'.
+        const paddedName = (name + '      ').slice(0, 6);
+        out[`${paddedName}/PIC`] = pic;
+    }
+    return out;
+}
+
 // Build AST (list-of-lists structure) from flat instructions
 // Each list knows its parent list and the index of the IfNode that contains it
 // This allows jumping into nested lists and continuing properly when they end
@@ -1395,6 +1624,8 @@ function serializeProgram(programData, originalFileData = null) {
 if (typeof globalThis !== 'undefined') {
     globalThis.parseProgramData = parseProgramData;
     globalThis.serializeProgram = serializeProgram;
+    globalThis.standaloneToPRG = standaloneToPRG;
+    globalThis.standaloneToScenes = standaloneToScenes;
     globalThis.buildAST = buildAST;
     globalThis.isMarkerEntry = isMarkerEntry;
 }

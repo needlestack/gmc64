@@ -22,12 +22,14 @@ const STORAGE_KEY = 'gm_disk_music-maker';
 let browser;
 let blankDiskBase64;
 let s2DiskBase64;
+let standaloneDiskBase64;
 let s2Directory;
 
 beforeAll(async () => {
     browser = await puppeteer.launch({ headless: true });
     blankDiskBase64 = readFileSync(join(PROJECT_ROOT, 'tests/disks/BlankDisk.d64')).toString('base64');
     s2DiskBase64 = readFileSync(join(PROJECT_ROOT, 'tests/disks/gmc64-test.d64')).toString('base64');
+    standaloneDiskBase64 = readFileSync(join(PROJECT_ROOT, 'tests/disks/standalone.d64')).toString('base64');
     s2Directory = JSON.parse(readFileSync(join(PROJECT_ROOT, 'tests/golden/testdisk-directory.json'), 'utf8'));
 });
 
@@ -40,8 +42,12 @@ async function openPage({ withDisk = true, disk = 'blank' } = {}) {
     page.on('pageerror', err => console.error('Page error:', err.message));
 
     if (withDisk) {
-        const data = disk === 's2' ? s2DiskBase64 : blankDiskBase64;
-        const name = disk === 's2' ? 'gmc64-test.d64' : 'test.d64';
+        const data = disk === 's2' ? s2DiskBase64
+                   : disk === 'standalone' ? standaloneDiskBase64
+                   : blankDiskBase64;
+        const name = disk === 's2' ? 'gmc64-test.d64'
+                   : disk === 'standalone' ? 'standalone.d64'
+                   : 'test.d64';
         await page.evaluateOnNewDocument((data, name, key) => {
             localStorage.clear();
             localStorage.setItem(key, data);
@@ -641,6 +647,50 @@ describe('disk popup "show all"', () => {
         }));
         expect(state.buttonActive).toBe(true);
         expect(state.hasDimmedRows).toBe(true);
+        await page.close();
+    });
+});
+
+describe('disk popup standalone-file detection', () => {
+    // standalone.d64 has one ALIENS standalone (no /XXX extension, 191
+    // blocks, load addr $0302). With show-all off the popup shows the
+    // usual GM-only listing (empty here since there are no /SNG files
+    // in music-maker's primary type). With show-all on, ALIENS appears
+    // in its own "standalone" group — not dimmed, clickable.
+    test('standalone entries appear in a "standalone" group when show-all is on', async () => {
+        const page = await openPage({ disk: 'standalone' });
+        await openDiskPopup(page);
+        await page.click('.gm-disk-show-all');
+
+        const rows = await page.evaluate(() => {
+            return Array.from(document.querySelectorAll('.gm-disk-files tr'))
+                .filter(r => !r.classList.contains('gm-disk-group-gap'))
+                .map(r => ({
+                    name: r.dataset.fileName || '',
+                    type: r.querySelector('td:nth-child(2)')?.textContent || '',
+                    dimmed: r.classList.contains('gm-disk-row-dimmed'),
+                    interactive: !!r.dataset.index
+                }));
+        });
+
+        // ALIENS appears with type label "standalone", not dimmed, interactive
+        const aliens = rows.find(r => r.name.trim().toUpperCase().startsWith('ALIENS'));
+        expect(aliens).toBeTruthy();
+        expect(aliens.type).toBe('standalone');
+        expect(aliens.dimmed).toBe(false);
+        expect(aliens.interactive).toBe(true);
+        await page.close();
+    });
+
+    test('standalone entries do NOT appear when show-all is off', async () => {
+        const page = await openPage({ disk: 'standalone' });
+        await openDiskPopup(page);
+        // show-all is off by default. The only file on standalone.d64 is
+        // ALIENS (no /XXX extension), so nothing GM-shaped exists at all.
+        const rows = await page.$$eval(
+            '.gm-disk-files tr[data-index]',
+            rs => rs.map(r => r.dataset.fileName));
+        expect(rows.length).toBe(0);
         await page.close();
     });
 });

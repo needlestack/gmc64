@@ -21,6 +21,11 @@ tools/golden-frame-*.png
 # Local-only working notes
 TODO.md
 
+# Game-specific projects — kept out of the repo for now.
+# Everything under these directories (code, docs, .d64, .bin) is local-only.
+aliens/
+bludred/
+
 # ---------------------------------------------------------------------------
 # C64 binary content: belt-and-suspenders.
 # Blanket-block every .d64 and .prg in the tree, then explicitly whitelist

@@ -4332,6 +4332,33 @@ function _bytesToBase64(bytes) {
 }
 
 function loadProgramData(fileName, fileData) {
+    // Standalone detection: files that start with load addr $0302 are
+    // self-launching memory images. Convert to a synthesised editor .PRG
+    // so the rest of the editor works unchanged. Embedded scenes are
+    // exposed by wrapping loadFileByName — parseProgramData looks up
+    // .PIC files that way, and the wrapper hands back the standalone's
+    // bitmap-memory bytes before falling back to the disk.
+    //
+    // We snapshot the "base" resolver once (the disk-backed one) and
+    // rewrap from it on each load — so switching between a standalone
+    // and a normal PRG never accumulates wrappers.
+    if (!globalThis._baseLoadFileByName) {
+        globalThis._baseLoadFileByName = globalThis.loadFileByName;
+    }
+    globalThis.loadFileByName = globalThis._baseLoadFileByName;
+    if (fileData.length >= 2 && fileData[0] === 0x02 && fileData[1] === 0x03) {
+        try {
+            const scenes = standaloneToScenes(fileData);
+            fileData = standaloneToPRG(fileData);
+            const base = globalThis.loadFileByName;
+            globalThis.loadFileByName = (name) => scenes[name] || base(name);
+        } catch (e) {
+            showMessage('Standalone extraction failed: ' + e.message);
+            console.error(e);
+            return;
+        }
+    }
+
     currentFileData = fileData;
 
     try {
@@ -4796,12 +4823,63 @@ function showConfirmDialog(message, onYes) {
     };
 }
 
+// Real GameMaker has a fixed 128-entry if/then table at runtime; overflow
+// prints "too many if...thens" and refuses to run. We mirror that limit
+// (checked at Run time, not while editing) so games authored under the
+// same constraint behave the same here. skip-next-if opcodes (0x62/63/64)
+// are single-line conditionals that don't consume from this budget —
+// the documented workaround when authors hit the ceiling.
+const MAX_IF_THENS = 128;
+const IF_OPCODES = new Set([
+    0x13, 0x14, 0x15, 0x16, 0x17, 0x18,  // if var =/></< 000 or [a]
+    0x19, 0x1A,                            // if joystick / button
+    0x1B,                                  // if sprite hit sprite
+    0x4A, 0x4B, 0x4C,                     // if score comparisons
+]);
+function countIfThens(instructions) {
+    let n = 0;
+    for (const ins of instructions) if (IF_OPCODES.has(ins.opcode)) n++;
+    return n;
+}
+
 function runProgram() {
     if (!currentProgramData) {
         showMessage('No program loaded');
         return;
     }
 
+    // if/then budget check — matches real GM's runtime-only enforcement
+    // (game loads fine into the editor even with too many, but refuses
+    // to run). Message shows the actual count so authors know their
+    // target for refactoring. Unlike real GM, we offer a [play anyway]
+    // escape hatch because gmc64's JS runtime has no hardware limit —
+    // helpful when mid-refactor and you want to sanity-check the game
+    // while still over budget. The escape is per-click, not sticky:
+    // the check re-fires on the next Run press.
+    const ifCount = countIfThens(currentProgramData.instructions);
+    if (ifCount > MAX_IF_THENS) {
+        const el = document.getElementById('statusMessage');
+        el.innerHTML =
+            `<div>too many if...thens (${ifCount} > ${MAX_IF_THENS})</div>` +
+            `<div><span id="playAnyway" class="confirm-option">[play anyway]</span></div>`;
+        el.classList.add('flashing-error');
+        document.getElementById('playAnyway').onclick = () => {
+            // Clear the flashing error and fall through into the normal
+            // run path. Slight duplication of runProgram's tail is
+            // deliberate — keeps the check-and-bypass logic together.
+            clearFlashingError();
+            runProgramUnchecked();
+        };
+        return;
+    }
+
+    runProgramUnchecked();
+}
+
+// The VM-start body, extracted so the [play anyway] bypass and the normal
+// path can share it. Called only after the if-budget check has passed OR
+// been explicitly overridden.
+function runProgramUnchecked() {
     // Initialize audio on user interaction (browser requirement)
     initAudio();
 

@@ -45,6 +45,10 @@ class GMDisk {
             case '/SND': return 'sound';
             case '/SNG': return 'music';
             case '/PRG': return 'program';
+            // Sentinel used when show-all groups extension-less standalone
+            // exports. Not a real disk extension — just what the group's
+            // rows display in the "type" column.
+            case 'STANDALONE': return 'standalone';
             default:     return '';
         }
     }
@@ -54,6 +58,29 @@ class GMDisk {
     // disk browser, so anything else on the disk is silently skipped.
     static _isGmFile(fileName) {
         return /^.{6}\/(SPR|PIC|SND|SNG|PRG)$/i.test(fileName);
+    }
+
+    // Standalone GameMaker exports have no filename extension (single
+    // words or numeric names like "ALIENS", "1", "2") but are distinguishable
+    // by:
+    //   - directory-entry block count of 191 (fixed size for the format)
+    //   - load address $0302 in the first two bytes (the self-launching-
+    //     via-IRQ-vector trick — no other C64 file type loads here)
+    // Both checks are cheap: block count comes from the directory entry;
+    // magic bytes require reading only the file's first sector.
+    static _isStandaloneEntry(disk, entry) {
+        if (entry.fileSize !== 191) return false;
+        // getChainedData reads the whole chain — potentially ~48KB per call.
+        // We only need the first two bytes, so limit to the start sector.
+        // No public "read N bytes" method exists yet; the 191-block cost
+        // per candidate is bearable given how few extension-less files
+        // typically live on a GM disk.
+        try {
+            const data = disk.getChainedData(entry.startTrack, entry.startSector);
+            return data && data.length >= 2 && data[0] === 0x02 && data[1] === 0x03;
+        } catch (e) {
+            return false;
+        }
     }
 
     // Long disk filenames (uploaded .d64 files) can blow out the disk picker
@@ -1223,7 +1250,8 @@ class GMDisk {
             // of use — sprites are usually the bulk of a disk, programs the
             // smallest count).
             const TYPE_ORDER = ['/SPR', '/PIC', '/SND', '/SNG', '/PRG'];
-            const all = this.listFiles().filter(e => GMDisk._isGmFile(e.fileName));
+            const rawAll = this.listFiles();
+            const all = rawAll.filter(e => GMDisk._isGmFile(e.fileName));
             const primaryExt = (this.popupOptions.fileType.extension || '').toUpperCase();
             const byExt = {};
             for (const entry of all) {
@@ -1233,9 +1261,19 @@ class GMDisk {
                 byExt[ext].push(entry);
             }
             const otherExts = TYPE_ORDER.filter(ext => byExt[ext] && ext !== primaryExt);
+            // Scan the remaining (non-GM-named) entries for standalones.
+            // They have no /XXX suffix so _isGmFile filters them out above,
+            // but the block-count + magic-byte check picks them up here.
+            const standalones = rawAll.filter(e =>
+                !GMDisk._isGmFile(e.fileName) && GMDisk._isStandaloneEntry(this.disk, e));
             groups = [];
             if (byExt[primaryExt]) groups.push({ entries: byExt[primaryExt], loadable: true });
             for (const ext of otherExts) groups.push({ entries: byExt[ext], loadable: false });
+            // Standalones are clickable and loadable — the host detects the
+            // $0302 magic on the raw bytes and routes through standaloneToPRG.
+            if (standalones.length) {
+                groups.push({ entries: standalones, loadable: true, ext: 'STANDALONE' });
+            }
         } else {
             groups = [{ entries: primaryFiles, loadable: true }];
         }
@@ -1277,10 +1315,12 @@ class GMDisk {
                 // Split "PLAYER/SPR" → "PLAYER" + "sprite". The full filename
                 // with extension is still the canonical identifier in code
                 // (and on row.dataset.fileName); the split here is purely
-                // presentational.
+                // presentational. Standalones have no extension; the group
+                // carries a synthetic `ext: 'STANDALONE'` marker so the
+                // type cell can still label them.
                 const slash = entry.fileName.lastIndexOf('/');
                 const baseName = slash >= 0 ? entry.fileName.substring(0, slash) : entry.fileName;
-                const ext = slash >= 0 ? entry.fileName.substring(slash).toUpperCase() : '';
+                const ext = group.ext || (slash >= 0 ? entry.fileName.substring(slash).toUpperCase() : '');
 
                 const nameCell = document.createElement('td');
                 nameCell.textContent = baseName;
