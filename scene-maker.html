@@ -80,6 +80,9 @@
     height: 400px;
     margin: 0 auto;
     overflow: hidden;
+    /* Disable browser touch gestures (scroll, pinch-zoom) on the drawing
+       surface so drag-to-paint works on touch devices. */
+    touch-action: none;
 }
 
 #sceneCanvas {
@@ -189,6 +192,8 @@
     /* Grid border on right and bottom edges only */
     border-right: 1px solid var(--c64-gray1);
     border-bottom: 1px solid var(--c64-gray1);
+    /* Same touch-action treatment as sceneContainer — see notes there. */
+    touch-action: none;
 }
 
 #zoomEditor td {
@@ -608,15 +613,38 @@ function updatePaletteDisplay() {
 function setupEventListeners() {
     const container = document.getElementById('sceneContainer');
 
-    container.addEventListener('mousedown', onMouseDown);
-    container.addEventListener('mousemove', onMouseMove);
-    container.addEventListener('mouseup', onMouseUp);
+    // Pointer Events cover mouse + touch + stylus in one code path. The
+    // coordinate math in screenToScene(clientX, clientY) doesn't care about
+    // the input type, so switching to pointer events "just works" for the
+    // main canvas — plus setPointerCapture on pointerdown keeps drag going
+    // even if the finger drifts outside the canvas momentarily.
+    container.addEventListener('pointerdown', (e) => {
+        try { container.setPointerCapture(e.pointerId); } catch {}
+        onMouseDown(e);
+    });
+    container.addEventListener('pointermove', onMouseMove);
+    container.addEventListener('pointerup', (e) => {
+        try { container.releasePointerCapture(e.pointerId); } catch {}
+        onMouseUp(e);
+    });
+    container.addEventListener('pointercancel', onMouseUp);
     container.addEventListener('mouseleave', onCanvasLeave);
 
-    // Zoom table events
-    zoomTable.addEventListener('mousedown', onZoomMouseDown);
-    zoomTable.addEventListener('mousemove', onZoomMouseMove);
-    zoomTable.addEventListener('mouseup', onZoomMouseUp);
+    // Zoom table events — cells fire pointerdown/pointerup normally, but
+    // pointermove reports the CAPTURED target (the cell that was first
+    // pressed), not the cell currently under the finger. So the move handler
+    // uses document.elementFromPoint to find the actual cell being hovered
+    // — the standard workaround. Same pattern as sprite-maker's fatbits.
+    zoomTable.addEventListener('pointerdown', (e) => {
+        try { zoomTable.setPointerCapture(e.pointerId); } catch {}
+        onZoomMouseDown(e);
+    });
+    zoomTable.addEventListener('pointermove', onZoomMouseMove);
+    zoomTable.addEventListener('pointerup', (e) => {
+        try { zoomTable.releasePointerCapture(e.pointerId); } catch {}
+        onZoomMouseUp(e);
+    });
+    zoomTable.addEventListener('pointercancel', onZoomMouseUp);
 
     // Click on menu overlay (but not interactive elements) exits zoom/copy mode
     document.getElementById('menuOverlay').addEventListener('click', (e) => {
@@ -663,9 +691,17 @@ function screenToScene(clientX, clientY) {
 }
 
 function zoomToScene(e) {
-    // Get cell from event target
-    const cell = e.target.closest('td');
-    if (!cell) return null;
+    // Use elementFromPoint rather than event.target because we're on
+    // pointer events with setPointerCapture: during pointermove after
+    // capture, event.target is the captured element (the whole zoom
+    // table), not the cell currently under the finger. elementFromPoint
+    // gives us the actual cell — same lookup pattern as the fatbits grid
+    // in sprite-maker.
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    if (!el) return null;
+    const cell = el.closest('td');
+    // Guard against picking up TDs from a different table.
+    if (!cell || !zoomTable.contains(cell)) return null;
 
     const localX = cell.cellIndex;
     const localY = cell.parentElement.rowIndex;
@@ -1695,13 +1731,19 @@ function onCanvasLeave(e) {
     }
 }
 
-// Zoom table mouse handlers
-// Draw mode: 'draw' or 'erase' - set on mousedown based on initial cell
+// Zoom table pointer handlers.
+// Draw mode: 'draw' or 'erase' - set on pointerdown based on initial cell.
 let zoomDrawMode = null;
 
 function onZoomMouseDown(e) {
     const pos = zoomToScene(e);
     if (!pos || pos.x < 0 || pos.x >= 160 || pos.y < 0 || pos.y >= 200) return;
+
+    // preventDefault stops iOS text selection + secondary scroll gestures.
+    // The wrapper handler in setupEventListeners already set pointer capture
+    // on the zoomTable, which handles the "release outside" case that the
+    // old code needed a document-level mouseup listener for.
+    if (e.cancelable) e.preventDefault();
 
     isDrawing = true;
     lastX = pos.x;
@@ -1721,9 +1763,6 @@ function onZoomMouseDown(e) {
         currentScene.setPixel(pos.x, pos.y, drawingColor);
     }
     renderScene();
-
-    // Track mouseup at document level so dragging outside table doesn't lose state
-    document.addEventListener('mouseup', onZoomMouseUp, { once: true });
 }
 
 function onZoomMouseMove(e) {

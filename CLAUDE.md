@@ -733,6 +733,7 @@ Editor UI tests (puppeteer):
 | `sprite-frames.test.js` | Sprite-maker: frame management (add/del/copy/navigate) |
 | `sprite-modes.test.js` | Sprite-maker: multicolor/hi-res mode toggle, x/y double |
 | `sound-maker-edit.test.js` | Sound-maker: frame editing, copy/clear/delete confirmations |
+| `touch-drag.test.js` | Touch/pointer drag drawing across drawing surfaces (fatbits grid, etc.) |
 
 ### Runtime Testing (gmRuntime.test.js)
 

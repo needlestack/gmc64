@@ -27,6 +27,9 @@
     left: 10px;
     bottom: 10px;
     border-collapse: collapse;
+    /* Disable browser touch gestures (scroll, pinch-zoom, double-tap zoom)
+       on the drawing surface so drag-to-paint works on touch devices. */
+    touch-action: none;
 }
 #fatbits td {
     /* Multicolor: 2 screen px wide × 1 tall, at 1.5x display = 3:2 visible ratio */
@@ -1288,7 +1291,7 @@ function confirmSave() {
 // Flip and shift are "any-click-exits" modes: the user is committing to a
 // transient gesture (use arrow keys), and any click on the canvas, palette,
 // or empty space should treat that click as "I'm done". Returns true if a
-// mode was exited so callers can skip their own action (e.g. cellMouseDown
+// mode was exited so callers can skip their own action (e.g. _paintCellOnDown
 // shouldn't ALSO draw the pixel the user clicked to exit on).
 //
 // Buttons stay clickable but their own onclick guards refuse during these
@@ -2253,7 +2256,10 @@ function initApp() {
     // the string lives (the HTML literal is a placeholder for static views).
     document.getElementById('btn2').textContent = LABEL_MENU;
 
-    // Build the fat bits table (12x21 grid for multicolor)
+    // Build the fat bits table (12x21 grid for multicolor).
+    // Cells carry data-x/data-y only — event handling is delegated to the
+    // table via attachFatbitsPointerHandlers() below, so mode-switch rebuilds
+    // (which replace all TDs) don't need to re-attach anything.
     const fatbits = document.getElementById("fatbits");
     for (let y = 0; y < 21; y++) {
         const row = document.createElement("tr");
@@ -2262,12 +2268,11 @@ function initApp() {
             cell.setAttribute("data-x", x);
             cell.setAttribute("data-y", y);
             cell.style.backgroundColor = "transparent";
-            cell.addEventListener("mousedown", cellMouseDown);
-            cell.addEventListener("mouseover", cellHover);
             row.appendChild(cell);
         }
         fatbits.appendChild(row);
     }
+    attachFatbitsPointerHandlers();
 
     // Initialize pixel data
     initPixelData();
@@ -2409,6 +2414,9 @@ function rebuildFatBitsGrid() {
     const width = setupState.isMultiColor ? 12 : 24;
     const cellWidth = setupState.isMultiColor ? 30 : 15; // Multicolor 3:2, hi-res 3:4 (height=20)
 
+    // Cells carry data-x/data-y only — event handling is delegated to the
+    // #fatbits table (see attachFatbitsPointerHandlers), so rebuilding the
+    // grid on a mode switch doesn't need to re-attach anything.
     for (let y = 0; y < 21; y++) {
         const row = document.createElement("tr");
         for (let x = 0; x < width; x++) {
@@ -2417,8 +2425,6 @@ function rebuildFatBitsGrid() {
             cell.setAttribute("data-y", y);
             cell.style.backgroundColor = "transparent";
             cell.style.width = cellWidth + "px";
-            cell.addEventListener("mousedown", cellMouseDown);
-            cell.addEventListener("mouseover", cellHover);
             row.appendChild(cell);
         }
         fatbits.appendChild(row);
@@ -2530,39 +2536,44 @@ function newSprite() {
     updatePreview();
 }
 
-// Mouse state for drag drawing
-let drawMode = null; // 'draw' or 'erase' - set on mousedown based on initial cell
+// Drawing drag state — 'draw' or 'erase' — decided on the initial press
+// based on whether the starting cell is already the currently-selected
+// color. Cleared on release.
+let drawMode = null;
 
+// Extra safety: any mouseup anywhere clears drawMode. Redundant with the
+// pointer-capture pointerup handler below but harmless — protects against
+// odd states if a browser drops a pointerup on the floor.
 document.onmouseup = function(event) {
     drawMode = null;
 };
 
-function cellMouseDown(event) {
+// The paint logic used by both the initial press (which also decides the
+// draw/erase mode) and each cell entered while dragging. Split so the
+// pointer handler can call the right one for the same paint work either way.
+function _paintCellOnDown(cell) {
     if (animaMode.active) return; // No drawing during animation
     if (loadMode.active) return;  // No drawing during load
     if (saveMode.active) return;  // No drawing during save
     // Any click during flip/shift is "I'm done" — exit and don't draw.
-    if (_exitTransientCmdSubmode()) { event.preventDefault(); return; }
-    event.preventDefault(); // Prevent text selection while dragging
-    const x = parseInt(event.target.getAttribute("data-x"));
-    const y = parseInt(event.target.getAttribute("data-y"));
+    if (_exitTransientCmdSubmode()) return;
+    const x = parseInt(cell.getAttribute("data-x"));
+    const y = parseInt(cell.getAttribute("data-y"));
 
     // pixelData stores raw C64 hardware values (00/01/10/11); map from the
     // GM slot the user picked to the corresponding hardware value.
     const drawValue = setupState.isMultiColor ? SLOT_PIXEL_MAP[selectedColorSlot] : 1;
 
-    // Determine draw mode based on initial click
-    // In hi-res, check if pixel is set (non-zero); in multicolor check exact color match
+    // Determine draw mode based on initial click.
+    // In hi-res, check if pixel is set (non-zero); in multicolor check exact color match.
     const isCurrentColor = setupState.isMultiColor
         ? (pixelData[y][x] === drawValue)
         : (pixelData[y][x] !== 0 && selectedColorSlot !== 0);
 
     if (isCurrentColor) {
-        // Clicking on same color = erase mode
         drawMode = 'erase';
         pixelData[y][x] = 0;
     } else {
-        // Clicking on different color = draw mode
         drawMode = 'draw';
         pixelData[y][x] = drawValue;
     }
@@ -2572,23 +2583,76 @@ function cellMouseDown(event) {
     syncToSprite();
 }
 
+// Back-compat shim. The existing test suite constructs synthetic events
+// and calls this directly to simulate a paint; real user interaction now
+// flows through the delegated pointer handlers below. Keeping the shim
+// avoids churning every test at the same time as the pointer-events
+// migration.
+function cellMouseDown(event) {
+    _paintCellOnDown(event.target);
+}
 function cellHover(event) {
-    if (drawMode) {
-        const x = parseInt(event.target.getAttribute("data-x"));
-        const y = parseInt(event.target.getAttribute("data-y"));
+    _paintCellOnDrag(event.target);
+}
 
-        if (drawMode === 'erase') {
-            pixelData[y][x] = 0;
-        } else {
-            // Same slot→hardware mapping as cellMouseDown above.
-            const drawValue = setupState.isMultiColor ? SLOT_PIXEL_MAP[selectedColorSlot] : 1;
-            pixelData[y][x] = drawValue;
-        }
-
-        updateFatBits();
-        updatePreview();
-        syncToSprite();
+function _paintCellOnDrag(cell) {
+    if (!drawMode) return;
+    const x = parseInt(cell.getAttribute("data-x"));
+    const y = parseInt(cell.getAttribute("data-y"));
+    if (drawMode === 'erase') {
+        pixelData[y][x] = 0;
+    } else {
+        const drawValue = setupState.isMultiColor ? SLOT_PIXEL_MAP[selectedColorSlot] : 1;
+        pixelData[y][x] = drawValue;
     }
+    updateFatBits();
+    updatePreview();
+    syncToSprite();
+}
+
+// Delegated Pointer Events handler on the #fatbits table. Handles mouse,
+// touch, and stylus in one code path.
+//
+// Why not per-cell mouseover like before: on touch, `touchmove` fires only
+// on the element that received `touchstart` — it does NOT dispatch a fresh
+// `mouseover` on each cell the finger passes over. So the old
+// mousedown/mouseover pattern painted only the first cell tapped, never
+// the ones dragged across. Pointer events + document.elementFromPoint
+// + setPointerCapture fixes this for mouse AND touch.
+function attachFatbitsPointerHandlers() {
+    const fatbits = document.getElementById("fatbits");
+    let capturedId = null;
+
+    fatbits.addEventListener('pointerdown', (event) => {
+        const cell = event.target.closest('td[data-x]');
+        if (!cell) return;
+        event.preventDefault();  // stop text selection + scroll on touch
+        try { fatbits.setPointerCapture(event.pointerId); } catch {}
+        capturedId = event.pointerId;
+        _paintCellOnDown(cell);
+    });
+
+    fatbits.addEventListener('pointermove', (event) => {
+        if (!drawMode) return;
+        // touchmove-on-the-original-cell semantics don't help us — always
+        // look up the cell actually under the pointer via elementFromPoint.
+        const el = document.elementFromPoint(event.clientX, event.clientY);
+        if (!el) return;
+        const cell = el.closest('td[data-x]');
+        if (!cell || !fatbits.contains(cell)) return;
+        _paintCellOnDrag(cell);
+    });
+
+    const endDrag = (event) => {
+        drawMode = null;
+        if (capturedId != null) {
+            try { fatbits.releasePointerCapture(capturedId); } catch {}
+            capturedId = null;
+        }
+    };
+    fatbits.addEventListener('pointerup', endDrag);
+    fatbits.addEventListener('pointercancel', endDrag);
+    fatbits.addEventListener('lostpointercapture', endDrag);
 }
 
 // Select which color slot to draw with
@@ -2945,7 +3009,7 @@ document.addEventListener('click', (e) => {
     }
 
     // Any click outside the buttons row exits a transient cmd submode
-    // (flip/shift). cellMouseDown / selectColor / showColorPicker handle
+    // (flip/shift). _paintCellOnDown / selectColor / showColorPicker handle
     // clicks INSIDE the canvas and palette directly; this branch catches
     // clicks on empty background, the message area, etc.
     if (!e.target.closest('#buttons') && _exitTransientCmdSubmode()) {
