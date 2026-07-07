@@ -1,6 +1,6 @@
 # gmc64
 
-A faithful, modern recreation of Garry Kitchen's GameMaker
+gmc64 is a clean-room reimplementation of Garry Kitchen’s GameMaker. This project documents the executable format, virtual machine, instruction set (103 opcodes), resource formats, and runtime behavior, and includes a compatible browser-based implementation.
 
 <table>
   <tr>
