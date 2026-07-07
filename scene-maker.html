@@ -294,6 +294,33 @@
 </head>
 <body>
 
+<!--
+    Invisible input focused during text-tool mode. Sole purpose: give
+    mobile browsers something focusable so the OS software keyboard
+    appears. All actual character handling still runs through the
+    document-level keydown handler (onKeyDown → handleTextKey) — this
+    input just sits there and swallows focus. Kept `readonly`-free
+    (iOS won't summon a keyboard for readonly inputs) and given the
+    minimum non-zooming font-size (iOS zooms into inputs under 16px
+    on focus).
+
+    If it turns out this leaves the accumulated text in the input value
+    causing weirdness, we can add an `input` listener that clears it.
+    Not doing that yet — the input is invisible and its value doesn't
+    matter for scene rendering.
+-->
+<input id="textModeInput"
+       type="text"
+       autocomplete="off"
+       autocorrect="off"
+       autocapitalize="off"
+       spellcheck="false"
+       aria-hidden="true"
+       tabindex="-1"
+       style="position: absolute; left: 0; top: 0; width: 1px; height: 1px;
+              opacity: 0; border: 0; padding: 0; margin: 0; font-size: 16px;
+              pointer-events: none;">
+
 <div id="screen">
     <!-- Menu bar -->
     <div id="menuOverlay">
@@ -954,6 +981,16 @@ function enterTextMode(x, y) {
     msgEl.appendChild(document.createTextNode('esc to cancel'));
     msgEl.appendChild(document.createElement('br'));
     msgEl.appendChild(document.createTextNode('shift-enter to accept'));
+
+    // Summon the mobile software keyboard by focusing the invisible input.
+    // On iOS, `.focus()` only works when called from within a user-gesture
+    // handler — this function is reached from pointerdown, which qualifies.
+    // On desktop, focusing an invisible input has no visible effect.
+    const inp = document.getElementById('textModeInput');
+    if (inp) {
+        inp.value = '';
+        try { inp.focus(); } catch {}
+    }
 }
 
 function exitTextMode(commit) {
@@ -971,6 +1008,14 @@ function exitTextMode(commit) {
     textMode.previewX = -1;
     textMode.previewY = -1;
     clearMessage();
+
+    // Dismiss the software keyboard on mobile.
+    const inp = document.getElementById('textModeInput');
+    if (inp) {
+        try { inp.blur(); } catch {}
+        inp.value = '';
+    }
+
     renderScene();
 }
 
