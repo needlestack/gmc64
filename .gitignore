@@ -43,3 +43,11 @@ bludred/
 # Public-facing demo disks (curated content, may evolve over time)
 !disks/
 !disks/**
+
+# Wrangler local dev state / secrets (never commit — CF env vars for
+# production go in the Pages dashboard).
+.wrangler
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example

@@ -260,12 +260,13 @@ All documented in [`CLAUDE.md`](CLAUDE.md) — written for both humans and AI co
 
 ## Privacy
 
-gmc64.com uses anonymous, cookie-free usage stats via Cloudflare Web
-Analytics. A handful of events are recorded — enough to know
-whether people are actually loading disks, saving files, and playing
-games versus just opening the page and closing it.
-What's never tracked: filenames, program contents, IP
-addresses, or anything that could identify you or your creations.
+gmc64.com records a handful of anonymous, cookie-free events — enough
+to know whether people are actually loading disks, saving files, and
+playing games versus just opening the page and closing it. Events are
+POSTed to a same-origin endpoint (a Cloudflare Pages Function backed
+by Workers KV) and stored for 30 days. What's never tracked:
+filenames, program contents, IP addresses, user agents, or anything
+that could identify you or your creations.
 
 Games exported via "Export Game" don't include the telemetry code at
 all. A self-hosted exported game sends nothing.

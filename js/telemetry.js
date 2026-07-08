@@ -1,41 +1,52 @@
-// gmc64 — thin, provider-agnostic anonymous usage telemetry.
+// gmc64 — thin anonymous usage telemetry.
 //
 // One global entry point: `gmc64Telemetry.logEvent(name, props?)`.
 // Fires events at ~half a dozen instrumented sites (session start,
 // d64 upload, file load, file save, game play, export, demo auto-load)
 // so we can distinguish "opened tab, bounced" from "actually used it."
 //
-// Uses Cloudflare Web Analytics: if the beacon script is loaded on
-// the page, events are sent there. Otherwise the call is a silent
-// no-op — no throws, no console noise, no fetch-to-nowhere.
+// Sends fire-and-forget POSTs to a same-origin `/api/events` endpoint
+// (a Cloudflare Pages Function backed by Workers KV — see
+// `functions/api/events.js`). No cookies, no PII, no beacons to
+// third parties. Events never block or delay the UI.
 //
-// Never sends: filenames, file contents, program bytes, IPs, or
-// anything that could identify a specific user or creation. Event
-// names + optional shallow property maps only.
+// Never sends: filenames, file contents, program bytes, IPs, user
+// agents. Event names + optional shallow property maps only.
 //
-// About standalone exports: the exported bundle *does* include this
-// script, but the CF Web Analytics beacon script is only injected on
-// the domain that owns the CF Web Analytics site (gmc64.com). So an
-// exported game hosted anywhere else — a personal domain, GitHub
-// Pages, file:// — silently no-ops. No cross-site tracking, no
-// beacon-to-nowhere. It just quietly does nothing.
+// About standalone exports: this file is stripped from
+// js/standalone-source.js by tools/bundle-standalone.js (see the
+// `<!-- bundle:exclude -->` markers around the script tag in
+// play.html). Exported standalone games ship with zero telemetry
+// code — a self-hosted export sends nothing, ever.
 
 (function () {
     'use strict';
 
-    // Send a single event to Cloudflare Web Analytics if its beacon is
-    // present. The beacon script installs `window.__cfBeacon`; we probe
-    // the two documented shapes so we're robust to CF's API tweaks.
-    function sendToCloudflare(name, props) {
-        const b = window.__cfBeacon;
-        if (!b) return;
-        if (typeof b.sendCustomEvent === 'function') {
-            b.sendCustomEvent(name, props || {});
-            return;
-        }
-        // Older / queued form
-        if (Array.isArray(b.q) || typeof b.push === 'function') {
-            (b.q || b).push(['event', name, props || {}]);
+    // Only fire from http(s) contexts. Under file:// the browser blocks
+    // fetch() at the security-check level before any catch() can silence
+    // it (it also spams the console). And under file:// there's no
+    // /api/events endpoint anyway. Skip cleanly.
+    const canSend = typeof location !== 'undefined'
+        && (location.protocol === 'http:' || location.protocol === 'https:');
+
+    // Fire-and-forget POST to the same-origin events endpoint.
+    // - `keepalive: true` keeps the request in flight if the tab is
+    //   being closed (matters for events like standalone_exported
+    //   where the download click could navigate away).
+    // - Same-origin, so no CORS preflight.
+    // - Any failure (offline, 404, endpoint down) is caught and
+    //   dropped — telemetry must never make the site feel broken.
+    function sendEvent(name, props) {
+        if (!canSend) return;
+        try {
+            fetch('/api/events', {
+                method: 'POST',
+                keepalive: true,
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ name, props: props || null }),
+            }).catch(() => { /* ignore */ });
+        } catch (_) {
+            // never throw
         }
     }
 
@@ -45,17 +56,13 @@
     const fired = Object.create(null);
 
     function logEvent(name, props) {
-        try {
-            sendToCloudflare(name, props);
-        } catch (_) {
-            // Telemetry must never break the app.
-        }
+        sendEvent(name, props);
     }
 
     function logOnce(name, props) {
         if (fired[name]) return;
         fired[name] = true;
-        logEvent(name, props);
+        sendEvent(name, props);
     }
 
     window.gmc64Telemetry = { logEvent, logOnce };
