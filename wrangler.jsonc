@@ -21,12 +21,17 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "gmc64",
+  "main": "worker.js",
   "compatibility_date": "2026-07-07",
   "observability": {
     "enabled": true
   },
+  // Static assets bound to `env.ASSETS` in worker.js. `not_found_handling`
+  // = "single-page-application" would rewrite unknown paths to index.html;
+  // we want the natural 404 for stray URLs so leave it default.
   "assets": {
-    "directory": "."
+    "directory": ".",
+    "binding": "ASSETS"
   },
   "compatibility_flags": [
     "nodejs_compat"
