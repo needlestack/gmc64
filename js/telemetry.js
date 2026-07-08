@@ -5,11 +5,9 @@
 // d64 upload, file load, file save, game play, export, demo auto-load)
 // so we can distinguish "opened tab, bounced" from "actually used it."
 //
-// This wrapper is provider-agnostic:
-//   - If Cloudflare Web Analytics is enabled on the site (its beacon
-//     script is loaded), events are sent there.
-//   - Otherwise the call is a silent no-op — no throws, no console
-//     noise, no fetch-to-nowhere.
+// Uses Cloudflare Web Analytics: if the beacon script is loaded on
+// the page, events are sent there. Otherwise the call is a silent
+// no-op — no throws, no console noise, no fetch-to-nowhere.
 //
 // Never sends: filenames, file contents, program bytes, IPs, or
 // anything that could identify a specific user or creation. Event
@@ -25,42 +23,21 @@
 (function () {
     'use strict';
 
-    // Provider-specific senders. First one that returns truthy wins;
-    // rest are skipped. Add new providers by appending here.
-    const senders = [
-        // Cloudflare Web Analytics custom events. The beacon script
-        // installs a global; we probe the two documented shapes.
-        function cloudflare(name, props) {
-            if (typeof window === 'undefined') return false;
-            const b = window.__cfBeacon;
-            if (!b) return false;
-            try {
-                if (typeof b.sendCustomEvent === 'function') {
-                    b.sendCustomEvent(name, props || {});
-                    return true;
-                }
-                // Older / queued form
-                if (Array.isArray(b.q) || typeof b.push === 'function') {
-                    (b.q || b).push(['event', name, props || {}]);
-                    return true;
-                }
-            } catch (_) { /* fall through */ }
-            return false;
-        },
-
-        // Plausible (if the user ever adds `<script data-domain="…"
-        // src="…plausible.js">`, this picks it up automatically).
-        function plausible(name, props) {
-            if (typeof window === 'undefined') return false;
-            if (typeof window.plausible !== 'function') return false;
-            try {
-                window.plausible(name, props ? { props } : undefined);
-                return true;
-            } catch (_) {
-                return false;
-            }
-        },
-    ];
+    // Send a single event to Cloudflare Web Analytics if its beacon is
+    // present. The beacon script installs `window.__cfBeacon`; we probe
+    // the two documented shapes so we're robust to CF's API tweaks.
+    function sendToCloudflare(name, props) {
+        const b = window.__cfBeacon;
+        if (!b) return;
+        if (typeof b.sendCustomEvent === 'function') {
+            b.sendCustomEvent(name, props || {});
+            return;
+        }
+        // Older / queued form
+        if (Array.isArray(b.q) || typeof b.push === 'function') {
+            (b.q || b).push(['event', name, props || {}]);
+        }
+    }
 
     // Session-scoped once-only guard for events that shouldn't repeat
     // (session_engaged, demo_auto_loaded). Stored in-memory only —
@@ -69,9 +46,7 @@
 
     function logEvent(name, props) {
         try {
-            for (const sender of senders) {
-                if (sender(name, props)) return;
-            }
+            sendToCloudflare(name, props);
         } catch (_) {
             // Telemetry must never break the app.
         }

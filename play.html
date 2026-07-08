@@ -469,7 +469,10 @@ body.mobile-phone #gameControls:hover { opacity: 1; }
 <script src="js/d64lib.js"></script>
 <script src="js/gmDisk.js"></script>
 <script src="js/gmTools.js"></script>
+<!-- bundle:exclude — telemetry is for the hosted site only, not for
+     exported standalone games (see tools/bundle-standalone.js). -->
 <script src="js/telemetry.js"></script>
+<!-- /bundle:exclude -->
 <script src="js/gmOpcodes.js"></script>
 <script src="js/gmSprite.js"></script>
 <script src="js/gmScene.js"></script>
