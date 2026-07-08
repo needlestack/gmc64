@@ -1117,6 +1117,7 @@ body.play-mode #gameControls #stopBtn::after {
 <script src="js/d64lib.js"></script>
 <script src="js/gmDisk.js"></script>
 <script src="js/gmTools.js"></script>
+<script src="js/telemetry.js"></script>
 <script src="js/gmDiskPicker.js"></script>
 <script src="js/gmOpcodes.js"></script>
 <script src="js/gmSprite.js"></script>
@@ -4203,6 +4204,7 @@ async function exportStandaloneGame(customFilename) {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
+    window.gmc64Telemetry && window.gmc64Telemetry.logEvent('standalone_exported');
     return true;
 }
 
@@ -4847,6 +4849,7 @@ function runProgram() {
         showMessage('No program loaded');
         return;
     }
+    window.gmc64Telemetry && window.gmc64Telemetry.logEvent('game_played');
 
     // if/then budget check — matches real GM's runtime-only enforcement
     // (game loads fine into the editor even with too many, but refuses

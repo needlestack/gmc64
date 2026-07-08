@@ -469,6 +469,7 @@ body.mobile-phone #gameControls:hover { opacity: 1; }
 <script src="js/d64lib.js"></script>
 <script src="js/gmDisk.js"></script>
 <script src="js/gmTools.js"></script>
+<script src="js/telemetry.js"></script>
 <script src="js/gmOpcodes.js"></script>
 <script src="js/gmSprite.js"></script>
 <script src="js/gmScene.js"></script>
@@ -786,6 +787,7 @@ function showPlayButtonError(text) {
 async function startGame() {
     if (!currentProgramData) return;
     document.getElementById('playOverlay').classList.remove('active');
+    window.gmc64Telemetry && window.gmc64Telemetry.logEvent('game_played');
 
     if (!screen) screen = new c64Screen('gameCanvas');
     if (!vm) vm = new gmVM(screen);

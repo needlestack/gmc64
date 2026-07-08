@@ -928,7 +928,10 @@ class GMDisk {
             ? !!this.popupOptions.onSave(fileName)
             : true;
         this._updatePopupDirectory();
-        if (ok) this.closePopup();
+        if (ok) {
+            this.closePopup();
+            window.gmc64Telemetry && window.gmc64Telemetry.logEvent('file_saved');
+        }
     }
 
     /**
@@ -1368,6 +1371,7 @@ class GMDisk {
         if (this.popupOptions.onSelect) {
             this.popupOptions.onSelect(entry.fileName, data);
             this.closePopup();
+            window.gmc64Telemetry && window.gmc64Telemetry.logEvent('file_loaded');
         }
     }
 
