@@ -630,8 +630,36 @@ body.draggable-dragging [data-draggable]:not(.is-interacting) {
        (probably content-width override), so the room is added via
        min-width here. */
     min-width: calc(80px + 3ch);
-    max-height: 200px;
+    max-height: 240px;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Search input at the top of the dropdown. Auto-focused on open so
+   mobile users get the OS keyboard. On desktop it doubles as a visible
+   affordance for typed-to-filter behavior. */
+.draggable-dropdown-search {
+    font-family: inherit;
+    font-size: 16px;  /* prevent iOS zoom-on-focus */
+    background: var(--c64-black);
+    color: var(--c64-white);
+    border: 0;
+    border-bottom: 2px solid var(--c64-black);
+    padding: 4px 8px;
+    outline: none;
+    width: 100%;
+    box-sizing: border-box;
+    flex: 0 0 auto;
+}
+.draggable-dropdown-search::placeholder {
+    color: var(--c64-gray1);
+}
+
+/* Scrollable items pane below the search input. Kept separate so the
+   input stays visible when the user scrolls a long list. */
+.draggable-dropdown-items {
     overflow-y: auto;
+    flex: 1 1 auto;
 }
 
 .draggable-dropdown-item {

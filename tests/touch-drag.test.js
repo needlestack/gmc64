@@ -417,3 +417,150 @@ describe('scene-maker zoom table — touch drag paints every fat pixel', () => {
         }
     });
 });
+
+// ---------------------------------------------------------------------------
+// GMTools.draggableField — touch drag on numeric/enum fields
+// ---------------------------------------------------------------------------
+//
+// Numeric arg fields across every editor go through draggableField for
+// drag-to-scrub. It was mouse-only for a long time; converting to Pointer
+// Events lets touch users drag values the same way. These tests inject a
+// synthetic draggable target into any editor page (sprite-maker for
+// convenience — the harness works there) so the test doesn't depend on any
+// particular editor's active mode.
+
+describe('draggableField — touch drag scrubs the value', () => {
+    async function openWithDraggable(page) {
+        page = page || await openSpriteMakerReady();
+        await page.evaluate(POINTER_EVENT_HELPERS);
+        // Inject a fresh draggable numeric field into the body, then attach.
+        await page.evaluate(() => {
+            const el = document.createElement('span');
+            el.id = 'testDraggable';
+            el.style.cssText = 'position:fixed; left:100px; top:100px; width:40px; height:20px; background:#333; color:#fff; z-index:9999;';
+            el.textContent = '10';
+            document.body.appendChild(el);
+            window._testValue = 10;
+            GMTools.draggableField.attach(el, {
+                type: 'numeric',
+                min: 0,
+                max: 100,
+                sensitivity: 0.5,  // 2 pixels per unit — makes the test deterministic
+                getValue: () => window._testValue,
+                setValue: (v) => {
+                    window._testValue = v;
+                    el.textContent = v;
+                },
+            });
+        });
+        return page;
+    }
+
+    test('touch drag up increases the value', async () => {
+        const page = await openWithDraggable();
+        try {
+            const finalValue = await page.evaluate(() => {
+                const el = document.getElementById('testDraggable');
+                const r = el.getBoundingClientRect();
+                const cx = r.left + r.width / 2;
+                const cy = r.top + r.height / 2;
+                // Drag up 20 pixels → sensitivity 0.5 → +10 units
+                _fireTouchPointer('pointerdown', el, cx, cy);
+                _fireTouchPointer('pointermove', el, cx, cy - 5);
+                _fireTouchPointer('pointermove', el, cx, cy - 10);
+                _fireTouchPointer('pointermove', el, cx, cy - 15);
+                _fireTouchPointer('pointermove', el, cx, cy - 20);
+                _fireTouchPointer('pointerup',   el, cx, cy - 20);
+                return window._testValue;
+            });
+            // Start value 10, drag up 20 pixels × 0.5 sensitivity = +10 → 20
+            expect(finalValue).toBe(20);
+        } finally {
+            await page.close();
+        }
+    });
+
+    test('touch drag down decreases the value', async () => {
+        const page = await openWithDraggable();
+        try {
+            const finalValue = await page.evaluate(() => {
+                const el = document.getElementById('testDraggable');
+                const r = el.getBoundingClientRect();
+                const cx = r.left + r.width / 2;
+                const cy = r.top + r.height / 2;
+                _fireTouchPointer('pointerdown', el, cx, cy);
+                _fireTouchPointer('pointermove', el, cx, cy + 20);
+                _fireTouchPointer('pointerup',   el, cx, cy + 20);
+                return window._testValue;
+            });
+            // Start 10, drag down 20 × 0.5 = -10 → 0
+            expect(finalValue).toBe(0);
+        } finally {
+            await page.close();
+        }
+    });
+
+    test('touch tap without drag opens the dropdown', async () => {
+        const page = await openWithDraggable();
+        try {
+            const dropdownVisible = await page.evaluate(() => {
+                const el = document.getElementById('testDraggable');
+                const r = el.getBoundingClientRect();
+                const cx = r.left + r.width / 2;
+                const cy = r.top + r.height / 2;
+                _fireTouchPointer('pointerdown', el, cx, cy);
+                _fireTouchPointer('pointerup',   el, cx, cy);
+                return GMTools.draggableField.isDropdownOpen();
+            });
+            expect(dropdownVisible).toBe(true);
+        } finally {
+            await page.close();
+        }
+    });
+
+    test('dropdown search input receives focus on open', async () => {
+        // Verifies the mobile-keyboard summoning path: on tap-open, the
+        // search input gets focused so the OS keyboard appears.
+        const page = await openWithDraggable();
+        try {
+            const focusedTagName = await page.evaluate(() => {
+                const el = document.getElementById('testDraggable');
+                const r = el.getBoundingClientRect();
+                const cx = r.left + r.width / 2;
+                const cy = r.top + r.height / 2;
+                _fireTouchPointer('pointerdown', el, cx, cy);
+                _fireTouchPointer('pointerup',   el, cx, cy);
+                const active = document.activeElement;
+                return active ? active.className : null;
+            });
+            expect(focusedTagName).toBe('draggable-dropdown-search');
+        } finally {
+            await page.close();
+        }
+    });
+
+    test('typing into the search input filters and selects a matching value', async () => {
+        const page = await openWithDraggable();
+        try {
+            const state = await page.evaluate(async () => {
+                const el = document.getElementById('testDraggable');
+                const r = el.getBoundingClientRect();
+                const cx = r.left + r.width / 2;
+                const cy = r.top + r.height / 2;
+                _fireTouchPointer('pointerdown', el, cx, cy);
+                _fireTouchPointer('pointerup',   el, cx, cy);
+                // Type "75" via the input event path (as mobile keyboards do).
+                const input = document.querySelector('.draggable-dropdown-search');
+                input.value = '75';
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                // Press Enter to commit.
+                input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+                return { finalValue: window._testValue, isOpen: GMTools.draggableField.isDropdownOpen() };
+            });
+            expect(state.finalValue).toBe(75);
+            expect(state.isOpen).toBe(false);
+        } finally {
+            await page.close();
+        }
+    });
+});

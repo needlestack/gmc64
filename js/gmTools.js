@@ -291,13 +291,26 @@ const GMTools = {
                 }
             });
 
-            element.addEventListener('mousedown', (e) => {
+            // Pointer Events (unified mouse/touch/pen). Replaces the old
+            // mousedown/mousemove/mouseup trio so drag-to-scrub works on
+            // touch devices — the mouse path fell apart on touch because
+            // touchmove doesn't dispatch synthetic mousemove events until
+            // the touch ends.
+            //
+            // setPointerCapture keeps events flowing to this element even if
+            // the finger drifts off, so the drag doesn't cut out unexpectedly.
+            element.style.touchAction = 'none'; // block browser scroll during drag
+            element.addEventListener('pointerdown', (e) => {
+                // Only respond to the primary pointer — ignore extra fingers
+                // during a pinch-zoom gesture, for example.
+                if (!e.isPrimary) return;
                 e.preventDefault();
 
                 // Mark this element as the active interaction target and lock out other draggables
                 element.focus();
                 element.classList.add('is-interacting');
                 document.body.classList.add('draggable-dragging');
+                try { element.setPointerCapture(e.pointerId); } catch {}
 
                 const options = opts();
                 const startY = e.clientY;
@@ -355,12 +368,14 @@ const GMTools = {
                 };
 
                 const onUp = () => {
-                    document.removeEventListener('mousemove', onMove);
-                    document.removeEventListener('mouseup', onUp);
+                    element.removeEventListener('pointermove', onMove);
+                    element.removeEventListener('pointerup', onUp);
+                    element.removeEventListener('pointercancel', onUp);
                     document.body.classList.remove('draggable-dragging');
+                    try { element.releasePointerCapture(e.pointerId); } catch {}
                     this._active = null;
 
-                    // If no drag happened, it was a click - toggle dropdown
+                    // If no drag happened, it was a tap - toggle dropdown
                     if (!dragStarted) {
                         // If dropdown is already open for this element, close it
                         if (this.isDropdownOpen() && this._dropdown.element === element) {
@@ -371,8 +386,9 @@ const GMTools = {
                     }
                 };
 
-                document.addEventListener('mousemove', onMove);
-                document.addEventListener('mouseup', onUp);
+                element.addEventListener('pointermove', onMove);
+                element.addEventListener('pointerup', onUp);
+                element.addEventListener('pointercancel', onUp);
                 this._active = { element, options };
             });
         },
@@ -434,14 +450,18 @@ const GMTools = {
             dd.dialog.style.top = (rect.bottom + 2) + 'px';
             dd.dialog.style.width = rect.width + 'px';
 
+            // Clear any leftover search text from a previous open.
+            if (dd.search) dd.search.value = '';
+
             this._renderDropdown();
 
             // Center the currently-selected item in the visible area on initial open.
             // (Subsequent renders during arrow-key nav use 'nearest' to avoid jumping.)
-            const selectedEl = dd.dialog.querySelector('.draggable-dropdown-item.selected');
+            const scrollContainer = dd.itemsContainer || dd.dialog;
+            const selectedEl = scrollContainer.querySelector('.draggable-dropdown-item.selected');
             if (selectedEl) {
-                dd.dialog.scrollTop = selectedEl.offsetTop
-                    - (dd.dialog.clientHeight - selectedEl.clientHeight) / 2;
+                scrollContainer.scrollTop = selectedEl.offsetTop
+                    - (scrollContainer.clientHeight - selectedEl.clientHeight) / 2;
             }
 
             // Adjust if off-screen
@@ -454,6 +474,14 @@ const GMTools = {
                     dd.dialog.style.top = (rect.top - dialogRect.height - 2) + 'px';
                 }
             });
+
+            // Focus the search input so mobile users get the OS keyboard.
+            // On desktop it's a mild convenience — arrow keys still work.
+            // Called from within a user-gesture handler (pointer tap), so
+            // iOS Safari's focus-in-gesture restriction is satisfied.
+            if (dd.search) {
+                try { dd.search.focus(); } catch {}
+            }
         },
 
         /**
@@ -493,6 +521,73 @@ const GMTools = {
             dd.dialog = document.createElement('div');
             dd.dialog.className = 'draggable-dropdown';
 
+            // Text input at the top of the dropdown. Two purposes:
+            //   1. On mobile, focusing it summons the OS keyboard so the user
+            //      can actually type — the existing document-level keydown
+            //      handler only works if the OS provides key events, which
+            //      requires a focused input on touch devices.
+            //   2. On desktop, it's a visible affordance for "you can type to
+            //      filter this list" that used to be implicit.
+            // `font-size: 16px` prevents iOS from zooming the page on focus.
+            dd.search = document.createElement('input');
+            dd.search.type = 'text';
+            dd.search.className = 'draggable-dropdown-search';
+            dd.search.autocomplete = 'off';
+            dd.search.autocapitalize = 'off';
+            dd.search.spellcheck = false;
+            dd.search.setAttribute('inputmode', 'search');
+            dd.search.style.fontSize = '16px';
+            dd.search.placeholder = 'type to filter';
+
+            // Input events update dd.searchText and re-filter. This is the
+            // authoritative path on mobile — the document-level keydown
+            // handler skips itself when the search input is focused.
+            dd.search.addEventListener('input', () => {
+                dd.searchText = dd.search.value;
+                this._filterDropdown();
+            });
+
+            // Route navigation keys (Arrows / Enter / Escape) to the same
+            // logic the document-level handler uses. Prevent default so the
+            // Arrow keys don't move the input's caret and Enter doesn't
+            // submit a stray form ancestor.
+            dd.search.addEventListener('keydown', (e) => {
+                switch (e.key) {
+                    case 'ArrowUp':
+                        e.preventDefault();
+                        if (dd.selectedIndex > 0) {
+                            dd.selectedIndex--;
+                            this._renderDropdown();
+                            if (dd.options.liveUpdate) this._applySelectedValue();
+                        }
+                        break;
+                    case 'ArrowDown':
+                        e.preventDefault();
+                        if (dd.selectedIndex < dd.filteredValues.length - 1) {
+                            dd.selectedIndex++;
+                            this._renderDropdown();
+                            if (dd.options.liveUpdate) this._applySelectedValue();
+                        }
+                        break;
+                    case 'Enter':
+                        e.preventDefault();
+                        this._selectDropdownItem(dd.selectedIndex, true);
+                        break;
+                    case 'Escape':
+                        e.preventDefault();
+                        this._hideDropdown();
+                        break;
+                }
+            });
+
+            dd.dialog.appendChild(dd.search);
+
+            // Items container — separate from the search input so scrolling
+            // the list doesn't scroll the input off-screen on mobile.
+            dd.itemsContainer = document.createElement('div');
+            dd.itemsContainer.className = 'draggable-dropdown-items';
+            dd.dialog.appendChild(dd.itemsContainer);
+
             dd.overlay.appendChild(dd.dialog);
             document.body.appendChild(dd.overlay);
         },
@@ -506,6 +601,13 @@ const GMTools = {
 
             dd.keyHandler = (e) => {
                 if (!this.isDropdownOpen()) return;
+
+                // If the dropdown's search input has focus (default on
+                // mobile, or if the user clicked into it on desktop), let
+                // its own keydown handler process the key. Skipping here
+                // prevents double-handling and keeps typed characters
+                // flowing to the input naturally.
+                if (dd.search && document.activeElement === dd.search) return;
 
                 // Use stopImmediatePropagation to prevent other document-level handlers from seeing these keys
                 switch (e.key) {
@@ -600,13 +702,16 @@ const GMTools = {
          */
         _renderDropdown() {
             const dd = this._dropdown;
-            dd.dialog.innerHTML = '';
+            // Only clear the items container — leave the search input and any
+            // other chrome at the top of the dialog intact.
+            const container = dd.itemsContainer || dd.dialog;
+            container.innerHTML = '';
 
             if (dd.filteredValues.length === 0) {
                 const empty = document.createElement('div');
                 empty.className = 'draggable-dropdown-empty';
                 empty.textContent = 'no match';
-                dd.dialog.appendChild(empty);
+                container.appendChild(empty);
                 return;
             }
 
@@ -647,7 +752,7 @@ const GMTools = {
                 }
 
                 item.onclick = () => this._selectDropdownItem(index);
-                dd.dialog.appendChild(item);
+                container.appendChild(item);
             });
 
             // Scroll selected into view
