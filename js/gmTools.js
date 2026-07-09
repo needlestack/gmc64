@@ -812,7 +812,6 @@ const GMTools = {
             const data = opts.disk.loadFile(entry.fileName);
             if (opts.onConfirm) opts.onConfirm(entry.fileName, data);
             this.exit();
-            window.gmc64Telemetry && window.gmc64Telemetry.logEvent('file_loaded');
         },
 
         cancel() {
@@ -1301,7 +1300,6 @@ const GMTools = {
         const id = await GMDisk.addToPool(bytes, GMTools.DEMO_DISK_FILENAME);
         // Only claim the seeded disk if no URL-driven load beat us to it.
         if (!gmDisk.hasDisk()) gmDisk.selectDisk(id);
-        window.gmc64Telemetry && window.gmc64Telemetry.logOnce('demo_auto_loaded');
     },
 
     /**

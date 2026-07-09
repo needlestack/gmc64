@@ -2,6 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<!-- Mobile: default viewport allowing pinch-zoom. Locked to
+     user-scalable=no dynamically when entering play mode (so the
+     virtual dpad + fire button stay pinned to the same finger
+     positions during gameplay). -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>C64 GameMaker Editor</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="stylesheet" href="css/gm-ui.css">
@@ -1117,7 +1122,6 @@ body.play-mode #gameControls #stopBtn::after {
 <script src="js/d64lib.js"></script>
 <script src="js/gmDisk.js"></script>
 <script src="js/gmTools.js"></script>
-<script src="js/telemetry.js"></script>
 <script src="js/gmDiskPicker.js"></script>
 <script src="js/gmOpcodes.js"></script>
 <script src="js/gmSprite.js"></script>
@@ -1541,6 +1545,10 @@ async function showPlayButtonOverlay(params) {
     // stopProgram removes the class when they drop into the editor, so
     // any subsequent manual run keeps the compact icon-only button.
     document.body.classList.add('play-mode');
+    // Lock the mobile viewport during gameplay so pinch-zoom can't
+    // shift the virtual dpad + fire button under the player's fingers.
+    // Restored by stopProgram on exit.
+    setPlayModeViewport(true);
     // Match aria for screen-reader parity with the visible text.
     document.getElementById('stopBtn').setAttribute('aria-label', 'Stop and edit (esc)');
 
@@ -4204,7 +4212,6 @@ async function exportStandaloneGame(customFilename) {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
-    window.gmc64Telemetry && window.gmc64Telemetry.logEvent('standalone_exported');
     return true;
 }
 
@@ -4849,7 +4856,6 @@ function runProgram() {
         showMessage('No program loaded');
         return;
     }
-    window.gmc64Telemetry && window.gmc64Telemetry.logEvent('game_played');
 
     // if/then budget check — matches real GM's runtime-only enforcement
     // (game loads fine into the editor even with too many, but refuses
@@ -4991,7 +4997,23 @@ function stopProgram() {
         document.body.classList.remove('play-mode');
         document.getElementById('stopBtn').setAttribute('aria-label', 'Stop (esc)');
     }
+    // Unlock the mobile viewport now that we're back in the editor
+    // (pinch-zoom is a real accessibility win in the code view).
+    setPlayModeViewport(false);
     showMessage('Stopped');
+}
+
+// Swap the viewport meta so pinch-zoom is disabled during gameplay
+// (protects fixed dpad/fire-button positions on touch) and re-enabled
+// in the editor. Rewriting the tag's `content` at runtime is the
+// standard way to toggle this — browsers pick up the change immediately.
+function setPlayModeViewport(playing) {
+    const meta = document.querySelector('meta[name="viewport"]');
+    if (!meta) return;
+    meta.setAttribute('content', playing
+        ? 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover'
+        : 'width=device-width, initial-scale=1'
+    );
 }
 
 function togglePause() {

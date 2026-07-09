@@ -260,7 +260,6 @@ globalThis.GMDiskPicker = (function () {
             try {
                 const bytes = new Uint8Array(await file.arrayBuffer());
                 const parsed = new D64(bytes);
-                window.gmc64Telemetry && window.gmc64Telemetry.logEvent('d64_uploaded');
                 if (disk) {
                     try {
                         const id = await GMDisk.addToPool(bytes, file.name);

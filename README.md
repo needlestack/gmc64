@@ -258,19 +258,6 @@ more channels for sound.
 
 All documented in [`CLAUDE.md`](CLAUDE.md) — written for both humans and AI coding assistants.
 
-## Privacy
-
-gmc64.com records a handful of anonymous, cookie-free events — enough
-to know whether people are actually loading disks, saving files, and
-playing games versus just opening the page and closing it. Events are
-POSTed to a same-origin endpoint (a Cloudflare Pages Function backed
-by Workers KV) and stored for 30 days. What's never tracked:
-filenames, program contents, IP addresses, user agents, or anything
-that could identify you or your creations.
-
-Games exported via "Export Game" don't include the telemetry code at
-all. A self-hosted exported game sends nothing.
-
 ## Disclaimer
 
 gmc64 is an independent, unaffiliated, re-implementation made for preservation,

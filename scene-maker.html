@@ -59,6 +59,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>C64 GameMaker Scene Editor 2</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="stylesheet" href="css/gm-ui.css">
@@ -80,9 +81,9 @@
     height: 400px;
     margin: 0 auto;
     overflow: hidden;
-    /* Disable browser touch gestures (scroll, pinch-zoom) on the drawing
-       surface so drag-to-paint works on touch devices. */
-    touch-action: none;
+    /* Block single-finger scroll so drag-to-paint works on touch devices,
+       but keep two-finger pinch-zoom available so users can zoom in. */
+    touch-action: pinch-zoom;
 }
 
 #sceneCanvas {
@@ -193,7 +194,7 @@
     border-right: 1px solid var(--c64-gray1);
     border-bottom: 1px solid var(--c64-gray1);
     /* Same touch-action treatment as sceneContainer — see notes there. */
-    touch-action: none;
+    touch-action: pinch-zoom;
 }
 
 #zoomEditor td {
@@ -417,7 +418,6 @@
 <script src="js/gmDisk.js"></script>
 <script src="js/c64lib.js"></script>
 <script src="js/gmTools.js"></script>
-<script src="js/telemetry.js"></script>
 <script src="js/gmDiskPicker.js"></script>
 <script src="js/gmScene.js"></script>
 <script src="js/gmCharset.js"></script>

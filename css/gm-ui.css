@@ -81,6 +81,31 @@ body {
 }
 
 /* ==========================================================================
+   MOBILE SCALE-TO-FIT
+   ==========================================================================
+   All editor pages have a fixed #screen at 720px wide × 520–560px tall
+   plus 10px body padding on each side (740px effective outer width).
+   Below that width, browsers otherwise render the layout at desktop
+   size with the right half off-screen. `zoom` scales the whole layout
+   (visual AND event coordinates) proportionally to fit — same shape,
+   just smaller — respecting the "fixed sizing, not fluid layout"
+   design principle.
+
+   Pinch-to-zoom still works: it operates at the browser viewport
+   layer, on top of whatever CSS zoom we applied.
+
+   `body.play-mode` (set by editor.html on Run) skips the scale-to-fit
+   so the fullscreen play view can lay out on its own terms. The
+   in-play virtual dpad + fire button need to sit at fixed viewport
+   coordinates. */
+@media (max-width: 740px) {
+    body:not(.play-mode) {
+        padding: 0;
+        zoom: calc(100vw / 720);
+    }
+}
+
+/* ==========================================================================
    BUTTONS - 3D raised C64 look
    ========================================================================== */
 

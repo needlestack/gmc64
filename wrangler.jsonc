@@ -1,37 +1,26 @@
-// Cloudflare Pages / Workers configuration for gmc64.com.
+// Cloudflare Pages configuration for gmc64.com.
 //
-// Why this exists: without a wrangler config that explicitly names the
-// project, CF Pages Functions deploys will fail with "A Worker named
-// gmc64 already exists in your account. This deploy could not confirm
-// that it should update that Worker..." — a chicken-and-egg where CF's
-// auto-provisioned Worker record for the Pages project has no
-// on-disk config to confirm it belongs to this repo. Adding this
-// file gives CF the naming/ownership confirmation it wants.
+// Why this file exists at all: without a wrangler config, CF Pages
+// deploys can fail with "A Worker named gmc64 already exists in your
+// account. This deploy could not confirm that it should update that
+// Worker..." — a chicken-and-egg where CF's auto-provisioned Worker
+// record for the project has no on-disk config to confirm ownership.
+// This file gives CF the naming/ownership confirmation it wants.
 //
-// The `cloudflare-workers-autoconfig` bot originally proposed the same
-// config in an auto-generated branch; we just committed it directly.
-//
-// Fields:
-//   name              — must match the Pages project name in the dashboard.
-//   assets.directory  — where the static site lives. "." = repo root
-//                       (matches the current Pages setup).
-//   compatibility_*   — Workers runtime targeting. Node compat is on
-//                       so Functions can use Node built-in shims.
-//   observability     — enables the Observability tab in the dashboard.
+// Static-assets-only Worker. If we ever want backend endpoints
+// (telemetry, an API, etc.), add a `"main": "worker.js"` field and a
+// worker script that routes. Also add `"binding": "ASSETS"` to the
+// assets config so the Worker can call `env.ASSETS.fetch(request)` to
+// serve static content.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "gmc64",
-  "main": "worker.js",
   "compatibility_date": "2026-07-07",
   "observability": {
     "enabled": true
   },
-  // Static assets bound to `env.ASSETS` in worker.js. `not_found_handling`
-  // = "single-page-application" would rewrite unknown paths to index.html;
-  // we want the natural 404 for stray URLs so leave it default.
   "assets": {
-    "directory": ".",
-    "binding": "ASSETS"
+    "directory": "."
   },
   "compatibility_flags": [
     "nodejs_compat"
