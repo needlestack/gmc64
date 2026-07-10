@@ -1216,6 +1216,7 @@ function onNoteLeave(event) {
 
 function startNoteDrag(event) {
     if (isPlaying) return;
+    if (!event.isPrimary) return;  // ignore second finger during pinch
     event.preventDefault();
     event.stopPropagation();
 
@@ -1234,15 +1235,21 @@ function startNoteDrag(event) {
         channel: channel,
         noteIndex: noteIndex,
         originalX: parseFloat(noteEl.dataset.originalX),
-        originalBeat: originalBeat
+        originalBeat: originalBeat,
+        pointerId: event.pointerId
     };
     dragStartY = event.clientY;
     dragStartX = event.clientX;
     dragActuallyStarted = false;  // Don't start drag until threshold exceeded
 
-    // Add document-level listeners for drag
-    document.addEventListener('mousemove', onNoteDrag);
-    document.addEventListener('mouseup', endNoteDrag);
+    // Pointer capture on the note itself so pointermove/pointerup land here
+    // regardless of where the finger drifts (particularly important on
+    // touch — without capture the second and later moves would fire on
+    // whichever element sits under the finger).
+    try { noteEl.setPointerCapture(event.pointerId); } catch {}
+    noteEl.addEventListener('pointermove',   onNoteDrag);
+    noteEl.addEventListener('pointerup',     endNoteDrag);
+    noteEl.addEventListener('pointercancel', endNoteDrag);
 }
 
 function onNoteDrag(event) {
@@ -1316,9 +1323,13 @@ function onNoteDrag(event) {
 
 function endNoteDrag(event) {
     if (!draggingNote) return;
+    if (event && event.pointerId !== draggingNote.pointerId) return;
 
-    document.removeEventListener('mousemove', onNoteDrag);
-    document.removeEventListener('mouseup', endNoteDrag);
+    const noteEl = draggingNote.element;
+    noteEl.removeEventListener('pointermove',   onNoteDrag);
+    noteEl.removeEventListener('pointerup',     endNoteDrag);
+    noteEl.removeEventListener('pointercancel', endNoteDrag);
+    try { noteEl.releasePointerCapture(draggingNote.pointerId); } catch {}
 
     const channelIdx = draggingNote.channel;
     const noteIndex = draggingNote.noteIndex;
@@ -1871,9 +1882,12 @@ function createNoteElement(container, note, channel, x, y, noteIndex) {
     // Wrap SVG with adjusted positioning to center notehead in smaller container
     noteEl.innerHTML = `<div style="position:absolute;left:-36px;top:-30px;width:80px;height:140px;pointer-events:none">${svgContent}</div>`;
 
-    // Add drag handlers
-    noteEl.addEventListener('mousedown', startNoteDrag);
-    noteEl.addEventListener('mouseenter', onNoteHover);
+    // Add drag handlers. Pointer Events unify mouse + touch so this one
+    // handler serves both. touch-action:none on the element (via CSS)
+    // prevents single-finger scroll from stealing the drag on mobile.
+    noteEl.style.touchAction = 'none';
+    noteEl.addEventListener('pointerdown', startNoteDrag);
+    noteEl.addEventListener('mouseenter', onNoteHover);   // hover-preview desktop-only, ignored on touch
     noteEl.addEventListener('mouseleave', onNoteLeave);
 
     container.appendChild(noteEl);
@@ -2711,18 +2725,28 @@ function updateChannelDisplay() {
 function setupTempoControl() {
     const tempoEl = document.getElementById('tempoValue');
     let dragging = false;
+    let pointerId = undefined;
     let startY, startTempo;
 
-    tempoEl.addEventListener('mousedown', (e) => {
-        if (isPlaying) return; // Can't change tempo while playing
+    // Block single-finger scroll during drag on touch. Pinch-zoom of the
+    // page still works — only vertical panning that starts on the tempo
+    // field is captured for value change.
+    tempoEl.style.touchAction = 'none';
+
+    tempoEl.addEventListener('pointerdown', (e) => {
+        if (isPlaying) return;    // Can't change tempo while playing
+        if (!e.isPrimary) return; // Ignore extra fingers during pinch
         dragging = true;
+        pointerId = e.pointerId;
         startY = e.clientY;
         startTempo = currentSong ? currentSong.tempo : 80;
+        try { tempoEl.setPointerCapture(e.pointerId); } catch {}
         e.preventDefault();
     });
 
-    document.addEventListener('mousemove', (e) => {
+    tempoEl.addEventListener('pointermove', (e) => {
         if (!dragging || !currentSong || isPlaying) return;
+        if (e.pointerId !== pointerId) return;
 
         const delta = startY - e.clientY;
         const newTempo = Math.max(1, Math.min(255, startTempo + Math.round(delta / 2)));
@@ -2732,9 +2756,15 @@ function setupTempoControl() {
         updateTempoDisplay();
     });
 
-    document.addEventListener('mouseup', () => {
+    const endTempo = (e) => {
+        if (!dragging) return;
+        if (e && e.pointerId !== pointerId) return;
+        try { tempoEl.releasePointerCapture(pointerId); } catch {}
         dragging = false;
-    });
+        pointerId = undefined;
+    };
+    tempoEl.addEventListener('pointerup',     endTempo);
+    tempoEl.addEventListener('pointercancel', endTempo);
 }
 
 function updateTempoDisplay() {
@@ -3106,15 +3136,23 @@ function setupNavButtons() {
     const btnBack = document.getElementById('btnBack');
     const btnForward = document.getElementById('btnForward');
 
-    // Back button
-    btnBack.addEventListener('mousedown', () => startNavRepeat(-1));
-    btnBack.addEventListener('mouseup', stopNavRepeat);
-    btnBack.addEventListener('mouseleave', stopNavRepeat);
-
-    // Forward button
-    btnForward.addEventListener('mousedown', () => startNavRepeat(1));
-    btnForward.addEventListener('mouseup', stopNavRepeat);
-    btnForward.addEventListener('mouseleave', stopNavRepeat);
+    // Hold-to-repeat via Pointer Events. Same handler covers mouse hold
+    // AND touch-and-hold. `pointercancel` and `pointerleave` are safety
+    // nets so a repeat can't get stuck if the browser aborts the pointer
+    // sequence (system interruption, finger drift off the button, etc.).
+    const wire = (btn, dir) => {
+        btn.style.touchAction = 'none';
+        btn.addEventListener('pointerdown', (e) => {
+            if (!e.isPrimary) return;
+            try { btn.setPointerCapture(e.pointerId); } catch {}
+            startNavRepeat(dir);
+        });
+        btn.addEventListener('pointerup',     stopNavRepeat);
+        btn.addEventListener('pointercancel', stopNavRepeat);
+        btn.addEventListener('pointerleave',  stopNavRepeat);
+    };
+    wire(btnBack, -1);
+    wire(btnForward, 1);
 }
 
 // === STAFF MOUSE HANDLERS ===

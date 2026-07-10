@@ -379,6 +379,9 @@ tr:has(.frq-label) + tr td[colspan="3"] {
     display: inline-block;
     vertical-align: middle;
     flex-shrink: 0;
+    /* Block single-finger scroll so touch drag scrubs the knob value.
+       Two-finger pinch-zoom still works on the surrounding page. */
+    touch-action: none;
 }
 
 .knob::after {
@@ -613,6 +616,9 @@ tr:has(.frq-label) + tr td[colspan="3"] {
     border: none;
     position: relative;
     cursor: pointer;
+    /* Same touch-action treatment as .knob — block single-finger scroll
+       so drag scrubs the slider value, keep pinch-zoom on the page. */
+    touch-action: none;
 }
 
 .slider-track::before {
@@ -1261,11 +1267,17 @@ let dragState = {
     element: null,
     startY: 0,
     startX: 0,
-    startValue: 0
+    startValue: 0,
+    pointerId: undefined  // set on pointerdown for capture/release
 };
 
-// Single mousedown handler for all interactive elements
-document.addEventListener('mousedown', (e) => {
+// Single pointerdown handler for all interactive elements.
+// Pointer Events unify mouse + touch + stylus, so this same code path
+// handles both desktop drag and touch drag on mobile. `isPrimary` filters
+// out extra fingers during a pinch, keeping the drag responsive to just
+// the first touch.
+document.addEventListener('pointerdown', (e) => {
+    if (!e.isPrimary) return;
     const target = e.target;
 
     // Knob drag
@@ -1276,6 +1288,10 @@ document.addEventListener('mousedown', (e) => {
             dragState.element = target;
             dragState.startY = e.clientY;
             dragState.startValue = getParamValue(param);
+            dragState.pointerId = e.pointerId;
+            // Capture on the target so pointermove/up land here even if the
+            // finger drifts outside its bounds mid-drag.
+            try { target.setPointerCapture(e.pointerId); } catch {}
             e.preventDefault();
         }
     }
@@ -1287,6 +1303,8 @@ document.addEventListener('mousedown', (e) => {
         dragState.element = track;
         dragState.startY = e.clientY;
         dragState.startValue = getParamValue(param);
+        dragState.pointerId = e.pointerId;
+        try { track.setPointerCapture(e.pointerId); } catch {}
         e.preventDefault();
 
         // If clicking on track (not thumb), immediately move to that position
@@ -1310,9 +1328,9 @@ document.addEventListener('mousedown', (e) => {
     }
 });
 
-// Single mousemove handler
-document.addEventListener('mousemove', (e) => {
+document.addEventListener('pointermove', (e) => {
     if (!dragState.type) return;
+    if (dragState.pointerId !== undefined && e.pointerId !== dragState.pointerId) return;
 
     if (dragState.type === 'knob') {
         const deltaY = dragState.startY - e.clientY;
@@ -1362,11 +1380,19 @@ document.addEventListener('mousemove', (e) => {
     }
 });
 
-// Single mouseup handler
-document.addEventListener('mouseup', () => {
+// Pointer release (up OR cancel — cancel fires when the browser aborts
+// the sequence, e.g., a system dialog interrupts a touch drag).
+function endDrag(e) {
+    if (dragState.pointerId !== undefined && e && e.pointerId !== dragState.pointerId) return;
+    if (dragState.element && dragState.pointerId !== undefined) {
+        try { dragState.element.releasePointerCapture(dragState.pointerId); } catch {}
+    }
     dragState.type = null;
     dragState.element = null;
-});
+    dragState.pointerId = undefined;
+}
+document.addEventListener('pointerup',     endDrag);
+document.addEventListener('pointercancel', endDrag);
 
 // Tie checkbox toggle
 document.getElementById('chkTie').addEventListener('click', () => {
