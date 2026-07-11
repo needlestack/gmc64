@@ -141,8 +141,51 @@ globalThis.GMPlayerChrome = (function () {
             if (consumed && e) e.preventDefault();
         }
 
+        // Clear all four direction booleans on both joysticks. Used as a
+        // recovery step when we can't trust that we saw all keyup events
+        // (see onUp's Meta handling and the focus-loss listeners below).
+        function clearAllDirections() {
+            inputState.joystick1.up = false;
+            inputState.joystick1.down = false;
+            inputState.joystick1.left = false;
+            inputState.joystick1.right = false;
+            inputState.joystick2.up = false;
+            inputState.joystick2.down = false;
+            inputState.joystick2.left = false;
+            inputState.joystick2.right = false;
+        }
+
+        // Full clear — everything to false. Used on focus loss so games
+        // never end up with stranded held-key state after alt-tab, tab
+        // switch, screen lock, or the browser losing focus for any reason.
+        function clearAllInput() {
+            clearAllDirections();
+            inputState.button1 = false;
+            inputState.button2 = false;
+        }
+
         function onDown(e) { if (isEnabled()) applyKey(e.key, true, e); }
-        function onUp(e) { if (isEnabled()) applyKey(e.key, false, e); }
+
+        // Meta (Cmd) keyup gets special treatment: on macOS, browsers
+        // suppress keyup events for other keys while Cmd is held. That
+        // means if the user holds ArrowRight, presses Cmd, then releases
+        // ArrowRight while still holding Cmd, we never see the ArrowRight
+        // keyup — joystick.right stays true even after the user let go.
+        // Result: the ship keeps moving right until they press-and-release
+        // it again. Longstanding platform quirk, not fixable at our
+        // handler level.
+        //
+        // Workaround: on Meta keyup, conservatively clear all direction
+        // booleans. Anything that was released during the Cmd-down window
+        // gets un-stuck. A user still legitimately holding a direction
+        // sees a brief pause and continues on the next auto-repeat
+        // keydown (browsers keep firing those while a key is held) — a
+        // minor UX quirk in exchange for no more stuck ship.
+        function onUp(e) {
+            if (!isEnabled()) return;
+            applyKey(e.key, false, e);
+            if (e.key === 'Meta') clearAllDirections();
+        }
 
         // Capture phase so we run before any bubble-phase listeners that
         // might call stopImmediatePropagation (e.g., the editor's blocker
@@ -151,9 +194,22 @@ globalThis.GMPlayerChrome = (function () {
         // ourselves — the host's other handlers still get to run.
         window.addEventListener('keydown', onDown, true);
         window.addEventListener('keyup', onUp, true);
+
+        // Belt-and-suspenders for the general "keys were held when focus
+        // went away" case: alt-tab, screen lock, tab switch, browser lost
+        // focus for any reason. Wipes everything so nothing carries over.
+        function onFocusLoss() { clearAllInput(); }
+        function onVisibilityChange() {
+            if (document.hidden) clearAllInput();
+        }
+        window.addEventListener('blur', onFocusLoss);
+        document.addEventListener('visibilitychange', onVisibilityChange);
+
         return () => {
             window.removeEventListener('keydown', onDown, true);
             window.removeEventListener('keyup', onUp, true);
+            window.removeEventListener('blur', onFocusLoss);
+            document.removeEventListener('visibilitychange', onVisibilityChange);
         };
     }
 
