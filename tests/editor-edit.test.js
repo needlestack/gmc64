@@ -1270,35 +1270,48 @@ describe('editor — arg-edit drag (cycle on vertical drag, then keyboard takes 
         }, { opcode, argNum });
     }
 
+    // These tests dispatch real PointerEvents on the field span. The
+    // arg-field drag was converted from document-level mouse events to
+    // element-level pointer events (with setPointerCapture) so touch
+    // drag works on mobile. Same pattern is used in sprite-maker,
+    // scene-maker, sound-maker, music-maker.
+
     test('drag-up on a sprite slot field bumps the value up by the drag distance', async () => {
         const page = await openEditorWithProgram();
         await freshFieldForDrag(page, 0x27, 1);  // sprite N is name
         const result = await page.evaluate(() => {
             const field = window._dragField;
             const lineIdx = window._dragLineIdx;
-            onFieldMouseDown({
-                target: field, clientY: 500,
-                preventDefault: () => {}, stopPropagation: () => {}
-            });
+            // Fire pointerdown on the field span — kicks the handler into
+            // drag mode and attaches pointermove/pointerup listeners on
+            // the span itself.
+            field.dispatchEvent(new PointerEvent('pointerdown', {
+                pointerId: 1, isPrimary: true, bubbles: true, cancelable: true, clientY: 500,
+            }));
             const afterDown = currentProgramData.instructions[lineIdx].arg1;
             const isActive = field.classList.contains('active');
 
-            // Drag up by ~30px (sprite range = 8 values; sensitivity
-            // = max(1, floor(200/8)) = 25, so 30/25 = 1 step).
-            document.dispatchEvent(new MouseEvent('mousemove', { clientY: 470 }));
+            // Drag up by 15px. Sensitivity for an 8-value field is
+            // `max(1, min(10, floor(200/8)))` = 10 px/step (the cap
+            // kicks in). 15/10 = 1 step, so value bumps by 1.
+            field.dispatchEvent(new PointerEvent('pointermove', {
+                pointerId: 1, isPrimary: true, bubbles: true, clientY: 485,
+            }));
             const afterMove = currentProgramData.instructions[lineIdx].arg1;
 
             // Release — should transition to .selected.
-            document.dispatchEvent(new MouseEvent('mouseup'));
+            field.dispatchEvent(new PointerEvent('pointerup', {
+                pointerId: 1, isPrimary: true, bubbles: true,
+            }));
             const isSelected = field.classList.contains('selected');
             const isActiveAfterUp = field.classList.contains('active');
 
             return { afterDown, isActive, afterMove, isSelected, isActiveAfterUp };
         });
-        expect(result.afterDown).toBe(0);     // mousedown doesn't change value
+        expect(result.afterDown).toBe(0);     // pointerdown doesn't change value
         expect(result.isActive).toBe(true);   // drag-mode highlight
         expect(result.afterMove).toBe(1);     // dragged up = value increased
-        expect(result.isSelected).toBe(true); // mouseup → keyboard-input mode
+        expect(result.isSelected).toBe(true); // pointerup → keyboard-input mode
         expect(result.isActiveAfterUp).toBe(false);
         await page.close();
     });
@@ -1311,13 +1324,16 @@ describe('editor — arg-edit drag (cycle on vertical drag, then keyboard takes 
             const lineIdx = window._dragLineIdx;
             // Drag DOWN — Δy = startY - currentY, so positive currentY-deltaY
             // means deltaY is negative → value decreases (and clamps at 0).
-            onFieldMouseDown({
-                target: field, clientY: 500,
-                preventDefault: () => {}, stopPropagation: () => {}
-            });
-            document.dispatchEvent(new MouseEvent('mousemove', { clientY: 600 }));
+            field.dispatchEvent(new PointerEvent('pointerdown', {
+                pointerId: 1, isPrimary: true, bubbles: true, cancelable: true, clientY: 500,
+            }));
+            field.dispatchEvent(new PointerEvent('pointermove', {
+                pointerId: 1, isPrimary: true, bubbles: true, clientY: 600,
+            }));
             const afterMove = currentProgramData.instructions[lineIdx].arg1;
-            document.dispatchEvent(new MouseEvent('mouseup'));
+            field.dispatchEvent(new PointerEvent('pointerup', {
+                pointerId: 1, isPrimary: true, bubbles: true,
+            }));
             return { afterMove };
         });
         expect(result.afterMove).toBe(0);  // already at min, clamped

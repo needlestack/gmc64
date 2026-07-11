@@ -135,10 +135,20 @@ body {
     image-rendering: crisp-edges;
     max-width: 960px;
     /* Never render smaller than the editor's canonical 480×400 canvas.
-       Below this viewport size the canvas overflows #gameBorder and clips
-       against body's overflow: hidden — a deliberate contract that the
-       app is designed for at least 480×400 of visible game area. */
+       Below this viewport size the canvas would otherwise scale further
+       down; on desktop that turns into a tiny thumbnail nobody wants.
+       On mobile we drop the min in the media query below so the game
+       fits the screen (see editor.html for the same reasoning). */
     min-width: 480px;
+}
+/* Mobile: let the canvas shrink to fit. On a 375×812 landscape phone
+   the 480 minimum forces overflow past the bottom of the viewport,
+   hiding the game bar and touch controls. C64 native is 320×200 so
+   anything ≥ that is still playable. */
+@media (max-width: 900px), (max-height: 500px) {
+    #gameCanvas {
+        min-width: 0;
+    }
 }
 
 /* Full-canvas overlay with the play button. Sits above the game until the

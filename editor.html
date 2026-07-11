@@ -6,7 +6,14 @@
      user-scalable=no dynamically when entering play mode (so the
      virtual dpad + fire button stay pinned to the same finger
      positions during gameplay). -->
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Fixed-width layout: the editor UI is designed for 720px wide.
+     `width=720` tells mobile browsers "lay out at 720px and scale to fit
+     the actual device width" — works on every iOS version, unlike the
+     CSS `zoom` trick which requires iOS 17.4+ (Mar 2024). Desktop
+     browsers ignore this meta and show the editor at its native size.
+     Swapped to a game-play-locked viewport by setPlayModeViewport(true)
+     during gameplay (dpad + fire button need pinned finger positions). -->
+<meta name="viewport" content="width=720, initial-scale=1">
 <title>C64 GameMaker Editor</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="stylesheet" href="css/gm-ui.css">
@@ -288,6 +295,9 @@ body.kbd-active .program-line .instruction:hover {
 .editable-field {
     cursor: pointer;
     user-select: none;
+    /* Block single-finger scroll so vertical drag scrubs the value on
+       touch. Pinch-zoom on the surrounding page still works. */
+    touch-action: none;
 }
 .program-line.selected .editable-field:not([data-type="comment"]):not([data-type="print"]) {
     background: var(--c64-blue);
@@ -522,10 +532,22 @@ body.kbd-active .program-line .instruction:hover {
     image-rendering: crisp-edges;
     max-width: 960px;
     /* Never render smaller than the editor's canonical 480×400 canvas.
-       Below this viewport size the canvas overflows and clips against
-       body — a deliberate contract that the app is designed for at
-       least 480×400 of visible game area. */
+       Below this viewport size the canvas would otherwise scale further
+       down; on desktop that turns into a tiny thumbnail which nobody
+       wants. On mobile we drop the min in the media query below so the
+       game actually fits the screen. */
     min-width: 480px;
+}
+/* Mobile: let the canvas shrink to fit the viewport. On a 375×812
+   phone in landscape, the `min-width: 480px` above forces overflow
+   past the bottom of the viewport, hiding the bottom-bar controls
+   above where they visually should be. The C64 native resolution is
+   only 320×200, so anything ≥ that is still playable — no need to
+   enforce 480 on a device that physically can't display it. */
+@media (max-width: 900px), (max-height: 500px) {
+    #gameCanvas {
+        min-width: 0;
+    }
 }
 
 /* Play-button overlay for ?play=1 / ?play_demo=1. Poster preview renders
@@ -616,29 +638,54 @@ body.kbd-active .program-line .instruction:hover {
 #gameControls button:disabled { opacity: 0.4; cursor: default; }
 #gameControls button svg { width: 100%; height: 100%; display: block; }
 
-/* Play-mode affordance: when the page opens via ?play=1 / ?play_demo=1,
-   expand the stop button to include a "stop & edit" text label so
-   first-time visitors watching a demo see the way in to the code. Body
-   class is set by showPlayButtonOverlay and removed by stopProgram —
-   so the label appears only on the initial play-into-demo run. Any
-   subsequent manual run from within the editor keeps the compact
-   icon-only stop button. */
-body.play-mode #gameControls #stopBtn {
+/* Edit-mode fullscreen button. Floats in the top-right corner of the
+   viewport so it's always reachable while editing on mobile (the
+   editor's own button column is inside the fixed 720×520 stage and
+   would scroll off with the layout). Hidden during play mode to avoid
+   doubling up with the play-mode fullscreen button. */
+#editorFullscreenBtn {
+    position: fixed;
+    top: 8px;
+    right: 8px;
+    z-index: 100;
+    width: 32px;
+    height: 32px;
+    background: rgba(0, 0, 0, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 4px;
+    padding: 4px;
+    color: rgba(255, 255, 255, 0.9);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+#editorFullscreenBtn:hover { background: rgba(0, 0, 0, 0.8); }
+#editorFullscreenBtn svg { width: 100%; height: 100%; display: block; }
+body.play-mode #editorFullscreenBtn { display: none; }
+
+/* Stop button — always shows the square icon PLUS a "stop & edit"
+   text label in c64-blue. It's the exit path back to the code and
+   too important to hide behind a bare icon. The button is only in
+   the DOM tree that's visible during play mode (inside #gameOverlay,
+   which is display: none while editing), so no additional gating
+   needed — it's shown exactly when a game is running. */
+#gameControls #stopBtn {
     width: auto;
     padding: 4px 10px 4px 6px;
     gap: 6px;
     background: rgba(64, 49, 141, 0.85);          /* c64-blue tint */
     border-color: rgba(120, 105, 196, 0.9);       /* c64-light-blue outline */
 }
-body.play-mode #gameControls #stopBtn:hover {
+#gameControls #stopBtn:hover {
     background: rgba(64, 49, 141, 1);
 }
-body.play-mode #gameControls #stopBtn svg {
+#gameControls #stopBtn svg {
     width: 20px;
     height: 20px;
     flex-shrink: 0;
 }
-body.play-mode #gameControls #stopBtn::after {
+#gameControls #stopBtn::after {
     content: 'stop & edit';
     font-size: 12px;
     font-weight: 700;
@@ -951,6 +998,22 @@ body.play-mode #gameControls #stopBtn::after {
 </head>
 <body>
 
+<!-- Floating fullscreen button — visible any time the editor is in
+     edit mode. Hidden by CSS during play mode (body.play-mode) since
+     the play-mode chrome has its own fullscreen button that lives in
+     the game bar. See #editorFullscreenBtn CSS + toggleFullscreen()
+     JS below. Rendered outside #screen so it's positioned against
+     the viewport, not the fixed 720×520 editor stage. -->
+<button id="editorFullscreenBtn" type="button" aria-label="Fullscreen" onclick="toggleFullscreen()">
+    <!-- Icon body is replaced by refreshFullscreenIcon() to reflect
+         enter-vs-exit state; this initial SVG is the "enter" glyph. -->
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path d="M4 9 L4 4 L9 4 M15 4 L20 4 L20 9 M20 15 L20 20 L15 20 M9 20 L4 20 L4 15"
+              fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+</button>
+
 <div id="screen">
     <div id="mainArea">
         <div id="leftPanel">
@@ -1021,13 +1084,23 @@ body.play-mode #gameControls #stopBtn::after {
                         <rect x="4" y="16" width="16" height="2" rx="1" fill="currentColor"/>
                     </svg>
                 </button>
-                <button id="stopBtn" type="button" aria-label="Stop (esc)" onclick="stopProgram()">
+                <button id="stopBtn" type="button" aria-label="Stop and edit (esc)" onclick="stopProgram()">
                     <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
                         <rect x="6" y="6" width="12" height="12" rx="1" fill="currentColor"/>
                     </svg>
                 </button>
                 <button id="pauseBtn" type="button" aria-label="Pause" onclick="togglePause()">
                     <!-- Icon swapped in JS via setPauseButtonIcon(). -->
+                </button>
+                <button id="fullscreenToggle" type="button" aria-label="Fullscreen" onclick="toggleFullscreen()">
+                    <!-- SVG replaced dynamically by refreshFullscreenIcon() to
+                         reflect enter vs exit state. Same shape family as
+                         play.html's fullscreen button. -->
+                    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                        <path d="M4 9 L4 4 L9 4 M15 4 L20 4 L20 9 M20 15 L20 20 L15 20 M9 20 L4 20 L4 15"
+                              fill="none" stroke="currentColor" stroke-width="2"
+                              stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
                 </button>
                 <!-- Audio indicator mounts here (rightmost). -->
             </div>
@@ -1549,8 +1622,6 @@ async function showPlayButtonOverlay(params) {
     // shift the virtual dpad + fire button under the player's fingers.
     // Restored by stopProgram on exit.
     setPlayModeViewport(true);
-    // Match aria for screen-reader parity with the visible text.
-    document.getElementById('stopBtn').setAttribute('aria-label', 'Stop and edit (esc)');
 
     const overlay = document.getElementById('playOverlay');
     overlay.classList.add('active');
@@ -3113,6 +3184,7 @@ function getInstructionCost(opcode) {
 
 // Editing state
 let activeField = null;  // Currently active editable field (during drag)
+let activeFieldPointerId = undefined;  // Pointer ID captured by activeField (for pointer capture / cleanup)
 let selectedField = null;  // Currently selected field (for keyboard input)
 let fieldInputBuffer = '';  // Buffer for typed digits
 let dragStartY = 0;      // Y position when drag started
@@ -3165,7 +3237,7 @@ function renderProgramListing() {
         if (instr.label > 0) {
             labelSpan.textContent = 'l' + instr.label.toString().padStart(3, '0');
         }
-        labelSpan.addEventListener('mousedown', onLabelMouseDown);
+        labelSpan.addEventListener('pointerdown', onLabelMouseDown);
         div.appendChild(labelSpan);
 
         // Cursor block (between label and instruction)
@@ -3323,7 +3395,11 @@ function renderEditableInstruction(container, instr, lineIndex) {
             // that other field types still use.
             attachColorDraggable(span, instr, argNum);
         } else {
-            span.addEventListener('mousedown', onFieldMouseDown);
+            // Pointer Events unify mouse + touch + stylus. The handler
+            // stays named onFieldMouseDown for git-blame continuity and
+            // to keep the surrounding editor code (which references its
+            // globals like activeField) intact.
+            span.addEventListener('pointerdown', onFieldMouseDown);
         }
 
         container.appendChild(span);
@@ -3720,9 +3796,11 @@ let labelDragSourceIndex = -1;
 let labelDragCurrentIndex = -1;
 let labelDragValue = 0;
 let labelDragOriginalLabels = null; // Snapshot of labels before drag (source set to 0)
+let labelDragPointerId = undefined; // Pointer ID captured on the source label span
 
 // Mouse down on label - start editing
 function onLabelMouseDown(e) {
+    if (e.isPrimary === false) return;
     e.preventDefault();
     e.stopPropagation();
 
@@ -3746,6 +3824,7 @@ function onLabelMouseDown(e) {
     labelDragSourceIndex = lineIndex;
     labelDragCurrentIndex = lineIndex;
     labelDragValue = instr.label;
+    labelDragPointerId = e.pointerId;
 
     // Snapshot all labels before dragging, but clear the source position
     // so restoring doesn't put the label back there
@@ -3758,8 +3837,13 @@ function onLabelMouseDown(e) {
     renderProgramListing();
     highlightLabelAt(lineIndex);
 
-    document.addEventListener('mousemove', onLabelMouseMove);
-    document.addEventListener('mouseup', onLabelMouseUp);
+    // Pointer capture keeps pointermove events flowing to this span even
+    // as the user drags across other program lines (line-lookup is done
+    // via e.clientY in the move handler, not target-inspection).
+    try { span.setPointerCapture(e.pointerId); } catch {}
+    span.addEventListener('pointermove',   onLabelMouseMove);
+    span.addEventListener('pointerup',     onLabelMouseUp);
+    span.addEventListener('pointercancel', onLabelMouseUp);
 }
 
 // Highlight the label span at a given index
@@ -3830,6 +3914,7 @@ function onLabelMouseMove(e) {
 // Mouse up - finish label editing
 function onLabelMouseUp(e) {
     if (labelDragSourceIndex === -1) return;
+    if (e && e.pointerId !== undefined && e.pointerId !== labelDragPointerId) return;
 
     const instructions = currentProgramData.instructions;
     const programArea = document.getElementById('programArea');
@@ -3852,12 +3937,18 @@ function onLabelMouseUp(e) {
         instructions[labelDragCurrentIndex].label = labelDragValue;
     }
 
+    const span = e && e.currentTarget;
     labelDragSourceIndex = -1;
     labelDragCurrentIndex = -1;
     labelDragOriginalLabels = null;
 
-    document.removeEventListener('mousemove', onLabelMouseMove);
-    document.removeEventListener('mouseup', onLabelMouseUp);
+    if (span) {
+        span.removeEventListener('pointermove',   onLabelMouseMove);
+        span.removeEventListener('pointerup',     onLabelMouseUp);
+        span.removeEventListener('pointercancel', onLabelMouseUp);
+        try { span.releasePointerCapture(labelDragPointerId); } catch {}
+    }
+    labelDragPointerId = undefined;
 
     renderProgramListing();
     saveCurrentProgram();
@@ -3865,6 +3956,7 @@ function onLabelMouseUp(e) {
 
 // Mouse down on editable field - start drag or show asset picker
 function onFieldMouseDown(e) {
+    if (e.isPrimary === false) return;   // ignore extra fingers during pinch
     e.preventDefault();
     e.stopPropagation();
 
@@ -3904,6 +3996,7 @@ function onFieldMouseDown(e) {
     saveUndoState();
 
     activeField = span;
+    activeFieldPointerId = e.pointerId;
     span.classList.add('active');
 
     const instr = currentProgramData.instructions[lineIndex];
@@ -3911,8 +4004,13 @@ function onFieldMouseDown(e) {
     dragStartY = e.clientY;
     dragStartValue = argNum === 1 ? instr.arg1 : instr.arg2;
 
-    document.addEventListener('mousemove', onFieldMouseMove);
-    document.addEventListener('mouseup', onFieldMouseUp);
+    // Capture the pointer on the span so pointermove/pointerup keep firing
+    // even if the finger drifts off it during the drag. Same shape we use
+    // in draggableField and the maker apps' drag code.
+    try { span.setPointerCapture(e.pointerId); } catch {}
+    span.addEventListener('pointermove',   onFieldMouseMove);
+    span.addEventListener('pointerup',     onFieldMouseUp);
+    span.addEventListener('pointercancel', onFieldMouseUp);
 }
 
 // Mouse move while dragging - cycle values
@@ -3929,6 +4027,14 @@ function onFieldMouseMove(e) {
     const range = getFieldRange(type);
     let newValue;
 
+    // Sensitivity budget: full range covered in ~200px of drag, but
+    // capped at 10px per step so small ranges (score1 slot 1..8, joystick
+    // 1..2, etc.) don't feel like a dead-zone on touch. Old formula
+    // demanded 25px per step for an 8-value field which felt broken on
+    // mobile — you'd drag 20px and nothing happened. Cap keeps touch
+    // ergonomic while leaving desktop behaviour reasonable (large-range
+    // fields still use the finer-grained 1-2 px/step you'd want with a
+    // mouse).
     if (range.list) {
         // List mode (for data page types)
         const list = range.list;
@@ -3936,7 +4042,7 @@ function onFieldMouseMove(e) {
         const startIdx = startIndex >= 0 ? startIndex : 0;
 
         const deltaY = dragStartY - e.clientY;
-        const sensitivity = Math.max(8, Math.floor(200 / list.length));
+        const sensitivity = Math.max(1, Math.min(10, Math.floor(200 / list.length)));
         const deltaIndex = Math.floor(deltaY / sensitivity);
 
         // Clamp to valid range
@@ -3949,7 +4055,7 @@ function onFieldMouseMove(e) {
         // Calculate value change based on vertical drag
         // Drag up = increase, drag down = decrease
         const deltaY = dragStartY - e.clientY;
-        const sensitivity = Math.max(1, Math.floor(200 / totalValues));
+        const sensitivity = Math.max(1, Math.min(10, Math.floor(200 / totalValues)));
         const deltaValue = Math.floor(deltaY / sensitivity);
 
         // Clamp to valid range
@@ -3970,19 +4076,25 @@ function onFieldMouseMove(e) {
     updateInstructionName(instr);
 }
 
-// Mouse up - finish drag, keep field selected for keyboard input
+// Pointer up (or cancel) — finish drag, keep field selected for keyboard input
 function onFieldMouseUp(e) {
     if (!activeField) return;
+    if (e && e.pointerId !== undefined && e.pointerId !== activeFieldPointerId) return;
+
+    const span = activeField;
 
     // Transition from active (dragging) to selected (keyboard input)
-    activeField.classList.remove('active');
-    activeField.classList.add('selected');
-    selectedField = activeField;
+    span.classList.remove('active');
+    span.classList.add('selected');
+    selectedField = span;
     fieldInputBuffer = '';  // Clear input buffer for fresh typing
     activeField = null;
 
-    document.removeEventListener('mousemove', onFieldMouseMove);
-    document.removeEventListener('mouseup', onFieldMouseUp);
+    span.removeEventListener('pointermove',   onFieldMouseMove);
+    span.removeEventListener('pointerup',     onFieldMouseUp);
+    span.removeEventListener('pointercancel', onFieldMouseUp);
+    try { span.releasePointerCapture(activeFieldPointerId); } catch {}
+    activeFieldPointerId = undefined;
 
     // Save changes
     saveCurrentProgram();
@@ -4918,6 +5030,14 @@ function runProgramUnchecked() {
         // overlay is force-cleared here so pressing Run after a Stop
         // (following an initial ?play=1 landing) doesn't leave the
         // dimmed overlay + button sitting on top of the real game.
+        // body.play-mode + viewport swap MUST happen here (not only in
+        // the demo/URL play-button flow): they're what makes the
+        // fullscreen play view use device-width and hide the
+        // edit-mode fullscreen button. Without them, mobile Safari
+        // renders the play chrome in 720-wide layout coordinates and
+        // touch controls end up misaligned or hidden.
+        document.body.classList.add('play-mode');
+        setPlayModeViewport(true);
         document.getElementById('gameOverlay').classList.add('active');
         document.getElementById('gameBorder').style.background = 'rgb(0, 0, 0)';  // Reset border to black
         document.getElementById('playOverlay').classList.remove('active');
@@ -4989,14 +5109,11 @@ function stopProgram() {
         touchControls.unmount();
         touchControls = null;
     }
-    // Drop the play-mode label the moment the visitor lands in the editor.
-    // The label was a one-time affordance to reveal the way in from the
-    // demo; subsequent manual runs from the editor keep the compact
-    // icon-only stop button. Aria reverts to match.
-    if (document.body.classList.contains('play-mode')) {
-        document.body.classList.remove('play-mode');
-        document.getElementById('stopBtn').setAttribute('aria-label', 'Stop (esc)');
-    }
+    // Drop the play-mode body class so scale-to-fit CSS and the
+    // edit-mode fullscreen button reappear. The stop button itself
+    // stays styled as "stop & edit" everywhere — it's only visible
+    // inside #gameOverlay which is display:none in edit mode anyway.
+    document.body.classList.remove('play-mode');
     // Unlock the mobile viewport now that we're back in the editor
     // (pinch-zoom is a real accessibility win in the code view).
     setPlayModeViewport(false);
@@ -5007,12 +5124,77 @@ function stopProgram() {
 // (protects fixed dpad/fire-button positions on touch) and re-enabled
 // in the editor. Rewriting the tag's `content` at runtime is the
 // standard way to toggle this — browsers pick up the change immediately.
+// Fullscreen toggle — targets documentElement so the game AND the
+// editor chrome around it both scale into the fullscreen box. Uses the
+// webkit-prefixed fallback for iPad Safari, which supports the API only
+// under that name. iPhone Safari has partial support in recent versions
+// (iOS 16.4+); older versions no-op silently, which is fine — the
+// alternative is Add-to-Home-Screen via a PWA manifest and that's a
+// separate rabbit hole.
+function toggleFullscreen() {
+    const el = document.documentElement;
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+        (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    } else {
+        const req = el.requestFullscreen || el.webkitRequestFullscreen;
+        if (req) req.call(el);
+    }
+}
+
+// Repaint every fullscreen toggle button (edit-mode float + play-mode
+// bar button) to reflect current state. Handles the Escape-key exit
+// path that bypasses our own toggleFullscreen.
+function refreshFullscreenIcon() {
+    const active = !!(document.fullscreenElement || document.webkitFullscreenElement);
+    // "Enter" icon: outward-pointing arrows. "Exit" icon: inward-pointing
+    // arrows. Recognized by shape rather than reading — the fine strokes
+    // render fine even at the reduced icon opacity.
+    const svg = active
+        ? `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+             <path d="M9 4 L9 9 L4 9 M15 4 L15 9 L20 9 M20 15 L15 15 L15 20 M4 15 L9 15 L9 20"
+                   fill="none" stroke="currentColor" stroke-width="2"
+                   stroke-linecap="round" stroke-linejoin="round"/>
+           </svg>`
+        : `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+             <path d="M4 9 L4 4 L9 4 M15 4 L20 4 L20 9 M20 15 L20 20 L15 20 M9 20 L4 20 L4 15"
+                   fill="none" stroke="currentColor" stroke-width="2"
+                   stroke-linecap="round" stroke-linejoin="round"/>
+           </svg>`;
+    for (const id of ['fullscreenToggle', 'editorFullscreenBtn']) {
+        const btn = document.getElementById(id);
+        if (btn) btn.innerHTML = svg;
+    }
+}
+
+// Hide fullscreen buttons if the browser doesn't support the API at
+// all (embedded/kiosk builds, older iOS). Wire up state-change
+// listeners once the page is ready.
+document.addEventListener('DOMContentLoaded', () => {
+    const el = document.documentElement;
+    const supported = !!(el.requestFullscreen || el.webkitRequestFullscreen);
+    if (!supported) {
+        for (const id of ['fullscreenToggle', 'editorFullscreenBtn']) {
+            const btn = document.getElementById(id);
+            if (btn) btn.style.display = 'none';
+        }
+        return;
+    }
+    document.addEventListener('fullscreenchange', refreshFullscreenIcon);
+    document.addEventListener('webkitfullscreenchange', refreshFullscreenIcon);
+    refreshFullscreenIcon();
+});
+
 function setPlayModeViewport(playing) {
     const meta = document.querySelector('meta[name="viewport"]');
     if (!meta) return;
+    // playing: lock to device-width with no pinch/scale so the virtual
+    //          dpad and fire button stay pinned to fixed finger positions
+    //          during gameplay.
+    // editing: restore the fixed-720 layout that mobile browsers scale
+    //          to fit the device — matches the default in the HTML.
     meta.setAttribute('content', playing
         ? 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover'
-        : 'width=device-width, initial-scale=1'
+        : 'width=720, initial-scale=1'
     );
 }
 

@@ -34,6 +34,7 @@ const SPRITE_MAKER_URL = `file://${join(PROJECT_ROOT, 'sprite-maker.html')}`;
 const SCENE_MAKER_URL = `file://${join(PROJECT_ROOT, 'scene-maker.html')}`;
 const SOUND_MAKER_URL = `file://${join(PROJECT_ROOT, 'sound-maker.html')}`;
 const MUSIC_MAKER_URL = `file://${join(PROJECT_ROOT, 'music-maker.html')}`;
+const EDITOR_URL = `file://${join(PROJECT_ROOT, 'editor.html')}`;
 const SPRITE_SELECTION_KEY = 'gm_disk_selection_sprite-maker';
 const SCENE_SELECTION_KEY = 'gm_disk_selection_scene-maker';
 const SOUND_SELECTION_KEY = 'gm_disk_selection_sound-maker';
@@ -720,6 +721,100 @@ describe('music-maker note drag — touch drag registers as a drag (not a stray 
                 return;
             }
             expect(state.dragStarted).toBe(true);
+        } finally {
+            await page.close();
+        }
+    });
+});
+
+// ---------------------------------------------------------------------------
+// editor.html — arg-field drag + viewport meta swap on play/edit
+// ---------------------------------------------------------------------------
+// Two things tested here:
+//   • Numeric arg-field drag on touch (the "add 00000 to score 1" ish
+//     regression the user reported). Same pointer-events pattern as the
+//     other editors, tested via synthetic touch PointerEvents.
+//   • setPlayModeViewport swaps the viewport meta correctly on play/edit
+//     transitions — locking pinch-zoom during gameplay so the touch dpad
+//     stays pinned, restoring the fixed-720 layout on edit.
+
+async function openEditorReady() {
+    const page = await browser.newPage();
+    page.on('pageerror', err => console.error('Page error:', err.message));
+    await page.goto(EDITOR_URL, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() =>
+        typeof currentProgramData !== 'undefined' && typeof onFieldMouseDown === 'function');
+    return page;
+}
+
+describe('editor arg-field — touch drag scrubs the value', () => {
+    test('touch drag up on a numeric arg increases the value', async () => {
+        const page = await openEditorReady();
+        try {
+            await page.evaluate(POINTER_EVENT_HELPERS);
+            const state = await page.evaluate(() => {
+                // Insert a minimal instruction with a numeric arg the drag
+                // handler will scrub. `add N to score1` (opcode 0x44 with
+                // arg1 as a numeric slot 0..7) has a small-range field.
+                if (!currentProgramData) currentProgramData = { instructions: [] };
+                currentProgramData.instructions = [{
+                    label: 0, opcode: 0x44, arg1: 3, arg2: 0, instructionName: '',
+                }];
+                selectedLineIndex = 0;
+                selectedLines.clear(); selectedLines.add(0);
+                renderProgramListing();
+
+                // Find the first editable-field span on line 0. Skip the
+                // fixed asset-picker types by looking for any span with
+                // a non-list min/max range (numeric).
+                const field = document.querySelector('.program-line .editable-field');
+                if (!field) return { skipped: 'no editable field found' };
+
+                const r = field.getBoundingClientRect();
+                const cx = r.left + r.width / 2;
+                const cy = r.top + r.height / 2;
+                const beforeArg1 = currentProgramData.instructions[0].arg1;
+                _fireTouchPointer('pointerdown', field, cx, cy);
+                // Drag up 30px — should bump the value up at least once
+                // regardless of the field's sensitivity.
+                _fireTouchPointer('pointermove', field, cx, cy - 30);
+                _fireTouchPointer('pointerup',   field, cx, cy - 30);
+                const afterArg1 = currentProgramData.instructions[0].arg1;
+                return { beforeArg1, afterArg1 };
+            });
+            if (state.skipped) return;
+            expect(state.afterArg1).toBeGreaterThan(state.beforeArg1);
+        } finally {
+            await page.close();
+        }
+    });
+});
+
+describe('editor viewport — setPlayModeViewport swaps content correctly', () => {
+    test('editing state → width=720 (fixed layout, pinch-zoom allowed)', async () => {
+        const page = await openEditorReady();
+        try {
+            const content = await page.evaluate(() => {
+                setPlayModeViewport(false);
+                return document.querySelector('meta[name="viewport"]').getAttribute('content');
+            });
+            expect(content).toMatch(/width=720/);
+            expect(content).not.toMatch(/user-scalable=no/);
+        } finally {
+            await page.close();
+        }
+    });
+
+    test('playing state → device-width, user-scalable=no (dpad pinned)', async () => {
+        const page = await openEditorReady();
+        try {
+            const content = await page.evaluate(() => {
+                setPlayModeViewport(true);
+                return document.querySelector('meta[name="viewport"]').getAttribute('content');
+            });
+            expect(content).toMatch(/width=device-width/);
+            expect(content).toMatch(/user-scalable=no/);
+            expect(content).toMatch(/maximum-scale=1/);
         } finally {
             await page.close();
         }

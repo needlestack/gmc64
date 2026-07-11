@@ -148,10 +148,37 @@ class GMDisk {
     }
 
     static async _hashBytes(bytes) {
-        const buffer = await crypto.subtle.digest('SHA-256', bytes);
-        return Array.from(new Uint8Array(buffer))
-            .map(b => b.toString(16).padStart(2, '0'))
-            .join('');
+        // Prefer crypto.subtle (available on HTTPS + localhost); fall
+        // back to a non-crypto hash otherwise. We only use the result
+        // for pool dedup, not for anything security-sensitive.
+        //
+        // The fallback matters because gmc64 gets tested / used over
+        // LAN HTTP (`http://192.168.x.y:8000`) — Web Crypto requires a
+        // "secure context" and refuses to expose `crypto.subtle` on
+        // plain HTTP. Without a fallback, the demo disk (and every
+        // disk add) fails with "undefined is not an object" here.
+        if (globalThis.crypto && crypto.subtle && crypto.subtle.digest) {
+            try {
+                const buffer = await crypto.subtle.digest('SHA-256', bytes);
+                return Array.from(new Uint8Array(buffer))
+                    .map(b => b.toString(16).padStart(2, '0'))
+                    .join('');
+            } catch { /* fall through */ }
+        }
+        // FNV-1a with two independent 32-bit seeds → 64-bit fingerprint.
+        // For a personal disk pool (dozens of entries at most) collision
+        // odds are negligible. Prefix so a fallback hash can't collide
+        // with a shorter prefix of a SHA-256 hash stored during a prior
+        // HTTPS visit — matters if the user later crosses contexts.
+        let h1 = 0x811c9dc5 | 0;   // FNV offset basis
+        let h2 = 0x1b873593 | 0;   // second seed (arbitrary independent constant)
+        for (let i = 0; i < bytes.length; i++) {
+            h1 ^= bytes[i]; h1 = Math.imul(h1, 0x01000193);
+            h2 ^= bytes[i]; h2 = Math.imul(h2, 0xcc9e2d51);
+        }
+        return 'fnv:' +
+            (h1 >>> 0).toString(16).padStart(8, '0') +
+            (h2 >>> 0).toString(16).padStart(8, '0');
     }
 
     /**

@@ -81,24 +81,35 @@ body {
 }
 
 /* ==========================================================================
-   MOBILE SCALE-TO-FIT
+   NARROW-VIEWPORT SCALE-TO-FIT (fallback)
    ==========================================================================
-   All editor pages have a fixed #screen at 720px wide × 520–560px tall
-   plus 10px body padding on each side (740px effective outer width).
-   Below that width, browsers otherwise render the layout at desktop
-   size with the right half off-screen. `zoom` scales the whole layout
-   (visual AND event coordinates) proportionally to fit — same shape,
-   just smaller — respecting the "fixed sizing, not fluid layout"
-   design principle.
+   Mobile: editor HTML pages ship `<meta name="viewport" content="width=720">`
+   which makes the browser lay out at 720px and scale to fit the actual
+   device width — natively, in hardware, on every iOS version. That's
+   the primary scale-to-fit path.
 
-   Pinch-to-zoom still works: it operates at the browser viewport
-   layer, on top of whatever CSS zoom we applied.
+   Desktop: viewport meta is ignored on desktop, so a resized-narrow
+   window would show 720px of editor with the right half cut off. This
+   media query catches that: `zoom` scales the whole layout
+   proportionally down to fit. Same shape, just smaller. Also 0's out
+   the body padding so we're not paying for it in the fit math.
 
-   `body.play-mode` (set by editor.html on Run) skips the scale-to-fit
-   so the fullscreen play view can lay out on its own terms. The
-   in-play virtual dpad + fire button need to sit at fixed viewport
-   coordinates. */
-@media (max-width: 740px) {
+   Note this rule ALSO fires on mobile since our viewport is 720 (which
+   is <= 740). There it's harmless: `zoom` evaluates to 720/720 = 1, i.e.
+   no scaling. The viewport meta has already done the work.
+
+   `body.play-mode` (set by editor.html on Run) skips the rule so the
+   fullscreen play view can lay out on its own terms — the virtual dpad
+   + fire button need fixed viewport coordinates during gameplay.
+
+   Media-query threshold is 719 (not 720/740) on purpose: on mobile the
+   viewport meta sets the layout viewport to exactly 720, so 719 keeps
+   the rule from firing there — the browser is already handling scale.
+   Having `zoom` declared even at value 1 would create a containing
+   block for descendant `position: fixed` elements (Chrome/Safari
+   quirk), which breaks the floating fullscreen button. Below 720 is a
+   real narrow-desktop case; there we do want the fallback. */
+@media (max-width: 719px) {
     body:not(.play-mode) {
         padding: 0;
         zoom: calc(100vw / 720);
@@ -147,8 +158,22 @@ button:disabled:hover {
     height: 100%;
     background: rgba(0, 0, 0, 0.7);
     display: flex;
-    align-items: center;
+    /* `safe center` keeps the dialog centered when it fits but
+       switches to start-alignment when it's taller than the overlay,
+       so the top isn't cut off. `overflow-y: auto` then lets the user
+       scroll the overlay to reach the bottom. Needed for the disk
+       popup on mobile landscape where the dialog is taller than the
+       viewport. `overscroll-behavior: contain` stops the scroll from
+       bubbling up to the body once we hit the popup's edges. */
+    align-items: safe center;
     justify-content: center;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    /* Small vertical breathing room so a scrolled-past-viewport dialog
+       has some space at each end rather than butting up against the
+       screen edge. */
+    padding: 10px 0;
+    box-sizing: border-box;
     z-index: 1000;
 }
 
