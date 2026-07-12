@@ -277,25 +277,9 @@ button:disabled:hover {
     margin-left: auto;
 }
 
-/* "Show All File Types" is a secondary list-filter toggle, so it's sized
-   a notch smaller than the main popup buttons (font and padding both
-   step down) to read as auxiliary rather than primary. */
-.gm-disk-show-all {
-    font-size: 12px;
-    padding: 3px 8px;
-}
-
-/* Active state for the show-all toggle — same lt-green fill scene-maker
-   uses for its toggleable tool buttons. */
-.gm-disk-show-all.active {
-    background: var(--c64-lt-green);
-}
-
 /* Active state for the top-row prompt buttons (rename / new disk /
-   eject) while their prompt is open. White (not lt-green) is
-   intentional: these buttons aren't a long-lived toggle state like
-   show-all — they're "in this modal mode" indicators that pair with
-   the in-message-bar prompt. */
+   eject) while their prompt is open. White fill signals "modal mode
+   active." */
 .gm-disk-rename.active,
 .gm-disk-blank.active,
 .gm-disk-eject.active {

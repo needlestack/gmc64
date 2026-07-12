@@ -45,11 +45,27 @@ class GMDisk {
             case '/SND': return 'sound';
             case '/SNG': return 'music';
             case '/PRG': return 'program';
-            // Sentinel used when show-all groups extension-less standalone
-            // exports. Not a real disk extension — just what the group's
-            // rows display in the "type" column.
+            // Synthetic markers for non-extension groups. Neither is a
+            // real disk extension — the popup uses them so the rows can
+            // still label their type column.
             case 'STANDALONE': return 'standalone';
+            case 'NON_GM':     return 'non-GameMaker';
             default:     return '';
+        }
+    }
+
+    // Extension → editor page for cross-editor dispatch. Clicking a
+    // dimmed non-primary GM file in the disk popup navigates the browser
+    // to the target editor with ?disk=pool:<id>&file=<name> so the
+    // target picks up the same disk and auto-loads the file.
+    static _editorForExt(ext) {
+        switch ((ext || '').toUpperCase()) {
+            case '/SPR': return 'sprite-maker';
+            case '/PIC': return 'scene-maker';
+            case '/SND': return 'sound-maker';
+            case '/SNG': return 'music-maker';
+            case '/PRG': return 'editor';
+            default:     return null;
         }
     }
 
@@ -307,11 +323,6 @@ class GMDisk {
 
         this.selectedIndex = -1;
         this.directoryEntries = [];
-
-        // "Show all" toggle — when on, the file list includes all types, with
-        // non-loadable types grayed-out and non-interactive. Persisted across
-        // popup opens/closes so the user's preference sticks.
-        this.showAll = localStorage.getItem('gm_disk_show_all') === '1';
 
         this._onKeyDown = this._onKeyDown.bind(this);
     }
@@ -789,11 +800,6 @@ class GMDisk {
                 </div>
                 <div class="popup-buttons-bottom">
                     <div class="popup-buttons-left">
-                        <!-- Show All is a list filter, not a whole-disk action —
-                             parked above Download D64 as the closest visually
-                             neutral spot. Sized down a notch so it reads as
-                             secondary to the main bottom buttons. -->
-                        <button class="gm-disk-show-all">Show All File Types</button>
                         <button class="gm-disk-download">Download D64</button>
                     </div>
                     <div class="popup-buttons-right">
@@ -868,18 +874,6 @@ class GMDisk {
         const deleteBtn = this.popup.querySelector('.gm-disk-delete');
         loadBtn.onclick = () => this._loadSelected();
         deleteBtn.onclick = () => this._promptDelete();
-
-        // Show-all toggle — flips between filtered listing (just the editor's
-        // primary file type) and the full disk contents (with non-loadable
-        // types grayed-out and non-interactive).
-        const showAllBtn = this.popup.querySelector('.gm-disk-show-all');
-        showAllBtn.classList.toggle('active', this.showAll);
-        showAllBtn.onclick = () => {
-            this.showAll = !this.showAll;
-            localStorage.setItem('gm_disk_show_all', this.showAll ? '1' : '0');
-            showAllBtn.classList.toggle('active', this.showAll);
-            this._updatePopupDirectory();
-        };
 
         // Wire up custom buttons
         const customBtns = this.popup.querySelectorAll('.gm-disk-custom');
@@ -1263,55 +1257,69 @@ class GMDisk {
 
         // Build the unified entry list. Every row is selectable (so Delete
         // can work on any type), but only the editor's primary type is
-        // LOADable — non-primary entries in show-all mode get marked
-        // dimmed and the Load button stays disabled when one is selected.
-        // Files that don't match GM's filename shape are skipped entirely —
-        // this popup is a GM finder, not a generic disk browser.
-        const primaryFiles = this.listFiles(this.popupOptions.fileType)
-            .filter(e => GMDisk._isGmFile(e.fileName));
-
-        let groups;
-        if (this.showAll) {
-            // Group all GM-shaped files by extension. Primary type leads;
-            // remaining groups follow in this fixed order (chosen by frequency
-            // of use — sprites are usually the bulk of a disk, programs the
-            // smallest count).
-            const TYPE_ORDER = ['/SPR', '/PIC', '/SND', '/SNG', '/PRG'];
-            const rawAll = this.listFiles();
-            const all = rawAll.filter(e => GMDisk._isGmFile(e.fileName));
-            const primaryExt = (this.popupOptions.fileType.extension || '').toUpperCase();
-            const byExt = {};
-            for (const entry of all) {
-                const slash = entry.fileName.lastIndexOf('/');
-                const ext = slash >= 0 ? entry.fileName.substring(slash).toUpperCase() : '';
-                if (!byExt[ext]) byExt[ext] = [];
-                byExt[ext].push(entry);
-            }
-            const otherExts = TYPE_ORDER.filter(ext => byExt[ext] && ext !== primaryExt);
-            // Scan the remaining (non-GM-named) entries for standalones.
-            // They have no /XXX suffix so _isGmFile filters them out above,
-            // but the block-count + magic-byte check picks them up here.
-            const standalones = rawAll.filter(e =>
-                !GMDisk._isGmFile(e.fileName) && GMDisk._isStandaloneEntry(this.disk, e));
-            groups = [];
-            if (byExt[primaryExt]) groups.push({ entries: byExt[primaryExt], loadable: true });
-            for (const ext of otherExts) groups.push({ entries: byExt[ext], loadable: false });
-            // Standalones are clickable and loadable — the host detects the
-            // $0302 magic on the raw bytes and routes through standaloneToPRG.
-            if (standalones.length) {
-                groups.push({ entries: standalones, loadable: true, ext: 'STANDALONE' });
-            }
-        } else {
-            groups = [{ entries: primaryFiles, loadable: true }];
+        // LOADable — non-primary entries render dimmed and the Load
+        // button stays disabled when one is selected.
+        // The popup always shows every file on the disk. Files matching
+        // the editor's primary type are loadable and lead the list;
+        // remaining GM types (sprites, scenes, etc.), then standalones,
+        // then anything else all follow, greyed out. Rationale for
+        // always-on: hiding non-primary types made disks look empty when
+        // (e.g.) a compilation disk contained only standalones — the
+        // user's mental model is "here's the disk; here's what's on
+        // it" not "here's what my current editor cares about."
+        const TYPE_ORDER = ['/SPR', '/PIC', '/SND', '/SNG', '/PRG'];
+        const rawAll = this.listFiles();
+        const all = rawAll.filter(e => GMDisk._isGmFile(e.fileName));
+        const primaryExt = (this.popupOptions.fileType.extension || '').toUpperCase();
+        const byExt = {};
+        for (const entry of all) {
+            const slash = entry.fileName.lastIndexOf('/');
+            const ext = slash >= 0 ? entry.fileName.substring(slash).toUpperCase() : '';
+            if (!byExt[ext]) byExt[ext] = [];
+            byExt[ext].push(entry);
+        }
+        const otherExts = TYPE_ORDER.filter(ext => byExt[ext] && ext !== primaryExt);
+        // Non-GM-named entries split into standalones (recognisable by
+        // $0302 magic + 191-block size) and everything else.
+        const standalones = [];
+        const nonGm = [];
+        for (const e of rawAll) {
+            if (GMDisk._isGmFile(e.fileName)) continue;
+            if (GMDisk._isStandaloneEntry(this.disk, e)) standalones.push(e);
+            else nonGm.push(e);
+        }
+        const groups = [];
+        if (byExt[primaryExt]) groups.push({ entries: byExt[primaryExt], loadable: true, ext: primaryExt });
+        for (const ext of otherExts) groups.push({ entries: byExt[ext], loadable: false, ext });
+        // Standalones are loadable — the editor detects the $0302 magic
+        // on the raw bytes and routes through standaloneToPRG. Grouping
+        // them here (below regular GM files, above generic files) reads
+        // as "these are GameMaker exports, not native project files."
+        if (standalones.length) {
+            groups.push({ entries: standalones, loadable: true, ext: 'STANDALONE' });
+        }
+        // Anything else on the disk gets a "non-GameMaker" bucket at the
+        // bottom so the user can see the full disk contents rather than
+        // wondering why block count doesn't match visible entries.
+        if (nonGm.length) {
+            groups.push({ entries: nonGm, loadable: false, ext: 'NON_GM' });
         }
 
         // Flatten groups into directoryEntries (single source of truth) and
         // render. Each entry carries its loadable flag so click/select logic
-        // can decide which buttons to enable.
+        // can decide which buttons to enable. For non-loadable rows that
+        // ARE GM files (e.g. a /SPR selected while in scene-maker), attach
+        // the dispatch target so the Load button + dblclick can navigate.
+        // Non-GM rows and standalones don't get a dispatch target.
         this.directoryEntries = [];
         for (const g of groups) {
             for (const e of g.entries) {
-                this.directoryEntries.push({ ...e, loadable: g.loadable });
+                const entry = { ...e, loadable: g.loadable };
+                if (!g.loadable && g.ext !== 'NON_GM' && g.ext !== 'STANDALONE') {
+                    const targetEditor = GMDisk._editorForExt(g.ext);
+                    if (targetEditor) entry.dispatchTo = targetEditor;
+                }
+                this.directoryEntries.push(entry);
             }
         }
 
@@ -1320,7 +1328,8 @@ class GMDisk {
         tbody.innerHTML = '';
         let index = 0;
         groups.forEach((group, groupIdx) => {
-            // Visual gap between groups in show-all mode — a thin spacer row.
+            // Visual gap between groups — a thin spacer row so the type
+            // buckets read as distinct sections.
             if (groupIdx > 0) {
                 const spacer = document.createElement('tr');
                 spacer.className = 'gm-disk-group-gap';
@@ -1337,6 +1346,14 @@ class GMDisk {
                     row.ondblclick = () => this._loadSelected();
                 } else {
                     row.classList.add('gm-disk-row-dimmed');
+                    // Dimmed rows that can be dispatched (a GM file the
+                    // wrong editor is currently viewing) still respond to
+                    // double-click — the gesture just navigates instead
+                    // of loading. Non-dispatchable dimmed rows (non-GM,
+                    // no target editor) stay inert.
+                    if (this.directoryEntries[myIndex].dispatchTo) {
+                        row.ondblclick = () => this._loadSelected();
+                    }
                 }
 
                 // Split "PLAYER/SPR" → "PLAYER" + "sprite". The full filename
@@ -1365,8 +1382,8 @@ class GMDisk {
             });
         });
 
-        if (primaryFiles.length === 0 && !this.showAll) {
-            tbody.innerHTML = `<tr class="gm-disk-empty"><td colspan="3">No ${this.popupOptions.fileType.label.toLowerCase()} found</td></tr>`;
+        if (groups.length === 0) {
+            tbody.innerHTML = `<tr class="gm-disk-empty"><td colspan="3">Empty disk</td></tr>`;
         }
 
         this.selectedIndex = -1;
@@ -1374,28 +1391,59 @@ class GMDisk {
     }
 
     // Enable/disable the per-file action buttons based on the selection.
-    // Delete works on any selection; Load only on loadable (primary-type)
-    // entries — so when a dimmed non-primary file is selected in show-all
-    // mode, the user can delete it but Load stays grayed out.
+    // Delete works on any selection; Load handles two modes:
+    //   - loadable rows: load into the current editor
+    //   - dispatchTo rows: same "Load" label, but clicking navigates to
+    //     the matching editor with the disk + file encoded in the URL.
+    //     Non-loadable non-dispatchable rows (non-GM files) leave Load
+    //     disabled. We deliberately don't relabel the button when the
+    //     action changes — testing showed the "Open in sprite-maker"
+    //     rewrite made the UI feel busy; the dispatch is discovered
+    //     naturally when the user tries to load a dimmed file.
     _updateFileActionButtons() {
         if (!this.popup) return;
         const entry = this.directoryEntries[this.selectedIndex];
         const loadBtn = this.popup.querySelector('.gm-disk-load');
         const deleteBtn = this.popup.querySelector('.gm-disk-delete');
-        if (loadBtn) loadBtn.disabled = !entry || !entry.loadable;
+        if (loadBtn) {
+            const canDispatch = !!(entry && !entry.loadable && entry.dispatchTo);
+            loadBtn.disabled = !entry || (!entry.loadable && !canDispatch);
+        }
         if (deleteBtn) deleteBtn.disabled = !entry;
     }
 
     // Load the currently selected file (called from double-click, Enter,
-    // or the Load button). Only loadable entries actually load.
+    // or the Load button). Loadable rows go through the host's onSelect
+    // callback; dispatchable rows navigate to the correct editor.
     _loadSelected() {
         const entry = this.directoryEntries[this.selectedIndex];
-        if (!entry || !entry.loadable) return;
-        const data = this.loadFile(entry.fileName);
-        if (this.popupOptions.onSelect) {
-            this.popupOptions.onSelect(entry.fileName, data);
-            this.closePopup();
+        if (!entry) return;
+        if (entry.loadable) {
+            const data = this.loadFile(entry.fileName);
+            if (this.popupOptions.onSelect) {
+                this.popupOptions.onSelect(entry.fileName, data);
+                this.closePopup();
+            }
+            return;
         }
+        if (entry.dispatchTo) {
+            this._dispatchToEditor(entry.dispatchTo, entry.fileName);
+        }
+    }
+
+    // Cross-editor dispatch: navigate to the target editor page with
+    // the current pool disk id + file name encoded in URL params. The
+    // target's GMTools.initFromUrl picks up the params, calls
+    // loadDiskFromUrl (which honors the `pool:` prefix by selecting the
+    // pool entry directly — no fetch), and auto-loads the file.
+    // Uses location.href for same-tab navigation so browser-back
+    // returns the user to this editor with session-restored state.
+    _dispatchToEditor(editorPage, fileName) {
+        if (!this.currentDiskId) return;
+        const params = new URLSearchParams();
+        params.set('disk', `pool:${this.currentDiskId}`);
+        params.set('file', fileName);
+        location.href = `${editorPage}.html?${params.toString()}`;
     }
 
     // Delete prompt for the currently selected file. yes performs the

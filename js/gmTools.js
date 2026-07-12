@@ -1316,6 +1316,19 @@ const GMTools = {
                     return false;
                 }
                 displayName = GMTools.DEMO_DISK_FILENAME;
+            } else if (diskUrl.startsWith('pool:')) {
+                // Cross-editor dispatch reference: the disk already lives
+                // in the shared localStorage pool. Skip fetch + validate
+                // + re-insert entirely — just resolve the pool id and
+                // selectDisk. If the id is stale (user cleared their pool
+                // between editors, or dispatch URL bookmarked), fall
+                // through with a friendly error instead of a fetch attempt.
+                const poolId = diskUrl.substring('pool:'.length);
+                if (!disk.selectDisk(poolId)) {
+                    msg(`disk not in local pool`);
+                    return false;
+                }
+                return true;
             } else {
                 const response = await fetch(diskUrl);
                 if (!response.ok) {

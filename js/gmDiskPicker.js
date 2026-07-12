@@ -210,6 +210,19 @@ globalThis.GMDiskPicker = (function () {
         function isVisible() { return overlay.classList.contains('active'); }
         function hide() { overlay.classList.remove('active'); }
 
+        // Dismiss on Escape (matches every other popup in the app) and
+        // on click of the dimmed backdrop. Without these, a "no /prg
+        // files on disk" error left the overlay stuck with no visible
+        // way out — the app looked frozen behind the modal. Both paths
+        // work regardless of which section (drop-zone, pick, error) is
+        // currently shown.
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && isVisible()) hide();
+        });
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) hide();
+        });
+
         function showDropZone() {
             errBox.style.display = 'none';
             dropSection.style.display = '';
@@ -280,7 +293,37 @@ globalThis.GMDiskPicker = (function () {
                 globalThis.loadFileByName = (name) => {
                     try { return activeD64.readFile(name); } catch (e) { return null; }
                 };
+                // Editor hosts pass a customPicker (the disk popup). For
+                // those, drop == insert — always open the popup with the
+                // dropped disk selected, and show every file on it. No
+                // extension filtering, no "empty disk" error: the popup
+                // handles all of that natively (with non-loadable rows
+                // greyed out). Auto-load and the built-in program picker
+                // stay for hosts without a customPicker, like play.html
+                // where drop-to-play is the expected UX.
+                if (customPicker) {
+                    hide();
+                    customPicker();
+                    return;
+                }
+
                 const matches = GMTools.listFilesByExtension(activeD64, extension);
+
+                // Standalone GameMaker exports (extension-less 191-block
+                // files starting with the $0302 magic) also count as
+                // loadable — see CLAUDE.md "Standalone files".
+                if (matches.length === 0 && extension.toUpperCase() === '/PRG') {
+                    for (const entry of activeD64.getDirectory()) {
+                        if (entry.fileSize !== 191) continue;
+                        try {
+                            const data = activeD64.getChainedData(entry.startTrack, entry.startSector);
+                            if (data && data.length >= 2 && data[0] === 0x02 && data[1] === 0x03) {
+                                matches.push(entry.fileName);
+                            }
+                        } catch { /* not a standalone we can read; skip */ }
+                    }
+                }
+
                 if (matches.length === 0) {
                     showError(`no ${extension.toLowerCase()} files on disk`);
                     return;
@@ -292,15 +335,7 @@ globalThis.GMDiskPicker = (function () {
                     onPickFile(name, data, activeD64, file.name);
                     return;
                 }
-                // 2+ matches: hand off to the caller's custom picker if
-                // one was provided (editors use their existing file-popup
-                // UI); otherwise fall back to the module's overlay picker.
-                if (customPicker) {
-                    hide();
-                    customPicker(matches, file.name);
-                } else {
-                    showProgramPicker(activeD64, matches, file.name);
-                }
+                showProgramPicker(activeD64, matches, file.name);
             } catch (e) {
                 showError("that doesn't look like a valid .d64");
             }

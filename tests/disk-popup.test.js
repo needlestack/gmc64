@@ -308,7 +308,7 @@ describe('disk popup prefill', () => {
 });
 
 describe('disk popup directory listing', () => {
-    test('file list rows match golden directory filtered to /SNG', async () => {
+    test('file list rows match golden directory in primary-first grouped order', async () => {
         const page = await openPage({ disk: 's2' });
         await openDiskPopup(page);
 
@@ -323,9 +323,16 @@ describe('disk popup directory listing', () => {
             })
         );
 
-        const expected = s2Directory
-            .filter(e => e.fileName.endsWith('/SNG'))
-            .map(e => ({ fileName: e.fileName, type: 'music', fileSize: e.fileSize }));
+        // Primary type (music) leads; then remaining GM types in fixed
+        // order: SPR, PIC, SND, PRG. s2Directory is the raw disk order,
+        // so we regroup it by extension to build the expected listing.
+        const TYPE_ORDER = ['/SNG', '/SPR', '/PIC', '/SND', '/PRG'];
+        const TYPE_LABEL = { '/SNG': 'music', '/SPR': 'sprite', '/PIC': 'scene', '/SND': 'sound', '/PRG': 'program' };
+        const expected = TYPE_ORDER.flatMap(ext =>
+            s2Directory
+                .filter(e => e.fileName.endsWith(ext))
+                .map(e => ({ fileName: e.fileName, type: TYPE_LABEL[ext], fileSize: e.fileSize }))
+        );
 
         expect(rendered).toEqual(expected);
         await page.close();
@@ -498,22 +505,15 @@ describe('disk popup delete', () => {
     });
 });
 
-describe('disk popup "show all"', () => {
-    test('toggle off (default) shows only the editor\'s file type', async () => {
+describe('disk popup shows all file types', () => {
+    // The popup always lists every file on the disk. Files matching the
+    // editor's primary type are loadable (not dimmed); other GM types
+    // are visible but greyed. Rationale: hiding non-primary types made
+    // compilation disks look empty, and the greyed rows serve as a
+    // visual index to help users find their primary-type files.
+    test('shows all file types by default with non-loadable types dimmed', async () => {
         const page = await openPage({ disk: 's2' });
         await openDiskPopup(page);
-
-        const exts = await page.$$eval('.gm-disk-files tr[data-index]',
-            rows => rows.map(r => r.dataset.fileName.split('/')[1]));
-        // music-maker is the test page, so we only see /SNG
-        expect(new Set(exts)).toEqual(new Set(['SNG']));
-        await page.close();
-    });
-
-    test('toggle on shows all file types with non-loadable types dimmed', async () => {
-        const page = await openPage({ disk: 's2' });
-        await openDiskPopup(page);
-        await page.click('.gm-disk-show-all');
 
         const listing = await page.evaluate(() => {
             const rows = Array.from(document.querySelectorAll('.gm-disk-files tr'));
@@ -531,7 +531,7 @@ describe('disk popup "show all"', () => {
         expect(exts.size).toBeGreaterThan(1);
 
         // /SNG rows are not dimmed; other types are dimmed. ALL rows are
-        // interactive now (selectable for delete); the loadability constraint
+        // interactive (selectable for delete); the loadability constraint
         // shows up in the Load button being disabled, not in the row itself.
         const sngRows = listing.filter(r => r.name?.endsWith('/SNG'));
         const otherRows = listing.filter(r => r.name && !r.name.endsWith('/SNG'));
@@ -542,27 +542,29 @@ describe('disk popup "show all"', () => {
         await page.close();
     });
 
-    test('selecting a non-primary (dimmed) row enables Delete but leaves Load disabled', async () => {
+    test('selecting a non-primary (dimmed) GM row enables Load (for dispatch) and Delete', async () => {
         const page = await openPage({ disk: 's2' });
         await openDiskPopup(page);
-        await page.click('.gm-disk-show-all');
 
-        // Click the first dimmed (non-primary) row
+        // Click the first dimmed (non-primary) GM row
         await page.evaluate(() => {
             const row = document.querySelector('.gm-disk-files tr.gm-disk-row-dimmed[data-index]');
             row.click();
         });
 
         const btnState = await page.evaluate(() => ({
-            load: document.querySelector('.gm-disk-load').disabled,
-            del: document.querySelector('.gm-disk-delete').disabled
+            loadDisabled: document.querySelector('.gm-disk-load').disabled,
+            delDisabled:  document.querySelector('.gm-disk-delete').disabled
         }));
-        expect(btnState.load).toBe(true);   // Can't load a non-primary file
-        expect(btnState.del).toBe(false);   // But can delete it
+        // Load stays labeled "Load" (no context relabel) but is enabled
+        // for dispatchable rows — clicking navigates to the target
+        // editor. Delete works regardless of type.
+        expect(btnState.loadDisabled).toBe(false);
+        expect(btnState.delDisabled).toBe(false);
         await page.close();
     });
 
-    test('deleting a non-primary file in show-all mode removes it from the disk', async () => {
+    test('deleting a non-primary file removes it from the disk', async () => {
         const page = await openPage();   // blank disk
         await openDiskPopup(page);
 
@@ -571,7 +573,6 @@ describe('disk popup "show all"', () => {
             disk.disk.writeFile('TARGET/SPR', new Uint8Array(8), D64.FILE_TYPE_PRG);
             disk._updatePopupDirectory();
         });
-        await page.click('.gm-disk-show-all');
 
         // Select the /SPR row and trigger delete
         await page.evaluate(() => {
@@ -591,7 +592,6 @@ describe('disk popup "show all"', () => {
     test('primary type group sits above other types with a gap separator', async () => {
         const page = await openPage({ disk: 's2' });
         await openDiskPopup(page);
-        await page.click('.gm-disk-show-all');
 
         const rowKinds = await page.$$eval('.gm-disk-files tr', rows =>
             rows.map(r => {
@@ -615,7 +615,6 @@ describe('disk popup "show all"', () => {
         // We're on music-maker → primary = /SNG. Expected order of OTHER groups: SPR, PIC, SND, PRG.
         const page = await openPage({ disk: 's2' });
         await openDiskPopup(page);
-        await page.click('.gm-disk-show-all');
 
         const groupExts = await page.$$eval('.gm-disk-files tr', rows => {
             const exts = [];
@@ -632,35 +631,15 @@ describe('disk popup "show all"', () => {
         expect(groupExts).toEqual(['/SNG', '/SPR', '/PIC', '/SND', '/PRG']);
         await page.close();
     });
-
-    test('toggle state persists across popup close + reopen', async () => {
-        const page = await openPage({ disk: 's2' });
-        await openDiskPopup(page);
-        await page.click('.gm-disk-show-all');
-        await page.click('.gm-disk-close');
-        await page.waitForFunction(() => !document.querySelector('.gm-disk-dialog'));
-
-        await openDiskPopup(page);
-        const state = await page.evaluate(() => ({
-            buttonActive: document.querySelector('.gm-disk-show-all').classList.contains('active'),
-            hasDimmedRows: !!document.querySelector('.gm-disk-row-dimmed')
-        }));
-        expect(state.buttonActive).toBe(true);
-        expect(state.hasDimmedRows).toBe(true);
-        await page.close();
-    });
 });
 
 describe('disk popup standalone-file detection', () => {
     // standalone.d64 has one ALIENS standalone (no /XXX extension, 191
-    // blocks, load addr $0302). With show-all off the popup shows the
-    // usual GM-only listing (empty here since there are no /SNG files
-    // in music-maker's primary type). With show-all on, ALIENS appears
-    // in its own "standalone" group — not dimmed, clickable.
-    test('standalone entries appear in a "standalone" group when show-all is on', async () => {
+    // blocks, load addr $0302). ALIENS appears in its own "standalone"
+    // group — not dimmed, clickable — regardless of the current editor.
+    test('standalone entries appear in a "standalone" group', async () => {
         const page = await openPage({ disk: 'standalone' });
         await openDiskPopup(page);
-        await page.click('.gm-disk-show-all');
 
         const rows = await page.evaluate(() => {
             return Array.from(document.querySelectorAll('.gm-disk-files tr'))
@@ -681,27 +660,15 @@ describe('disk popup standalone-file detection', () => {
         expect(aliens.interactive).toBe(true);
         await page.close();
     });
-
-    test('standalone entries do NOT appear when show-all is off', async () => {
-        const page = await openPage({ disk: 'standalone' });
-        await openDiskPopup(page);
-        // show-all is off by default. The only file on standalone.d64 is
-        // ALIENS (no /XXX extension), so nothing GM-shaped exists at all.
-        const rows = await page.$$eval(
-            '.gm-disk-files tr[data-index]',
-            rs => rs.map(r => r.dataset.fileName));
-        expect(rows.length).toBe(0);
-        await page.close();
-    });
 });
 
-describe('disk popup GM-filename filter', () => {
-    test('files that do not match the GM shape (6 chars + / + known 3-char ext) are hidden', async () => {
+describe('disk popup non-GameMaker files', () => {
+    test('files that do not match the GM shape and are not standalones appear at the bottom, dimmed, labeled "non-GameMaker"', async () => {
         const page = await openPage();
         await openDiskPopup(page);
 
-        // Write a few non-GM files directly via the D64 API, plus one valid one.
-        // Then trigger a directory refresh so the listing picks them up.
+        // Write a mix: a valid GM file, and several non-GM files that
+        // are also not standalones (too small, wrong load-address, etc.)
         await page.evaluate(() => {
             const TYPE = D64.FILE_TYPE_PRG;
             disk.disk.writeFile('SHORT', new Uint8Array(8), TYPE);          // no slash
@@ -710,19 +677,36 @@ describe('disk popup GM-filename filter', () => {
             disk.disk.writeFile('VALID /SNG', new Uint8Array(8), TYPE);     // valid GM file
             disk._updatePopupDirectory();
         });
-        await page.click('.gm-disk-show-all');
 
-        const shown = await page.$$eval('.gm-disk-files tr',
-            rows => rows
+        const listing = await page.evaluate(() => {
+            return Array.from(document.querySelectorAll('.gm-disk-files tr'))
                 .filter(r => !r.classList.contains('gm-disk-group-gap'))
-                .map(r => r.dataset.fileName)
-                .filter(Boolean)
-        );
+                .map(r => ({
+                    name: r.dataset.fileName || '',
+                    type: r.querySelector('td:nth-child(2)')?.textContent || '',
+                    dimmed: r.classList.contains('gm-disk-row-dimmed')
+                }));
+        });
 
-        expect(shown).toContain('VALID /SNG');
-        expect(shown).not.toContain('SHORT');
-        expect(shown).not.toContain('FOOBAR/TXT');
-        expect(shown).not.toContain('AB/SPR');
+        // Every seeded file is visible now — nothing hidden.
+        const names = listing.map(r => r.name);
+        expect(names).toContain('VALID /SNG');
+        expect(names).toContain('SHORT');
+        expect(names).toContain('FOOBAR/TXT');
+        expect(names).toContain('AB/SPR');
+
+        // Non-GM entries are dimmed and labeled "non-GameMaker".
+        for (const badName of ['SHORT', 'FOOBAR/TXT', 'AB/SPR']) {
+            const row = listing.find(r => r.name === badName);
+            expect(row.type).toBe('non-GameMaker');
+            expect(row.dimmed).toBe(true);
+        }
+
+        // Non-GM group sits below the valid GM file in the listing order.
+        const validIdx = names.indexOf('VALID /SNG');
+        for (const badName of ['SHORT', 'FOOBAR/TXT', 'AB/SPR']) {
+            expect(names.indexOf(badName)).toBeGreaterThan(validIdx);
+        }
         await page.close();
     });
 });
