@@ -18,6 +18,9 @@ Lives on the `native-compiler` branch, kept off `main` so the GMC64 platform
 | `show-scene.mjs` | Stage 1 of scene support: parses a GKGM `.PIC` via `gmScene` and emits a native program that displays it as a C64 multicolor bitmap. The `.PIC` raw bytes are already in VIC bitmap order, so they embed straight at `$2000` (bundled into the program, like a GKGM standalone — no runtime disk load). |
 | `show-sprite.mjs` | Stage 2a: displays a GKGM `.SPR` as a real VIC-II hardware sprite over a scene. `.SPR` frames are native C64 sprite data (24×21, 63 bytes); colors map gmColor1→`$D027` (unique), gmColor2→`$D025`, gmColor3→`$D026`. Handles multicolor + hi-res. |
 | `show-sprite-move.mjs` | Stage 2b: adds per-frame movement — 8.8 fixed-point position, signed 16-bit velocity from GKGM's speed formula (X: speed/46, Y: speed/31.5 px/frame), frame-synced, bouncing off edges. |
+| `build-shooter.mjs` | Stage 3 integration demo ("archer"): scene + 6 sprites (player ship, 4 aliens, laser), joystick-2 8-way movement + button-fire, no collision/sound. `live` mode reads `$DC00`; `attract` mode scripts input for headless verification. |
+
+**C64 gotcha (cost me a debugging round):** sprite/bitmap data must NOT sit at `$1000-$1FFF` (or `$9000-$9FFF`) in VIC banks 0/2 — the VIC sees the character ROM there regardless of CPU banking, so your data renders as ROM glyphs. Put sprite data after the bitmap (`$3F40+`) or below `$1000`.
 | `stars.asm` | Hand-written reference reimplementation of GKGM's STARS parallax starfield (multicolor bitmap, table-driven plot). |
 | `starsbench.asm` | STARS + raster-IRQ frame tick + on-screen "updates/frame" readout (bitmap decimal printer). |
 | `stars30.asm` / `starsbench10.asm` | 30-star (10/layer) variants. |
