@@ -1,16 +1,17 @@
 // build-shooter.mjs — stage 3 integration demo ("archer"): scene + multiple
-// sprites + joystick control + shooting. No collision/sound (yet).
+// sprites + joystick control + shooting + sprite animation. No collision/sound.
 //
-// Puts the pieces together: loads a GKGM .PIC background, positions a player
-// ship (multicolor sprite, VIC slot 0) you move 8-way with the joystick, 4
-// static aliens (slots 2-5), and a laser (slot 1) fired upward with the button.
+// Loads a GKGM .PIC background, positions a player ship (multicolor, VIC slot 0)
+// you move 8-way with the joystick, 4 animated aliens (slots 2-5, cycling all 8
+// frames), and a laser (slot 1) fired upward with the button.
 //
-// Joystick 2 ($DC00), active-low: bit0 up, 1 down, 2 left, 3 right, 4 fire.
+// Joystick 1 ($DC01), active-low: bit0 up, 1 down, 2 left, 3 right, 4 fire.
+// (GKGM uses joystick port 1.)
 //
-// mode:
-//   live    — reads $DC00 (play it yourself)
-//   attract — scripted input (right+fire held) so it's verifiable headless
+// Sprite data lives at $0C00 (below the $1000-$1FFF char-ROM shadow):
+//   $0C00 ship (ptr 48), $0C40 laser (49), $0C80-$0E7F alien frames 0-7 (50-57).
 //
+// mode: live (reads $DC01) | attract (scripted right+fire for headless verify)
 // Usage: node build-shooter.mjs <disk.d64> <SCENE/PIC> <out.prg> [live|attract]
 
 import { readFileSync, writeFileSync } from 'fs';
@@ -35,7 +36,9 @@ const laser = new globalThis.gmSprite(disk.readFile('LASER /SPR'));
 const alien = new globalThis.gmSprite(disk.readFile('ALIEN /SPR'));
 const shipData  = Array.from(ship.sprite[0].imageData[0].slice(0, 64));
 const laserData = Array.from(laser.sprite[0].imageData[0].slice(0, 64));
-const alienData = Array.from(alien.sprite[0].imageData[0].slice(0, 64));
+const nAlien = alien.sprite[0].totalFrames;                       // 8
+const alienFrames = [];
+for (let i = 0; i < nAlien; i++) alienFrames.push(...Array.from(alien.sprite[0].imageData[i].slice(0, 64)));
 
 const byteRows = arr => {
   const out = [];
@@ -43,14 +46,13 @@ const byteRows = arr => {
   return out.join('\n');
 };
 
-// input: live reads $DC00; attract feeds a constant "right + fire" value ($E7)
 const readInput = mode === 'attract'
   ? `        lda #$e7
         sta joy                 ; attract: hold right + fire`
-  : `        lda $dc00
-        sta joy                 ; joystick 2`;
+  : `        lda $dc01
+        sta joy                 ; joystick 1 (GKGM's port)`;
 
-console.log(`shooter (${mode}) over "${scene.name}"  ship=mc laser/alien=hires`);
+console.log(`shooter (${mode}) over "${scene.name}"  ${nAlien}-frame alien anim, joystick ${mode==='attract'?'scripted':'1'}`);
 
 const asm = `; auto-generated shooter demo by build-shooter.mjs (${mode})
 shipX  = $10
@@ -59,11 +61,14 @@ laserX = $12
 laserY = $13
 lactive = $14
 joy    = $15
+animtmr = $16
+animidx = $17
 SHIPCOL = ${ship.sprite[0]._gmColor1}
 SHIPC2  = ${ship.sprite[0]._gmColor2}
 SHIPC3  = ${ship.sprite[0]._gmColor3}
 LASCOL  = ${laser.sprite[0]._gmColor1}
 ALICOL  = ${alien.sprite[0]._gmColor1}
+ALIBASE = 50                     ; alien frame 0 sprite pointer ($0C80/64)
 
         * = $0801
         !byte $0c,$08, $0a,$00, $9e, $32,$30,$36,$31, $00, $00,$00
@@ -101,14 +106,13 @@ cfill:  sta $d800,x
         inx
         bne cfill
 
-        ; --- sprite pointers: ship=$3F40, laser=$3F80, alien=$3FC0 ---
-        ; (data lives after the bitmap; $1000-$1FFF is the char-ROM shadow)
-        lda #$fd
-        sta $07f8               ; slot 0 = ship
-        lda #$fe
-        sta $07f9               ; slot 1 = laser
-        lda #$ff
-        sta $07fa               ; slots 2-5 = alien
+        ; --- sprite pointers ---
+        lda #48
+        sta $07f8               ; slot 0 = ship ($0C00)
+        lda #49
+        sta $07f9               ; slot 1 = laser ($0C40)
+        lda #ALIBASE
+        sta $07fa               ; slots 2-5 = alien frame 0 ($0C80)
         sta $07fb
         sta $07fc
         sta $07fd
@@ -124,18 +128,18 @@ cfill:  sta $d800,x
         sta $d02b
         sta $d02c
         lda #$01
-        sta $d01c               ; only ship (slot 0) is multicolor
+        sta $d01c               ; only ship (slot 0) multicolor
         lda #SHIPC2
-        sta $d025               ; shared mc0
+        sta $d025
         lda #SHIPC3
-        sta $d026               ; shared mc1
+        sta $d026
         lda #$00
-        sta $d010               ; all X < 256
+        sta $d010
         sta $d017
-        sta $d01d               ; no expansion
+        sta $d01d
 
-        ; --- alien positions (static, across the top) ---
-        lda #70
+        ; --- alien positions (row across the top, clear of scene text) ---
+        lda #90
         sta $d005
         sta $d007
         sta $d009
@@ -149,25 +153,48 @@ cfill:  sta $d800,x
         lda #210
         sta $d00a
 
-        ; --- ship start + laser off ---
         lda #170
         sta shipX
         lda #200
         sta shipY
         lda #$00
         sta lactive
+        sta animtmr
+        sta animidx
 
         lda #$3d
-        sta $d015               ; enable ship (0) + aliens (2-5)
+        sta $d015               ; enable ship + aliens
 
 main:
 wf:     lda $d012
         cmp #250
         bne wf
 
+        ; --- alien animation (advance frame every 8 ticks) ---
+        inc animtmr
+        lda animtmr
+        cmp #8
+        bcc noanim
+        lda #$00
+        sta animtmr
+        lda animidx
+        clc
+        adc #1
+        cmp #${nAlien}
+        bcc animok
+        lda #$00
+animok: sta animidx
+        clc
+        adc #ALIBASE
+        sta $07fa
+        sta $07fb
+        sta $07fc
+        sta $07fd
+noanim:
+
 ${readInput}
 
-        ; --- movement (speed 3, active-low bits) ---
+        ; --- movement (speed 3, active-low) ---
         lda joy
         and #$01
         bne notup
@@ -205,7 +232,7 @@ notlf:  lda joy
         bcs notrt
         sta shipX
 notrt:
-        ; --- fire (activate laser if idle) ---
+        ; --- fire ---
         lda joy
         and #$10
         bne nofire
@@ -221,7 +248,7 @@ notrt:
         sta laserY
         lda $d015
         ora #$02
-        sta $d015               ; enable laser sprite
+        sta $d015
 nofire:
         ; --- laser flight ---
         lda lactive
@@ -231,12 +258,12 @@ nofire:
         sbc #5
         sta laserY
         cmp #52
-        bcs laserfly            ; still on screen
+        bcs laserfly
         lda #$00
         sta lactive
         lda $d015
         and #$fd
-        sta $d015               ; retire laser
+        sta $d015
         jmp laserdone
 laserfly:
         lda laserX
@@ -244,19 +271,19 @@ laserfly:
         lda laserY
         sta $d003
 laserdone:
-        ; --- write ship position ---
         lda shipX
         sta $d000
         lda shipY
         sta $d001
         jmp main
 
-        * = $2000
-${byteRows(bitmap)}
-        ; sprite data follows the 8000-byte bitmap at $3F40 / $3F80 / $3FC0
+        * = $0c00
 ${byteRows(shipData)}
 ${byteRows(laserData)}
-${byteRows(alienData)}
+${byteRows(alienFrames)}
+
+        * = $2000
+${byteRows(bitmap)}
 `;
 
 writeFileSync(outPath.replace(/\.prg$/, '.asm'), asm);
