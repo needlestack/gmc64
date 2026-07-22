@@ -34,11 +34,15 @@ const screenByte = (((scene.color1 & 0xf) << 4) | (scene.color2 & 0xf));
 const ship  = new globalThis.gmSprite(disk.readFile('SHIP  /SPR'));
 const laser = new globalThis.gmSprite(disk.readFile('LASER /SPR'));
 const alien = new globalThis.gmSprite(disk.readFile('ALIEN /SPR'));
-const shipData  = Array.from(ship.sprite[0].imageData[0].slice(0, 64));
-const laserData = Array.from(laser.sprite[0].imageData[0].slice(0, 64));
+// Pad each frame to exactly 64 bytes: GKGM's LAST/only frame is 63 bytes (no
+// trailing pad), which would push every following sprite's data 1 byte out of
+// its 64-byte alignment and cyclically shift it. See CLAUDE.md .SPR notes.
+const pad64 = a => { const r = Array.from(a).slice(0, 64); while (r.length < 64) r.push(0); return r; };
+const shipData  = pad64(ship.sprite[0].imageData[0]);
+const laserData = pad64(laser.sprite[0].imageData[0]);
 const nAlien = alien.sprite[0].totalFrames;                       // 8
 const alienFrames = [];
-for (let i = 0; i < nAlien; i++) alienFrames.push(...Array.from(alien.sprite[0].imageData[i].slice(0, 64)));
+for (let i = 0; i < nAlien; i++) alienFrames.push(...pad64(alien.sprite[0].imageData[i]));
 
 const byteRows = arr => {
   const out = [];
