@@ -51,8 +51,8 @@ const byteRows = arr => {
 };
 
 const readInput = mode === 'attract'
-  ? `        lda #$e7
-        sta joy                 ; attract: hold right + fire`
+  ? `        lda #$eb
+        sta joy                 ; attract: hold left + fire (sweeps the aliens)`
   : `        lda $dc01
         sta joy                 ; joystick 1 (GKGM's port)`;
 
@@ -67,6 +67,8 @@ lactive = $14
 joy    = $15
 animtmr = $16
 animidx = $17
+coll   = $18
+tmp    = $19
 SHIPCOL = ${ship.sprite[0]._gmColor1}
 SHIPC2  = ${ship.sprite[0]._gmColor2}
 SHIPC3  = ${ship.sprite[0]._gmColor3}
@@ -173,6 +175,36 @@ main:
 wf:     lda $d012
         cmp #250
         bne wf
+
+        ; --- hardware sprite collision ($d01e, cleared on read) ---
+        lda $d01e
+        sta coll
+        lda lactive
+        beq nocoll
+        lda coll
+        and #$02
+        beq nocoll              ; laser (bit1) not in a collision
+        lda coll
+        and #$3c                ; alien bits (slots 2-5) it hit
+        beq nocoll
+        eor #$ff
+        sta tmp
+        lda $d015
+        and tmp
+        sta $d015               ; kill the hit alien(s)
+        lda #$00
+        sta lactive
+        lda $d015
+        and #$fd
+        sta $d015               ; retire the laser
+nocoll:
+        lda $d015
+        and #$3c
+        bne havealiens
+        lda $d015
+        ora #$3c
+        sta $d015               ; all cleared -> respawn the wave
+havealiens:
 
         ; --- alien animation (advance frame every 8 ticks) ---
         inc animtmr
