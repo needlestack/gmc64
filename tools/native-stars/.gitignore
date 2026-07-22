@@ -1,2 +1,5 @@
 *.png
 scene_*.asm
+sprite_*.asm
+spr_*.asm
+move_*.asm

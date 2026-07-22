@@ -16,6 +16,8 @@ Lives on the `native-compiler` branch, kept off `main` so the GMC64 platform
 | `../asm6502.mjs` | Dependency-free JS 6502 assembler (full official opcode set, 2-pass labels, expr eval, `!byte`/`!word`/`!fill`). The seed of the compiler's codegen backend. |
 | `compile-stars.mjs` | The compiler: parses a GKGM `.PRG` via `gmParser` → AST, emits 6502 (one template per opcode) against a reusable runtime lib, assembles → `.prg`. |
 | `show-scene.mjs` | Stage 1 of scene support: parses a GKGM `.PIC` via `gmScene` and emits a native program that displays it as a C64 multicolor bitmap. The `.PIC` raw bytes are already in VIC bitmap order, so they embed straight at `$2000` (bundled into the program, like a GKGM standalone — no runtime disk load). |
+| `show-sprite.mjs` | Stage 2a: displays a GKGM `.SPR` as a real VIC-II hardware sprite over a scene. `.SPR` frames are native C64 sprite data (24×21, 63 bytes); colors map gmColor1→`$D027` (unique), gmColor2→`$D025`, gmColor3→`$D026`. Handles multicolor + hi-res. |
+| `show-sprite-move.mjs` | Stage 2b: adds per-frame movement — 8.8 fixed-point position, signed 16-bit velocity from GKGM's speed formula (X: speed/46, Y: speed/31.5 px/frame), frame-synced, bouncing off edges. |
 | `stars.asm` | Hand-written reference reimplementation of GKGM's STARS parallax starfield (multicolor bitmap, table-driven plot). |
 | `starsbench.asm` | STARS + raster-IRQ frame tick + on-screen "updates/frame" readout (bitmap decimal printer). |
 | `stars30.asm` / `starsbench10.asm` | 30-star (10/layer) variants. |
