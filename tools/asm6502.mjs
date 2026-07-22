@@ -229,7 +229,14 @@ export function assemble(source, opts = {}) {
   const emit = (b) => { out.push(b & 0xFF); cur++; };
 
   for (const s of sized) {
-    if (s.kind === 'org') { cur = s.pc; continue; }
+    if (s.kind === 'org') {
+      // forward origin jump pads the contiguous output with zeros so the
+      // load image stays gap-free (e.g. code at $0801, bitmap at $2000)
+      if (s.pc < cur)
+        throw new Error(`* = $${s.pc.toString(16)} moves backward from $${cur.toString(16)} (overlapping output not supported)`);
+      while (cur < s.pc) { out.push(0); cur++; }
+      continue;
+    }
     if (s.kind === 'equ' || s.kind === 'none') continue;
     if (s.kind === 'data') {
       const start = cur;
