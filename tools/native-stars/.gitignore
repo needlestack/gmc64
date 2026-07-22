@@ -5,3 +5,6 @@ spr_*.asm
 move_*.asm
 shooter_*.asm
 archer.asm
+archer_native.asm
+archer_dbg.asm
+ytest.asm

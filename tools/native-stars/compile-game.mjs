@@ -1,0 +1,486 @@
+// compile-game.mjs — GKGM program -> native C64 6502 (the real thing).
+//
+// Compiles a full GKGM game (ARCHER) to a standalone .prg: scene background,
+// hardware sprites with GKGM speed/direction movement + animation, joystick,
+// button, sprite-sprite collision, and score. Sound opcodes are no-ops for now.
+//
+// Uses VIC bank 1 ($4000-$7FFF): screen $4000, sprite frames $4400+, bitmap
+// $6000 — no char-ROM shadow to dodge, plenty of room. Coordinates: VIC_X =
+// 2*gmX (9th bit when gmX>=128), VIC_Y = gmY (verified from gmRuntime).
+//
+// Usage: node compile-game.mjs <disk.d64> <NAME/PRG> <out.prg>
+
+import { readFileSync, writeFileSync } from 'fs';
+import { assemble } from '../asm6502.mjs';
+
+const B = '/Users/jfield/GMC64/code/js/';
+for (const m of ['d64lib','c64lib','gmOpcodes','gmSprite','gmScene','gmSound','gmMusic','gmCharset','gmParser'])
+  await import(B + m + '.js');
+globalThis.charset = new globalThis.gmCharset();
+globalThis.decode16bit = (lo, hi) => lo + (hi << 8);
+
+const [,, diskPath, prgName, outPath] = process.argv;
+const disk = new globalThis.D64(new Uint8Array(readFileSync(diskPath)));
+globalThis.loadFileByName = (name) => disk.readFile(name);
+const pd = globalThis.parseProgramData(disk.readFile(prgName));
+const ins = pd.instructions;
+
+// ---- bundle media ----
+let scene = null;
+const spriteMeta = {};   // mediaIndex -> {base, num, mc, c1, c2, c3}
+const frameBytes = [];   // concatenated 64-byte frames
+const pad64 = a => { const r = Array.from(a).slice(0, 64); while (r.length < 64) r.push(0); return r; };
+for (const [i, m] of pd.mediaStore.entries()) {
+  if (!m) continue;
+  if (m.type === 'scene') scene = m.scene;
+  else if (m.type === 'sprite') {
+    const h = m.sprite.sprite[0];
+    const base = frameBytes.length / 64;
+    for (let f = 0; f < h.totalFrames; f++) frameBytes.push(...pad64(m.sprite.sprite[0].imageData[f]));
+    spriteMeta[i] = { base, num: h.totalFrames, mc: h.isMultiColor ? 1 : 0, c1: h._gmColor1, c2: h._gmColor2, c3: h._gmColor3 };
+  }
+}
+const bitmap = scene.rawImageData;
+const screenByte = (((scene.color1 & 0xf) << 4) | (scene.color2 & 0xf));
+
+// ---- movement magnitude tables (8.8 fixed): speed/46 (X), speed/31.5 (Y) ----
+const xmagLo = [], xmagHi = [], ymagLo = [], ymagHi = [];
+for (let s = 0; s < 256; s++) {
+  const xv = Math.round((s / 46) * 256), yv = Math.round((s / 31.5) * 256);
+  xmagLo.push(xv & 0xff); xmagHi.push((xv >> 8) & 0xff);
+  ymagLo.push(yv & 0xff); ymagHi.push((yv >> 8) & 0xff);
+}
+
+// ---- codegen ----
+const L = [];
+const c = s => L.push(s);
+let uid = 0;
+const ifStack = [];
+const V = n => '$' + (0x40 + (n - 1)).toString(16);   // GKGM var n -> ZP
+const slotAddr = (arr, gmSlot) => `${arr}+${gmSlot - 1}`; // GKGM sprite 1..8 -> vic slot 0..7
+
+// score threshold parse from instructionName (e.g. "if score1 > 002000 then")
+const numFrom = s => { const m = (s || '').match(/(\d{3,})/); return m ? parseInt(m[1], 10) : 0; };
+
+const INV = { bne: 'beq', beq: 'bne', bcc: 'bcs', bcs: 'bcc' };
+function fbr(cc, target) {           // far branch: take `cc` to target, any distance
+  const s = `fb_${++uid}`;
+  c(`  ${INV[cc]} ${s}`); c(`  jmp ${target}`); c(`${s}:`);
+}
+function emitIfHead(op) {
+  // emits condition; branch to elseL when the condition is FALSE
+  const n = ++uid, elseL = `else_${n}`, endL = `end_${n}`;
+  ifStack.push({ elseL, endL, hasElse: false });
+  const a1 = op.arg1, a2 = op.arg2;
+  switch (op.opcode) {
+    case 0x13: c(`  lda ${V(a1)}`); c(`  cmp #${a2}`); fbr('bne', elseL); break;         // if var = const
+    case 0x15: c(`  lda ${V(a1)}`); c(`  cmp #${a2 + 1}`); fbr('bcc', elseL); break;      // if var > const
+    case 0x17: c(`  lda ${V(a1)}`); c(`  cmp #${a2}`); fbr('bcs', elseL); break;          // if var < const
+    case 0x19: {                                                                          // if joystick N is dir
+      const port = a1 === 0 ? '$dc01' : '$dc00';   // GKGM joystick/button N is 0-based: js2->port2($dc00)
+      if (a2 === 4) { c(`  lda ${port}`); c(`  and #$0f`); c(`  cmp #$0f`); fbr('bne', elseL); }
+      else { c(`  lda ${port}`); c(`  and #${1 << a2}`); fbr('bne', elseL); }
+      break;
+    }
+    case 0x1a: {                                                                          // if button N is on/off
+      const port = a1 === 0 ? '$dc01' : '$dc00';   // GKGM joystick/button N is 0-based: js2->port2($dc00)
+      c(`  lda ${port}`); c(`  and #$10`);
+      if (a2 === 0 || /is on/.test(op.instructionName)) fbr('bne', elseL);   // "on" => bit clear
+      else fbr('beq', elseL);
+      break;
+    }
+    case 0x1b: {                                                                          // if sprite A hit sprite B
+      const A = a1, Bx = a2;
+      c(`  lda sPosXhi+${A}`); c(`  sec`); c(`  sbc sPosXhi+${Bx}`); c(`  bpl xp_${n}`);
+      c(`  eor #$ff`); c(`  clc`); c(`  adc #1`); c(`xp_${n}:`); c(`  cmp #12`); fbr('bcs', elseL);
+      c(`  lda sPosYhi+${A}`); c(`  sec`); c(`  sbc sPosYhi+${Bx}`); c(`  bpl yp_${n}`);
+      c(`  eor #$ff`); c(`  clc`); c(`  adc #1`); c(`yp_${n}:`); c(`  cmp #21`); fbr('bcs', elseL);
+      break;
+    }
+    case 0x4a: {                                                                          // if score1 > N
+      const N = numFrom(op.instructionName);
+      c(`  lda scoreHi`); c(`  cmp #>${N + 1}`); fbr('bcc', elseL); c(`  bne sk_${n}`);
+      c(`  lda scoreLo`); c(`  cmp #<${N + 1}`); fbr('bcc', elseL); c(`sk_${n}:`);
+      break;
+    }
+    default: throw new Error(`if-head: unhandled opcode 0x${op.opcode.toString(16)}`);
+  }
+}
+
+function emitOp(op) {
+  const a1 = op.arg1, a2 = op.arg2;
+  switch (op.opcode) {
+    case 0x2b: case 0x28: case 0x60: case 0x40: case 0x41: break;     // comment / scene(init) / sound: no-op
+    case 0x07: c(`  lda #${a2}`); c(`  sta ${V(a1)}`); break;
+    case 0x01: c(`  jmp LBL_${a2}`); break;
+    case 0x27: {                                                       // sprite N is <media>
+      const s = a1, meta = spriteMeta[a2];
+      c(`  lda #${meta.base}`); c(`  sta sBase+${s}`);
+      c(`  lda #${meta.num}`); c(`  sta sNum+${s}`);
+      c(`  lda #$00`); c(`  sta sFrame+${s}`); c(`  sta sPosXlo+${s}`); c(`  sta sPosYlo+${s}`);
+      c(`  sta sSpeed+${s}`); c(`  sta sDir+${s}`); c(`  sta sAnimSpd+${s}`);
+      c(`  lda #${meta.c1}`); c(`  sta $d027+${s}`);
+      if (meta.mc) { c(`  lda $d01c`); c(`  ora #${1 << s}`); c(`  sta $d01c`);
+                     c(`  lda #${meta.c2}`); c(`  sta $d025`); c(`  lda #${meta.c3}`); c(`  sta $d026`); }
+      else { c(`  lda $d01c`); c(`  and #${(~(1 << s)) & 0xff}`); c(`  sta $d01c`); }
+      c(`  lda $d015`); c(`  ora #${1 << s}`); c(`  sta $d015`);
+      break;
+    }
+    case 0x1f: c(`  lda #${a2}`); c(`  sta sPosXhi+${a1}`); c(`  lda #0`); c(`  sta sPosXlo+${a1}`); break;
+    case 0x21: c(`  lda #${a2}`); c(`  sta sPosYhi+${a1}`); c(`  lda #0`); c(`  sta sPosYlo+${a1}`); break;
+    case 0x20: c(`  lda ${V(a2)}`); c(`  sta sPosXhi+${a1}`); c(`  lda #0`); c(`  sta sPosXlo+${a1}`); break;
+    case 0x22: c(`  lda ${V(a2)}`); c(`  sta sPosYhi+${a1}`); c(`  lda #0`); c(`  sta sPosYlo+${a1}`); break;
+    case 0x2c: c(`  lda sPosXhi+${a2}`); c(`  sta ${V(a1)}`); break;   // set var = sprite x
+    case 0x2d: c(`  lda sPosYhi+${a2}`); c(`  sta ${V(a1)}`); break;   // set var = sprite y
+    case 0x25: c(`  lda #${a2}`); c(`  sta sSpeed+${a1}`); break;      // movement speed
+    case 0x23: c(`  lda #${a2}`); c(`  sta sDir+${a1}`); break;        // direction
+    case 0x29: c(`  lda #${a2}`); c(`  sta sAnimSpd+${a1}`);
+               c(`  lda #0`); c(`  sta sAnimTmr+${a1}`); break;        // animation speed
+    case 0x44: { const N = numFrom(op.instructionName);                   // add N to score
+      c(`  clc`); c(`  lda scoreLo`); c(`  adc #<${N}`); c(`  sta scoreLo`);
+      c(`  lda scoreHi`); c(`  adc #>${N}`); c(`  sta scoreHi`); c(`  jsr score_show`); break; }
+    case 0x48: c(`  lda #0`); c(`  sta scoreLo`); c(`  sta scoreHi`); c(`  jsr score_show`); break;  // clear score
+    case 0x46: case 0x42: break;                                          // score pos/color: fixed at compile time
+    case 0x57: c(`  jsr pause_${++uid}`); pauseStubs.push(uid); {         // pause (frames) — approximate seconds
+      const secs = Math.max(1, Math.round(numFrom(op.instructionName + '000') / 10) || 1); pauseSecs.push(secs); }
+      break;
+    // if-family handled by the driver loop
+    default: throw new Error(`emitOp: unhandled opcode 0x${op.opcode.toString(16)} (${op.instructionName})`);
+  }
+}
+
+const IF_OPS = new Set([0x13, 0x15, 0x17, 0x19, 0x1a, 0x1b, 0x4a]);
+const pauseStubs = [], pauseSecs = [];
+
+// loop heads = labels that are targets of a backward jump; one frame tick per pass
+const labelIndex = {};
+ins.forEach((op, i) => { if (op.label) labelIndex[op.label] = i; });
+const loopHeads = new Set();
+ins.forEach((op, i) => { if (op.opcode === 0x01 && labelIndex[op.arg2] !== undefined && labelIndex[op.arg2] <= i) loopHeads.add(op.arg2); });
+
+for (const op of ins) {
+  if (op.label) { c(`LBL_${op.label}:`); if (loopHeads.has(op.label)) c(`  jsr frame`); }
+  if (IF_OPS.has(op.opcode)) { emitIfHead(op); continue; }
+  if (op.opcode === 0x54) {                                    // otherwise
+    const f = ifStack[ifStack.length - 1]; f.hasElse = true;
+    c(`  jmp ${f.endL}`); c(`${f.elseL}:`); continue;
+  }
+  if (op.opcode === 0x55) {                                    // endif
+    const f = ifStack.pop(); c(`${f.hasElse ? f.endL : f.elseL}:`); continue;
+  }
+  emitOp(op);
+}
+const codeBody = L.join('\n');
+
+// pause subroutines (each waits secs*~50 frames, running the frame update)
+const pauseSubs = pauseStubs.map((id, k) => {
+  const frames = pauseSecs[k] * 50;
+  return `pause_${id}:
+        lda #<${frames}
+        sta pcl
+        lda #>${frames}
+        sta pch
+pl_${id}: jsr frame
+        lda pcl
+        bne pd_${id}
+        lda pch
+        beq px_${id}
+        dec pch
+pd_${id}: dec pcl
+        jmp pl_${id}
+px_${id}: rts`;
+}).join('\n');
+
+const byteRows = arr => {
+  const out = [];
+  for (let i = 0; i < arr.length; i += 32) out.push('        !byte ' + Array.from(arr.slice(i, i + 32)).join(','));
+  return out.join('\n');
+};
+
+// digit font (8x8) for score, reused from starsbench
+const digitfont = [
+  0x3c,0x66,0x6e,0x76,0x66,0x66,0x3c,0, 0x18,0x38,0x18,0x18,0x18,0x18,0x7e,0,
+  0x3c,0x66,0x06,0x0c,0x30,0x60,0x7e,0, 0x3c,0x66,0x06,0x1c,0x06,0x66,0x3c,0,
+  0x06,0x0e,0x1e,0x66,0x7f,0x06,0x06,0, 0x7e,0x60,0x7c,0x06,0x06,0x66,0x3c,0,
+  0x3c,0x66,0x60,0x7c,0x66,0x66,0x3c,0, 0x7e,0x66,0x0c,0x18,0x18,0x18,0x18,0,
+  0x3c,0x66,0x66,0x3c,0x66,0x66,0x3c,0, 0x3c,0x66,0x66,0x3e,0x06,0x66,0x3c,0];
+
+console.log(`compiling ${prgName}: ${ins.length} instrs, ${Object.keys(spriteMeta).length} sprites (${frameBytes.length/64} frames), scene "${scene.name}"`);
+
+const asm = `; auto-generated from ${prgName} by compile-game.mjs
+SCREEN = $4000
+BITMAP = $6000
+; --- zero page ---
+ptr    = $fb
+pcl    = $f0
+pch    = $f1
+sval   = $f2
+sval1  = $f3
+dcol   = $f4
+tmp    = $f5
+fptr   = $f6
+; --- slot state arrays (8 slots) in RAM ---
+sBase    = $c000
+sNum     = $c008
+sFrame   = $c010
+sAnimTmr = $c018
+sAnimSpd = $c020
+sSpeed   = $c028
+sDir     = $c030
+sPosXlo  = $c038
+sPosXhi  = $c040
+sPosYlo  = $c048
+sPosYhi  = $c050
+scoreLo  = $c060
+scoreHi  = $c061
+
+        * = $0801
+        !byte $0c,$08, $0a,$00, $9e, $32,$30,$36,$31, $00, $00,$00
+entry:
+        sei
+        lda #$00
+        sta $d01a
+        lda $dd00
+        and #$fc
+        ora #$02
+        sta $dd00               ; VIC bank 1 ($4000-$7FFF)
+        lda #$3b
+        sta $d011
+        lda #$18
+        sta $d016
+        lda #$08
+        sta $d018               ; screen $4000, bitmap $6000
+        lda #${scene.bgColor}
+        sta $d021
+        sta $d020
+        lda #$${screenByte.toString(16).padStart(2,'0')}
+        ldx #$00
+sfill:  sta SCREEN,x
+        sta SCREEN+$100,x
+        sta SCREEN+$200,x
+        sta SCREEN+$300,x
+        inx
+        bne sfill
+        lda #${scene.color3}
+        ldx #$00
+cfill:  sta $d800,x
+        sta $d900,x
+        sta $da00,x
+        sta $db00,x
+        inx
+        bne cfill
+        ; init slots: base=$ff (unassigned)
+        ldx #$00
+islot:  lda #$ff
+        sta sBase,x
+        lda #$00
+        sta sSpeed,x
+        sta sAnimSpd,x
+        inx
+        cpx #8
+        bne islot
+        lda #$00
+        sta $d015
+        sta $d01c
+        sta $d010
+        sta $d017
+        sta $d01d
+        sta $d01b               ; all sprites in front of the bitmap
+        sta scoreLo
+        sta scoreHi
+
+${codeBody}
+
+; ===================== runtime =====================
+; frame: wait for raster, then move+animate+draw every assigned sprite
+frame:
+fw:     lda $d012
+        cmp #250
+        bne fw
+        ldx #$00
+fsl:    lda sBase,x
+        cmp #$ff
+        bne fp0
+        jmp fnext
+fp0:    ; --- movement (speed>0) ---
+        ldy sSpeed,x
+        bne fp1
+        jmp fnomove
+fp1:    lda sDir,x
+        cmp #64
+        beq fright
+        cmp #192
+        beq fleft
+        cmp #0
+        beq fup
+        cmp #128
+        beq fdown
+        jmp fnomove
+fup:    sec
+        lda sPosYlo,x
+        sbc ymagLo,y
+        sta sPosYlo,x
+        lda sPosYhi,x
+        sbc ymagHi,y
+        sta sPosYhi,x
+        jmp fnomove
+fdown:  clc
+        lda sPosYlo,x
+        adc ymagLo,y
+        sta sPosYlo,x
+        lda sPosYhi,x
+        adc ymagHi,y
+        sta sPosYhi,x
+        jmp fnomove
+fright: clc
+        lda sPosXlo,x
+        adc xmagLo,y
+        sta sPosXlo,x
+        lda sPosXhi,x
+        adc xmagHi,y
+        sta sPosXhi,x
+        jmp fnomove
+fleft:  sec
+        lda sPosXlo,x
+        sbc xmagLo,y
+        sta sPosXlo,x
+        lda sPosXhi,x
+        sbc xmagHi,y
+        sta sPosXhi,x
+fnomove:
+        ; --- animation (animspd>0) ---
+        lda sAnimSpd,x
+        bne fp2
+        jmp fdraw
+fp2:    lda sAnimTmr,x
+        beq fadv
+        dec sAnimTmr,x
+        jmp fdraw
+fadv:   lda sFrame,x
+        clc
+        adc #1
+        cmp sNum,x
+        bcc fsf
+        lda #0
+fsf:    sta sFrame,x
+        lda #32
+        sec
+        sbc sAnimSpd,x
+        sta sAnimTmr,x
+fdraw:
+        ; --- write VIC regs ---
+        txa
+        asl
+        tay                     ; y = 2*slot
+        lda sPosXhi,x
+        asl                     ; A = low(2*gmX), C = 9th bit
+        sta $d000,y
+        bcc fxl
+        lda $d010
+        ora bit8,x
+        sta $d010
+        jmp fxd
+fxl:    lda $d010
+        and bit8i,x
+        sta $d010
+fxd:    lda sPosYhi,x
+        sta $d001,y
+        lda #16
+        clc
+        adc sBase,x
+        adc sFrame,x
+        sta $43f8,x
+fnext:  inx
+        cpx #8
+        beq fret
+        jmp fsl
+fret:   rts
+
+; score_show: print scoreLo/Hi as 5 decimal digits at bitmap cell (col 7, row 1)
+SCOREBASE = BITMAP + 376        ; $6000 + 1*320 + 7*8
+score_show:
+        lda scoreLo
+        sta sval
+        lda scoreHi
+        sta sval1
+        lda #0
+        sta dcol
+ss_lp:  lda #0
+        sta tmp
+        ldx dcol
+ss_sub: lda sval1
+        cmp powhi,x
+        bcc ss_done
+        bne ss_do
+        lda sval
+        cmp powlo,x
+        bcc ss_done
+ss_do:  sec
+        lda sval
+        sbc powlo,x
+        sta sval
+        lda sval1
+        sbc powhi,x
+        sta sval1
+        inc tmp
+        ldx dcol
+        jmp ss_sub
+ss_done:
+        lda dcol                ; dest = SCOREBASE + dcol*8
+        asl
+        asl
+        asl
+        clc
+        adc #<SCOREBASE
+        sta ptr
+        lda #>SCOREBASE
+        adc #0
+        sta ptr+1
+        lda tmp                 ; font src = digfont + digit*8
+        asl
+        asl
+        asl
+        clc
+        adc #<digfont
+        sta fptr
+        lda #0
+        adc #>digfont
+        sta fptr+1
+        ldy #0
+sd_row: lda (fptr),y
+        sta (ptr),y
+        iny
+        cpy #8
+        bne sd_row
+        inc dcol
+        lda dcol
+        cmp #5
+        bne ss_lp
+        rts
+
+${pauseSubs}
+
+; ---- data ----
+bit8:   !byte 1,2,4,8,16,32,64,128
+bit8i:  !byte 254,253,251,247,239,223,191,127
+powlo:  !byte <10000,<1000,<100,<10,<1
+powhi:  !byte >10000,>1000,>100,>10,>1
+digfont:
+${byteRows(digitfont)}
+xmagLo: !byte ${xmagLo.join(',')}
+xmagHi: !byte ${xmagHi.join(',')}
+ymagLo: !byte ${ymagLo.join(',')}
+ymagHi: !byte ${ymagHi.join(',')}
+
+        * = SCREEN
+        !fill $400
+        * = $4400
+${byteRows(frameBytes)}
+        * = BITMAP
+${byteRows(bitmap)}
+`;
+
+writeFileSync(outPath.replace(/\.prg$/, '.asm'), asm);
+const r = assemble(asm);
+writeFileSync(outPath, Buffer.from(r.prg));
+console.log(`  -> ${outPath}  (${r.bytes.length} bytes, org=$${r.org.toString(16)} end=$${r.end.toString(16)})`);
