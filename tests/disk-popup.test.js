@@ -636,28 +636,37 @@ describe('disk popup shows all file types', () => {
 describe('disk popup standalone-file detection', () => {
     // standalone.d64 has one ALIENS standalone (no /XXX extension, 191
     // blocks, load addr $0302). ALIENS appears in its own "standalone"
-    // group — not dimmed, clickable — regardless of the current editor.
-    test('standalone entries appear in a "standalone" group', async () => {
+    // group. Standalones only load in the program editor (only it handles
+    // the $0302 magic), so in every other editor — this popup is hosted on
+    // music-maker — the row is dimmed and its Load dispatches to the
+    // program editor rather than erroring on a raw load.
+    test('standalone entries appear dimmed and dispatch to the program editor', async () => {
         const page = await openPage({ disk: 'standalone' });
         await openDiskPopup(page);
 
-        const rows = await page.evaluate(() => {
-            return Array.from(document.querySelectorAll('.gm-disk-files tr'))
+        const info = await page.evaluate(() => {
+            const rows = Array.from(document.querySelectorAll('.gm-disk-files tr'))
                 .filter(r => !r.classList.contains('gm-disk-group-gap'))
                 .map(r => ({
                     name: r.dataset.fileName || '',
+                    index: r.dataset.index,
                     type: r.querySelector('td:nth-child(2)')?.textContent || '',
-                    dimmed: r.classList.contains('gm-disk-row-dimmed'),
-                    interactive: !!r.dataset.index
+                    dimmed: r.classList.contains('gm-disk-row-dimmed')
                 }));
+            const alienRow = rows.find(r =>
+                r.name.trim().toUpperCase().startsWith('ALIENS'));
+            return {
+                alienRow,
+                dispatchTo: alienRow
+                    ? (disk.directoryEntries[Number(alienRow.index)].dispatchTo || null)
+                    : null
+            };
         });
 
-        // ALIENS appears with type label "standalone", not dimmed, interactive
-        const aliens = rows.find(r => r.name.trim().toUpperCase().startsWith('ALIENS'));
-        expect(aliens).toBeTruthy();
-        expect(aliens.type).toBe('standalone');
-        expect(aliens.dimmed).toBe(false);
-        expect(aliens.interactive).toBe(true);
+        expect(info.alienRow).toBeTruthy();
+        expect(info.alienRow.type).toBe('standalone');
+        expect(info.alienRow.dimmed).toBe(true);
+        expect(info.dispatchTo).toBe('program-editor');
         await page.close();
     });
 });

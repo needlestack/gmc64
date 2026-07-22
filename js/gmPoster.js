@@ -1,4 +1,4 @@
-// Poster preview generation — shared between editor.html and play.html.
+// Poster preview generation — shared between program-editor.html and play.html.
 //
 // A "poster" is the frame you see behind the play-button overlay: the game
 // simulated for a few seconds so the visitor sees something more interesting
@@ -30,7 +30,7 @@ globalThis.GMPoster = {
     // Date.now is mocked to advance one frame per simulated frame so
     // `pause X.X` opcodes resolve without actually blocking. audioMuted
     // silences song-start opcodes even if an AudioContext already exists
-    // from a previous run (relevant to editor.html; play.html's context
+    // from a previous run (relevant to program-editor.html; play.html's context
     // doesn't exist yet at poster time).
     async generatePoster({ screen, fileData, posterSeconds }) {
         if (!fileData || posterSeconds === 0) return;

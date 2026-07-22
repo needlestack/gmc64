@@ -279,3 +279,99 @@ describe('sprite-maker — anima range covers all 31 slots and tolerates from > 
     // affect what gets saved. Setting numFrames=1 directly is the way to
     // express "no animation" now.)
 });
+
+describe('sprite-maker — left/right arrows step frames', () => {
+    // Arrow keys mirror the on-screen < > frame arrows: step through the 31
+    // frame slots, wrapping. They must NOT fire while a text field is focused
+    // (the caret needs the arrows) — see frameArrowKeyHandler's guards.
+    test('ArrowRight/ArrowLeft step to next/prev frame and wrap', async () => {
+        const page = await openSpriteMaker();
+        await page.evaluate(() => {
+            newSprite();
+            // Ensure no input holds focus so the arrows reach the frame handler.
+            if (document.activeElement && document.activeElement !== document.body) {
+                document.activeElement.blur();
+            }
+        });
+
+        const start = await page.evaluate(() => currentFrame);
+        await page.keyboard.press('ArrowRight');
+        const afterRight = await page.evaluate(() => currentFrame);
+        await page.keyboard.press('ArrowLeft');
+        const afterLeft = await page.evaluate(() => currentFrame);
+        await page.keyboard.press('ArrowLeft'); // from frame 0, wraps to the last slot
+        const afterWrap = await page.evaluate(() => currentFrame);
+
+        expect(start).toBe(0);
+        expect(afterRight).toBe(1);
+        expect(afterLeft).toBe(0);
+        expect(afterWrap).toBe(MAX_FRAMES - 1);
+        await page.close();
+    });
+
+    test('arrows do not change frame while a text input is focused', async () => {
+        const page = await openSpriteMaker();
+        await page.evaluate(() => {
+            newSprite();
+            const inp = document.createElement('input');
+            inp.id = '__focus_probe';
+            document.body.appendChild(inp);
+            inp.focus();
+        });
+
+        const before = await page.evaluate(() => currentFrame);
+        await page.keyboard.press('ArrowRight');
+        const after = await page.evaluate(() => currentFrame);
+
+        expect(after).toBe(before); // input focus suppresses frame navigation
+        await page.close();
+    });
+});
+
+describe('sprite-maker — undo/redo keyboard shortcuts', () => {
+    // Ctrl/Cmd+Z undoes the last edit; Ctrl+Y (or Cmd/Ctrl+Shift+Z) redoes it.
+    // Snapshots are serialized sprite bytes; restore rebuilds the pixel grid.
+    test('Ctrl+Z undoes a pixel edit and Ctrl+Y redoes it', async () => {
+        const page = await openSpriteMaker();
+        await page.evaluate(() => {
+            newSprite();
+            // Paint one pixel through the real paint path (syncs + checkpoints).
+            _paintCellOnDown(document.querySelector('#fatbits td[data-x="3"][data-y="3"]'));
+            if (document.activeElement && document.activeElement !== document.body) {
+                document.activeElement.blur();
+            }
+        });
+
+        const painted = await page.evaluate(() => pixelData[3][3]);
+
+        await page.keyboard.down('Control');
+        await page.keyboard.press('z');
+        await page.keyboard.up('Control');
+        const afterUndo = await page.evaluate(() => pixelData[3][3]);
+
+        await page.keyboard.down('Control');
+        await page.keyboard.press('y');
+        await page.keyboard.up('Control');
+        const afterRedo = await page.evaluate(() => pixelData[3][3]);
+
+        expect(painted).toBeGreaterThan(0);   // pixel was drawn
+        expect(afterUndo).toBe(0);            // undo cleared it
+        expect(afterRedo).toBe(painted);      // redo restored it
+        await page.close();
+    });
+
+    test('undo history does not cross a fresh newSprite()', async () => {
+        const page = await openSpriteMaker();
+        const canUndo = await page.evaluate(() => {
+            newSprite();
+            _paintCellOnDown(document.querySelector('#fatbits td[data-x="2"][data-y="2"]'));
+            newSprite();                 // resets history
+            const before = pixelData[2][2];
+            undoEdit();                  // should be a no-op (empty stack)
+            return { before, after: pixelData[2][2], stackEmpty: undoStack.length === 0 };
+        });
+        expect(canUndo.stackEmpty).toBe(true);
+        expect(canUndo.after).toBe(canUndo.before); // nothing to undo across the reset
+        await page.close();
+    });
+});

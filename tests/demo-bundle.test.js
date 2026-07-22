@@ -3,7 +3,7 @@
  * disks/gmc64-demo.d64. Re-run `node tools/bundle-demo-disk.js` to
  * refresh; this test will fail until you do.
  *
- * The bundle exists so editor.html's autoLoadDemo() works from file://
+ * The bundle exists so program-editor.html's autoLoadDemo() works from file://
  * too — see tools/bundle-demo-disk.js for the rationale.
  */
 

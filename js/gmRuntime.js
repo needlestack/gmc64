@@ -156,6 +156,12 @@ class gmVM {
         this.pc = 0;
         this.returnStack = []; // Stack for GOSUB/RETURN
         this.running = false;
+        // Program halted (0x00 / ran off the end) but NOT user-stopped. On real
+        // hardware the CPU stops yet the VIC/IRQ keeps moving + animating sprites
+        // on their last settings — some demos rely on this. While halted the loop
+        // keeps advancing sprite physics/animation, just not the bytecode. Cleared
+        // by start()/stop().
+        this.halted = false;
         this.paused = false;
         this.pauseUntil = 0; // Wallclock timestamp for pause instruction
 
@@ -460,6 +466,7 @@ class gmVM {
         if (this._loopHandle) clearTimeout(this._loopHandle);
         this._loopHandle = null;
         this.running = true;
+        this.halted = false;
         this.paused = false;
         this._loopTick();
     }
@@ -473,7 +480,10 @@ class gmVM {
 
     _loopTick() {
         this._loopHandle = null;
-        if (!this.running || this.paused) return;
+        // Keep ticking while running OR halted (a halted program still gets its
+        // sprites moved/animated — _runVirtualFrame gates only step() on running).
+        // A user stop() clears both and ends the loop; pause freezes everything.
+        if (this.paused || (!this.running && !this.halted)) return;
 
         let virtualFramesRun = 0;
         let opsExecutedTotal = 0;
@@ -496,7 +506,7 @@ class gmVM {
             while (
                 this._loopTimeAccumulator >= this._loopFrameMs &&
                 virtualFramesRun < this._loopMaxCatchup &&
-                this.running && !this.paused
+                (this.running || this.halted) && !this.paused
             ) {
                 opsExecutedTotal += this._runVirtualFrame();
                 this._loopTimeAccumulator -= this._loopFrameMs;
@@ -517,7 +527,7 @@ class gmVM {
             this._loopOnFrame({ opsExecuted: opsExecutedTotal, virtualFrames: virtualFramesRun });
         }
 
-        if (this.running && !this.paused) {
+        if ((this.running || this.halted) && !this.paused) {
             this._loopHandle = setTimeout(this._loopTickBound, this._loopFrameMs);
         }
     }
@@ -541,6 +551,7 @@ class gmVM {
 
     stop() {
         this.running = false;
+        this.halted = false;   // user-stop: kill the loop entirely (unlike a program halt)
         this.paused = false;
         if (this._loopHandle) {
             clearTimeout(this._loopHandle);
@@ -636,10 +647,13 @@ class gmVM {
                 }
                 return false;
 
-            case 0x4A: // if score1 > XXXXXX then
+            case 0x4A: // if scoreN > XXXXXX then
+                // arg1 = score index (0-based in bytecode: 0=score1, 1=score2),
+                // arg2 = threshold in thousands. (Previously arg1 was ignored and
+                // score1 hardcoded, which masked programs that selected score2.)
                 {
                     const scoreThreshold = arg2 * 1000;
-                    return this.score[0] > scoreThreshold;
+                    return (this.score[arg1] || 0) > scoreThreshold;
                 }
 
             case 0x4B: // if score[a] > XXXXXX then
@@ -684,6 +698,7 @@ class gmVM {
             } else {
                 // No parent = top level ended = program done
                 this.running = false;
+                this.halted = true;   // keep sprites moving after the program ends
                 this.stopAllAudio();
                 return false;
             }
@@ -709,14 +724,18 @@ class gmVM {
                 this.pc++;
             }
         } else {
-            // Regular instruction - execute it (skip comments, opcode 0x2B)
+            // Regular instruction - execute it (skip comments, opcode 0x2B).
+            // Control-flow opcodes (jump/gosub/return/skip-next) set _pcJumped when
+            // they move the PC themselves; everything else auto-advances. Using an
+            // explicit flag rather than "did the PC land somewhere else?" is what
+            // makes a jump-to-self loop (like GKGM) instead of falling through — the
+            // PC lands back on the same instruction, which the old check misread as
+            // "no jump" and advanced past.
+            this._pcJumped = false;
             if (item.opcode !== 0x2B) {
                 this.executeInstruction(item);
             }
-
-            // Advance PC (unless it was a jump that changed currentList/pc)
-            // We check if we're still on the same item to detect if a jump occurred
-            if (this.currentList && this.currentList[this.pc] === item) {
+            if (!this._pcJumped) {
                 this.pc++;
             }
         }
@@ -732,6 +751,7 @@ class gmVM {
         switch(opcode) {
             case 0x00: // blank line (stops execution)
                 this.running = false;
+                this.halted = true;   // program halted, but keep the sprite mover running (VIC-style)
                 this.stopAllAudio();
                 break;
 
@@ -742,6 +762,7 @@ class gmVM {
                     // Jump directly - the list knows its own parent chain
                     this.currentList = target.list;
                     this.pc = target.index;
+                    this._pcJumped = true;   // we set the PC; step() must not auto-advance (self-jump loops)
                 }
                 break;
 
@@ -753,6 +774,7 @@ class gmVM {
                         const target = this.labelMap[labelNum];
                         this.currentList = target.list;
                         this.pc = target.index;
+                        this._pcJumped = true;
                     } else {
                     }
                 }
@@ -774,6 +796,7 @@ class gmVM {
                     // Jump to the subroutine
                     this.currentList = target.list;
                     this.pc = target.index;
+                    this._pcJumped = true;
                 } else {
                 }
                 break;
@@ -795,13 +818,16 @@ class gmVM {
                         // Jump to the subroutine
                         this.currentList = target.list;
                         this.pc = target.index;
+                        this._pcJumped = true;
                     } else {
                     }
                 }
                 break;
 
             case 0x05: // return from subroutine
-                // Restore position from before the GOSUB
+                // Restore position from before the GOSUB. Either branch changes
+                // control flow (restore or halt), so the PC is ours to set.
+                this._pcJumped = true;
                 this.returnStack = this.returnStack || [];
                 if (this.returnStack.length > 0) {
                     const returnState = this.returnStack.pop();
@@ -809,6 +835,7 @@ class gmVM {
                     this.pc = returnState.pc;
                 } else {
                     this.running = false;
+                    this.halted = true;   // return past the top level ends the program; keep sprites moving
                     this.stopAllAudio();
                 }
                 break;
@@ -1054,12 +1081,15 @@ class gmVM {
             // === SKIP NEXT INSTRUCTIONS ===
             // These compare a variable to a literal and skip the next instruction if true.
             // "Skip" means pc += 2 instead of pc += 1 (skip over the next instruction).
+            // On skip we own the PC (set _pcJumped so step() doesn't add its own +1);
+            // when the condition is false we leave the PC alone and let step() advance.
 
             case 0x62: // skip next if [var] = literal
                 {
                     const varVal = this.getVar(arg1);
                     if (varVal === arg2) {
                         this.pc += 2; // Skip over THIS instruction AND the next one
+                        this._pcJumped = true;
                     }
                 }
                 break;
@@ -1069,6 +1099,7 @@ class gmVM {
                     const varVal = this.getVar(arg1);
                     if (varVal > arg2) {
                         this.pc += 2; // Skip over THIS instruction AND the next one
+                        this._pcJumped = true;
                     }
                 }
                 break;
@@ -1078,6 +1109,7 @@ class gmVM {
                     const varVal = this.getVar(arg1);
                     if (varVal < arg2) {
                         this.pc += 2; // Skip over THIS instruction AND the next one
+                        this._pcJumped = true;
                     }
                 }
                 break;
@@ -1345,10 +1377,14 @@ class gmVM {
                         slot.spriteName = spriteName;
                         slot.visible = true;
                         slot.isSubsprite = false;
+                        // GKGM sprite-swap semantics (verified in VICE): BOTH the slot's animation
+                        // speed AND its "animates once" flag carry over to the new sprite — only the
+                        // frame resets. A completed "once" run has already zeroed animSpeed (see
+                        // advanceSpriteAnimations), so a swap after that leaves the new sprite frozen
+                        // until a fresh 0x29 speed is set. Hence real GK programs re-assert the
+                        // animation speed (and once/always mode, if it matters) after a swap.
                         if (isNewSprite) {
-                            // Reset frame state when swapping to different sprite
-                            // animSpeed and animateOnce persist across sprite swaps
-                            // If animateOnce is set, the new sprite should play its animation once
+                            // Reset frame state when swapping to a different sprite
                             slot.animFrame = 0;
                             slot.skipCounter = undefined;
                         }
@@ -2316,9 +2352,12 @@ class gmVM {
 
             if (slot.animSpeed <= 0) continue;
 
-            // animateOnce: freeze on last frame, flag done, no advance.
+            // animateOnce: freeze on last frame, flag done, no advance. GKGM zeros
+            // the animation speed at completion — so the next sprite swapped into
+            // this slot inherits speed 0 (frozen) until a fresh 0x29 sets one.
             if (slot.animateOnce && slot.animFrame >= numFrames - 1) {
                 slot.animateOnceDone = true;
+                slot.animSpeed = 0;
                 continue;
             }
 

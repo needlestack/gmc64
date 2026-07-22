@@ -337,7 +337,7 @@
                 <button id="btnBox" onclick="setTool('box')">box</button>
                 <button id="btnDraw" onclick="setTool('draw')">draw</button>
                 <button id="btnText" onclick="setTool('text')">text</button>
-                <span></span>
+                <button id="btnFont" onclick="toggleTextFont()" style="visibility:hidden;">font:gm</button>
             </div>
             <!-- Zoom editor (shown in zoom mode, replaces tool buttons) -->
             <table id="zoomEditor"></table>
@@ -418,6 +418,7 @@
 <script src="js/gmDisk.js"></script>
 <script src="js/c64lib.js"></script>
 <script src="js/gmTools.js"></script>
+<script src="js/gmTopbar.js"></script>
 <script src="js/gmDiskPicker.js"></script>
 <script src="js/gmScene.js"></script>
 <script src="js/gmCharset.js"></script>
@@ -475,15 +476,78 @@ let clearMode = { active: false };
 // Text tool state
 let textMode = {
     active: false,
-    startX: 0,      // Starting X position (pixel coords)
+    startX: 0,      // Starting X position (pixel coords, 160-space)
     startY: 0,      // Starting Y position (pixel coords)
-    cursorX: 0,     // Current cursor X (character column from start)
-    cursorY: 0,     // Current cursor Y (character row from start)
-    chars: [],      // Array of {col, row, gmIndex} for typed characters
+    rows: [[]],     // lines of text; each row is an array of single-char strings
+    cursorRow: 0,   // current line
+    cursorCol: 0,   // caret index within rows[cursorRow]
     previewX: -1,   // Preview cursor position before clicking (pixel coords)
     previewY: -1
 };
-let charset = null; // gmCharset instance
+let charset = null;   // gmCharset instance (the GM font)
+let textFont = 'gm';  // 'gm' (GameMaker 8x8 monospaced) or 'sm' (compact proportional)
+
+// === TEXT FONTS ===
+// The text tool stamps glyphs from one of two fonts. 'gm' is the GameMaker 8x8 charset
+// (monospaced, via gmCharset). 'sm' is a hand-rolled compact PROPORTIONAL font — 5px tall,
+// per-glyph width — extracted pixel-for-pixel from the CHARS/PIC scene. A font is only a
+// brush: once stamped it's plain scene pixels, so nothing about it persists in the .PIC.
+const SM_GLYPHS = {
+  'A': ".#./#.#/###/#.#/#.#", 'B': "##./#.#/##./#.#/##.", 'C': ".#/#./#./#./.#",
+  'D': "##./#.#/#.#/#.#/##.", 'E': "##/#./##/#./##", 'F': "##/#./##/#./#.",
+  'G': ".##/#../#.#/#.#/.##", 'H': "#.#/#.#/###/#.#/#.#", 'I': "#/#/#/#/#",
+  'J': ".#/.#/.#/.#/#.", 'K': "#.#/##./##./#.#/#.#", 'L': "#./#./#./#./##",
+  'M': "#...#/##.##/#.#.#/#...#/#...#", 'N': "#..#/##.#/#.##/#..#/#..#",
+  'O': ".#./#.#/#.#/#.#/.#.", 'P': "##./#.#/###/#../#..", 'Q': ".#./#.#/#.#/#.#/.##",
+  'R': "##./#.#/##./##./#.#", 'S': ".##/#../.#./..#/##.", 'T': "###/.#./.#./.#./.#.",
+  'U': "#.#/#.#/#.#/#.#/###", 'V': "#.#/#.#/#.#/#.#/.#.", 'W': "#...#/#...#/#.#.#/#.#.#/##.##",
+  'X': "#.#/#.#/.#./#.#/#.#", 'Y': "#.#/#.#/.#./.#./.#.", 'Z': "###/..#/.#./#../###",
+  '0': "###/#.#/#.#/#.#/###", '1': "#/#/#/#/#", '2': "##/.#/##/#./##", '3': "##/.#/##/.#/##",
+  '4': "#.#/#.#/###/..#/..#", '5': "##/#./##/.#/##", '6': "###/#../###/#.#/###",
+  '7': "##/.#/.#/.#/.#", '8': "###/#.#/###/#.#/###", '9': "###/#.#/###/..#/###",
+  '-': "../../##/../..", '.': "././././#", ',': "./././#/#", '!': "#/#/#/./#",
+  '?': "###/..#/.##/.../.#.", ':': "./#/./#/.", "'": "#/#/././.", '/': ".#/.#/##/#./#.",
+  '[': "##/#./#./#./##", ']': "##/.#/.#/.#/##", '+': ".../.#./###/.#./...",
+  '*': "#.#/.#./#.#/.../...", '(': ".#/#./#./#./.#", ')': "#./.#/.#/.#/#.",
+  '<': "../.#/#./.#/..", '>': "../#./.#/#./..", '|': "#/#/#/#/#", '=': "../##/../##/..",
+  '_': ".../.../.../.../###", '^': ".../.#./#.#/.../..."
+};
+const SM = { lineH: 8, spaceAdv: 3, spacing: 1 };  // 8px line advance, 3px space, 1px letter spacing
+function smGlyph(ch){ return SM_GLYPHS[ch.toUpperCase()] || null; }
+
+const TEXT_FONTS = {
+    gm: {
+        lineH: 8, cursorW: 8, cursorH: 8,
+        has(ch){ return asciiToGmIndex(ch.charCodeAt(0)) >= 0; },
+        advance(ch){ return 8; },
+        drawTemp(ctx, ch, px, py, rgb){ const gi = asciiToGmIndex(ch.charCodeAt(0)); if (gi >= 0) drawCharToTemp(ctx, gi, px, py, rgb, 1.0); },
+        drawScene(scene, ch, px, py, color){ const gi = asciiToGmIndex(ch.charCodeAt(0)); if (gi >= 0) charset.drawCharToScene(scene, gi, px, py, color, -1); }
+    },
+    sm: {
+        lineH: SM.lineH, cursorW: 4, cursorH: 7,
+        has(ch){ return ch === ' ' || !!smGlyph(ch); },
+        // width = length of the first row (= index of the first '/'); + 1px letter spacing
+        advance(ch){ if (ch === ' ') return SM.spaceAdv; const g = smGlyph(ch); return g ? g.indexOf('/') + SM.spacing : 0; },
+        drawTemp(ctx, ch, px, py, rgb){ drawSMToTemp(ctx, ch, px, py, rgb); },
+        drawScene(scene, ch, px, py, color){ drawSMToScene(scene, ch, px, py, color); }
+    }
+};
+function tfont(){ return TEXT_FONTS[textFont]; }
+
+// Blit one 'sm' glyph. Rows are '#'/'.' joined by '/'. Fat pixels: x is 160-space (×2 for temp).
+function drawSMToTemp(ctx, ch, x, y, rgb){
+    const g = smGlyph(ch); if (!g) return;
+    ctx.fillStyle = `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
+    const rows = g.split('/');
+    for (let r = 0; r < rows.length; r++) for (let c = 0; c < rows[r].length; c++)
+        if (rows[r][c] === '#') ctx.fillRect((x + c) * 2, y + r, 2, 1);
+}
+function drawSMToScene(scene, ch, x, y, color){
+    const g = smGlyph(ch); if (!g) return;
+    const rows = g.split('/');
+    for (let r = 0; r < rows.length; r++) for (let c = 0; c < rows[r].length; c++)
+        if (rows[r][c] === '#'){ const sx = x + c, sy = y + r; if (sx >= 0 && sx < 160 && sy >= 0 && sy < 200) scene.setPixel(sx, sy, color); }
+}
 
 // Canvas refs
 let sceneCanvas, sceneCtx;
@@ -872,27 +936,35 @@ function renderScene() {
         // Snap to character grid
         const snapX = Math.floor(textMode.previewX / 8) * 8;
         const snapY = Math.floor(textMode.previewY / 8) * 8;
+        const pf = tfont();
         tempCtx.fillStyle = flashColor();
-        tempCtx.fillRect(snapX * 2, snapY, 16, 8);
+        tempCtx.fillRect(snapX * 2, snapY, pf.cursorW * 2, pf.cursorH);
     }
 
     // Draw text and cursor when in text mode
     if (textMode.active) {
         const c64Color = [sceneColors.bg, sceneColors.color1, sceneColors.color2, sceneColors.color3][drawingColor];
         const rgb = c64Palette[c64Color];
+        const f = tfont();
 
-        // Draw typed characters (solid color)
-        for (const ch of textMode.chars) {
-            const px = textMode.startX + ch.col * 8;
-            const py = textMode.startY + ch.row * 8;
-            drawCharToTemp(tempCtx, ch.gmIndex, px, py, rgb, 1.0);
+        // Draw typed characters, advancing x by each glyph's width (proportional for 'sm')
+        for (let r = 0; r < textMode.rows.length; r++) {
+            let x = 0;
+            for (let c = 0; c < textMode.rows[r].length; c++) {
+                const ch = textMode.rows[r][c];
+                f.drawTemp(tempCtx, ch, textMode.startX + x, textMode.startY + r * f.lineH, rgb);
+                x += f.advance(ch);
+            }
         }
 
-        // Draw fading green/black cursor
-        const cursorPx = textMode.startX + textMode.cursorX * 8;
-        const cursorPy = textMode.startY + textMode.cursorY * 8;
+        // Fading green/black caret: pixel-x = sum of advances before cursorCol on its row
+        const crow = textMode.rows[textMode.cursorRow] || [];
+        let cx = 0;
+        for (let c = 0; c < textMode.cursorCol && c < crow.length; c++) cx += f.advance(crow[c]);
+        const cursorPx = textMode.startX + cx;
+        const cursorPy = textMode.startY + textMode.cursorRow * f.lineH;
         tempCtx.fillStyle = flashColor();
-        tempCtx.fillRect(cursorPx * 2, cursorPy, 16, 8);
+        tempCtx.fillRect(cursorPx * 2, cursorPy, f.cursorW * 2, f.cursorH);
     }
 
     // Draw to main canvas (which is 160x200, CSS scaled to 480x600)
@@ -970,9 +1042,9 @@ function enterTextMode(x, y) {
     // Snap to character grid (8x8)
     textMode.startX = Math.floor(x / 8) * 8;
     textMode.startY = Math.floor(y / 8) * 8;
-    textMode.cursorX = 0;
-    textMode.cursorY = 0;
-    textMode.chars = [];
+    textMode.rows = [[]];
+    textMode.cursorRow = 0;
+    textMode.cursorCol = 0;
     textMode.active = true;
     textMode.previewX = -1; // Clear preview cursor
     textMode.previewY = -1;
@@ -995,17 +1067,21 @@ function enterTextMode(x, y) {
 }
 
 function exitTextMode(commit) {
-    if (commit && textMode.chars.length > 0) {
-        // Commit text to scene
-        for (const ch of textMode.chars) {
-            const px = textMode.startX + ch.col * 8;
-            const py = textMode.startY + ch.row * 8;
-            charset.drawCharToScene(currentScene, ch.gmIndex, px, py, drawingColor, -1);
+    if (commit && textMode.rows.some(r => r.length > 0)) {
+        // Commit text to scene, walking each row's glyph advances (proportional for 'sm')
+        const f = tfont();
+        for (let r = 0; r < textMode.rows.length; r++) {
+            let x = 0;
+            for (let c = 0; c < textMode.rows[r].length; c++) {
+                const ch = textMode.rows[r][c];
+                f.drawScene(currentScene, ch, textMode.startX + x, textMode.startY + r * f.lineH, drawingColor);
+                x += f.advance(ch);
+            }
         }
         currentScene.dirty = true;
     }
     textMode.active = false;
-    textMode.chars = [];
+    textMode.rows = [[]];
     textMode.previewX = -1;
     textMode.previewY = -1;
     clearMessage();
@@ -1018,6 +1094,15 @@ function exitTextMode(commit) {
     }
 
     renderScene();
+}
+
+// Toggle the text-tool font (button in the slot right of "text"). Any in-progress text
+// re-lays-out automatically since glyph positions come from the active font's advances.
+function toggleTextFont() {
+    textFont = (textFont === 'gm') ? 'sm' : 'gm';
+    const btn = document.getElementById('btnFont');
+    if (btn) btn.textContent = 'font:' + textFont;
+    if (textMode.active) renderScene();
 }
 
 function asciiToGmIndex(ascii) {
@@ -1051,12 +1136,14 @@ function handleTextKey(e) {
         return true;
     }
 
-    // Enter goes to next line
+    // Enter: split the current row at the caret into a new line
     if (e.key === 'Enter') {
         e.preventDefault();
         e.stopPropagation();
-        textMode.cursorX = 0;
-        textMode.cursorY++;
+        const tail = textMode.rows[textMode.cursorRow].splice(textMode.cursorCol);
+        textMode.rows.splice(textMode.cursorRow + 1, 0, tail);
+        textMode.cursorRow++;
+        textMode.cursorCol = 0;
         renderScene();
         return true;
     }
@@ -1069,82 +1156,63 @@ function handleTextKey(e) {
         return true;
     }
 
-    // Backspace deletes
+    // Backspace: delete the glyph before the caret; at column 0, merge into the line above
     if (e.key === 'Backspace') {
         e.preventDefault();
         e.stopPropagation();
-        if (textMode.cursorX > 0) {
-            textMode.cursorX--;
-            // Remove character at cursor position
-            textMode.chars = textMode.chars.filter(ch =>
-                !(ch.col === textMode.cursorX && ch.row === textMode.cursorY)
-            );
-        } else if (textMode.cursorY > 0) {
-            // Go to end of previous line
-            textMode.cursorY--;
-            // Find rightmost character on this line
-            let maxCol = 0;
-            for (const ch of textMode.chars) {
-                if (ch.row === textMode.cursorY && ch.col >= maxCol) {
-                    maxCol = ch.col + 1;
-                }
-            }
-            textMode.cursorX = maxCol;
+        if (textMode.cursorCol > 0) {
+            textMode.rows[textMode.cursorRow].splice(textMode.cursorCol - 1, 1);
+            textMode.cursorCol--;
+        } else if (textMode.cursorRow > 0) {
+            const cur = textMode.rows.splice(textMode.cursorRow, 1)[0];
+            textMode.cursorRow--;
+            textMode.cursorCol = textMode.rows[textMode.cursorRow].length;
+            textMode.rows[textMode.cursorRow] = textMode.rows[textMode.cursorRow].concat(cur);
         }
         renderScene();
         return true;
     }
 
-    // Arrow keys move cursor
+    // Arrow keys move the caret between glyph boundaries
     if (e.key === 'ArrowLeft') {
         e.preventDefault();
         e.stopPropagation();
-        if (textMode.cursorX > 0) textMode.cursorX--;
+        if (textMode.cursorCol > 0) textMode.cursorCol--;
+        else if (textMode.cursorRow > 0) { textMode.cursorRow--; textMode.cursorCol = textMode.rows[textMode.cursorRow].length; }
         renderScene();
         return true;
     }
     if (e.key === 'ArrowRight') {
         e.preventDefault();
         e.stopPropagation();
-        textMode.cursorX++;
+        if (textMode.cursorCol < textMode.rows[textMode.cursorRow].length) textMode.cursorCol++;
+        else if (textMode.cursorRow < textMode.rows.length - 1) { textMode.cursorRow++; textMode.cursorCol = 0; }
         renderScene();
         return true;
     }
     if (e.key === 'ArrowUp') {
         e.preventDefault();
         e.stopPropagation();
-        if (textMode.cursorY > 0) textMode.cursorY--;
+        if (textMode.cursorRow > 0) { textMode.cursorRow--; textMode.cursorCol = Math.min(textMode.cursorCol, textMode.rows[textMode.cursorRow].length); }
         renderScene();
         return true;
     }
     if (e.key === 'ArrowDown') {
         e.preventDefault();
         e.stopPropagation();
-        textMode.cursorY++;
+        if (textMode.cursorRow < textMode.rows.length - 1) { textMode.cursorRow++; textMode.cursorCol = Math.min(textMode.cursorCol, textMode.rows[textMode.cursorRow].length); }
         renderScene();
         return true;
     }
 
-    // Regular character input
-    if (e.key.length === 1) {
-        const gmIndex = asciiToGmIndex(e.key.charCodeAt(0));
-        if (gmIndex >= 0) {
-            e.preventDefault();
-            e.stopPropagation();
-            // Remove any existing char at this position
-            textMode.chars = textMode.chars.filter(ch =>
-                !(ch.col === textMode.cursorX && ch.row === textMode.cursorY)
-            );
-            // Add new character
-            textMode.chars.push({
-                col: textMode.cursorX,
-                row: textMode.cursorY,
-                gmIndex: gmIndex
-            });
-            textMode.cursorX++;
-            renderScene();
-            return true;
-        }
+    // Regular character input: insert the glyph at the caret if the current font has it
+    if (e.key.length === 1 && tfont().has(e.key)) {
+        e.preventDefault();
+        e.stopPropagation();
+        textMode.rows[textMode.cursorRow].splice(textMode.cursorCol, 0, e.key);
+        textMode.cursorCol++;
+        renderScene();
+        return true;
     }
 
     return false;
@@ -1188,6 +1256,10 @@ function setTool(tool) {
         textMode.previewX = -1;
         textMode.previewY = -1;
     }
+
+    // The font toggle only appears (in the slot right of "text") while the text tool is active
+    const btnFont = document.getElementById('btnFont');
+    if (btnFont) btnFont.style.visibility = (tool === 'text') ? 'visible' : 'hidden';
 
     // Update button states (exclude fill button - it's handled separately)
     document.querySelectorAll('#toolButtons button').forEach(btn => {

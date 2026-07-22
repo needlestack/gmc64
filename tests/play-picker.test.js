@@ -66,7 +66,7 @@ describe('play.html picker', () => {
 // fallback and the window-level drag-and-drop). Verify it exists but
 // stays hidden on a bare visit.
 describe('editor picker mounts', () => {
-    const HTMLS = ['editor.html', 'sprite-maker.html', 'scene-maker.html',
+    const HTMLS = ['program-editor.html', 'sprite-maker.html', 'scene-maker.html',
                    'sound-maker.html', 'music-maker.html'];
     for (const html of HTMLS) {
         test(`${html} mounts the picker hidden`, async () => {

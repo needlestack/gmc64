@@ -64,7 +64,12 @@ class GMDisk {
             case '/PIC': return 'scene-maker';
             case '/SND': return 'sound-maker';
             case '/SNG': return 'music-maker';
-            case '/PRG': return 'editor';
+            case '/PRG': return 'program-editor';
+            // Standalone exports (synthetic ext) also open in the program
+            // editor — it's the only editor that detects the $0302 magic
+            // and routes the bytes through standaloneToPRG. Dispatch to it
+            // directly rather than the editor.html redirect stub.
+            case 'STANDALONE': return 'program-editor';
             default:     return null;
         }
     }
@@ -1291,12 +1296,17 @@ class GMDisk {
         const groups = [];
         if (byExt[primaryExt]) groups.push({ entries: byExt[primaryExt], loadable: true, ext: primaryExt });
         for (const ext of otherExts) groups.push({ entries: byExt[ext], loadable: false, ext });
-        // Standalones are loadable — the editor detects the $0302 magic
-        // on the raw bytes and routes through standaloneToPRG. Grouping
-        // them here (below regular GM files, above generic files) reads
-        // as "these are GameMaker exports, not native project files."
+        // Standalones only load in the program editor — it's the only
+        // editor that detects the $0302 magic and routes the raw bytes
+        // through standaloneToPRG; anywhere else a load would error. So
+        // they're loadable here iff this IS the program editor (primary
+        // type /PRG); in every other editor they render dimmed and Load
+        // dispatches to the program editor (see dispatchTo below). Grouped
+        // below regular GM files, above generic files — "these are
+        // GameMaker exports, not native project files."
+        const inProgramEditor = primaryExt === '/PRG';
         if (standalones.length) {
-            groups.push({ entries: standalones, loadable: true, ext: 'STANDALONE' });
+            groups.push({ entries: standalones, loadable: inProgramEditor, ext: 'STANDALONE' });
         }
         // Anything else on the disk gets a "non-GameMaker" bucket at the
         // bottom so the user can see the full disk contents rather than
@@ -1310,12 +1320,14 @@ class GMDisk {
         // can decide which buttons to enable. For non-loadable rows that
         // ARE GM files (e.g. a /SPR selected while in scene-maker), attach
         // the dispatch target so the Load button + dblclick can navigate.
-        // Non-GM rows and standalones don't get a dispatch target.
+        // A dimmed standalone dispatches to the program editor; only
+        // non-GM rows have no target. (In the program editor standalones
+        // are loadable, so they skip this branch entirely.)
         this.directoryEntries = [];
         for (const g of groups) {
             for (const e of g.entries) {
                 const entry = { ...e, loadable: g.loadable };
-                if (!g.loadable && g.ext !== 'NON_GM' && g.ext !== 'STANDALONE') {
+                if (!g.loadable && g.ext !== 'NON_GM') {
                     const targetEditor = GMDisk._editorForExt(g.ext);
                     if (targetEditor) entry.dispatchTo = targetEditor;
                 }

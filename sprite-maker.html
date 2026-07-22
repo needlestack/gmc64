@@ -8,8 +8,9 @@
 <link rel="stylesheet" href="css/gm-ui.css">
 <style>
 /* Page-specific styles */
+
 #screen {
-    background: dimgray;
+    background: var(--c64-gray1);
     width: 720px;
     height: 520px;
     margin: 0 auto;
@@ -301,6 +302,8 @@
 </head>
 <body>
 
+<!-- Top nav injected by js/gmTopbar.js at the bottom of the page load. -->
+
 <!-- Disk popup handled by GMDisk -->
 
 <!-- Color picker created dynamically by GMTools -->
@@ -385,6 +388,7 @@
 <script src="js/gmDisk.js"></script>
 <script src="js/c64lib.js"></script>
 <script src="js/gmTools.js"></script>
+<script src="js/gmTopbar.js"></script>
 <script src="js/gmDiskPicker.js"></script>
 <script src="js/c64Screen.js"></script>
 <script src="js/gmSprite.js"></script>
@@ -2223,6 +2227,13 @@ function initApp() {
     initPreviewScreen();
     window.addEventListener('resize', initPreviewScreen);
 
+    // Left/right arrows step to the prev/next frame (mirrors the on-screen
+    // < > frame arrows). See frameArrowKeyHandler for the modal/focus guards.
+    document.addEventListener('keydown', frameArrowKeyHandler);
+
+    // Cmd/Ctrl+Z undo, Cmd/Ctrl+Shift+Z or Ctrl+Y redo.
+    document.addEventListener('keydown', undoRedoKeyHandler);
+
     // Initialize with new sprite, then attempt to restore last session
     newSprite();
     restoreSpriteSession();
@@ -2301,6 +2312,7 @@ function restoreSpriteSession() {
         updatePaletteDisplay();
         updateFatBits();
         updatePreview();
+        resetUndoHistory();   // the restored session is the baseline, not undoable
     } catch (e) {
         console.warn('sprite-maker: failed to restore session, starting fresh:', e.message);
         // newSprite() already ran in initApp, so we're already in a clean state
@@ -2472,6 +2484,7 @@ function newSprite() {
     updatePaletteForColorMode();
     updateFatBits();
     updatePreview();
+    resetUndoHistory();   // a fresh sprite starts with clean undo history
 }
 
 // Drawing drag state — 'draw' or 'erase' — decided on the initial press
@@ -2566,6 +2579,9 @@ function attachFatbitsPointerHandlers() {
         event.preventDefault();  // stop text selection + scroll on touch
         try { fatbits.setPointerCapture(event.pointerId); } catch {}
         capturedId = event.pointerId;
+        // Coalesce the whole stroke into a single undo step: suppress
+        // checkpoints until pointerup (see maybeCheckpoint / endDrag).
+        strokeInProgress = true;
         _paintCellOnDown(cell);
     });
 
@@ -2586,6 +2602,9 @@ function attachFatbitsPointerHandlers() {
             try { fatbits.releasePointerCapture(capturedId); } catch {}
             capturedId = null;
         }
+        // Stroke finished — record it as one undo step.
+        strokeInProgress = false;
+        maybeCheckpoint();
     };
     fatbits.addEventListener('pointerup', endDrag);
     fatbits.addEventListener('pointercancel', endDrag);
@@ -2745,6 +2764,10 @@ function updatePreview() {
     // Persist current state to localStorage (debounced — fires ~500ms after the
     // last edit, so we don't pummel localStorage during rapid editing).
     saveSpriteSession();
+
+    // Record an undo checkpoint if the sprite changed (skipped mid-stroke /
+    // during restore / preview / animation — see maybeCheckpoint).
+    maybeCheckpoint();
 
     // Clear to transparent - sprites render over the background block
     previewScreen.clearTransparent();
@@ -2932,6 +2955,127 @@ function stepFrame(direction) {
     // If the dropdown was open, close it — the arrows are a deliberate
     // navigation gesture that supersedes browsing the list.
     closeFrameDropdown();
+}
+
+// Global Left/Right arrow → prev/next frame, mirroring the on-screen < >
+// frame arrows next to fr=NN. Only acts in normal editing: bails when a text
+// field has focus (so the caret still moves) and when any modal mode owns the
+// arrows or shouldn't be interrupted — flip/shift/anima/positioning use arrows
+// themselves; the frame dropdown has its own arrow handler; file-menu, preview,
+// and the copy/swap/cmd states are transient. Registered once in initApp.
+function frameArrowKeyHandler(e) {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+
+    const el = document.activeElement;
+    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+
+    if (cmdMode || flipMode.active || shiftMode.active || copyMode.active ||
+        swapMode.active || animaMode.active || positioningMode.active ||
+        fileMenuMode.active || previewMode.active ||
+        document.getElementById('frameDropdown').classList.contains('open')) return;
+
+    if (!currentSprite) return;
+
+    stepFrame(e.key === 'ArrowRight' ? 1 : -1);
+    e.preventDefault();
+}
+
+// ===== UNDO / REDO (keyboard-driven) =====
+// Snapshot model: the whole sprite serialized to .SPR bytes plus the current
+// frame/quad/setup. This works because every pixel edit calls syncToSprite()
+// immediately, so currentSprite is always in sync with what's on screen — a
+// serialized snapshot is a complete, restorable copy of the editor state.
+//
+// Checkpoints are taken in updatePreview() (which fires after every edit),
+// coalesced into one step per paint stroke via strokeInProgress, and deduped
+// by serialized bytes so frame navigation and no-op refreshes don't pollute
+// history. restoreState mirrors restoreSpriteSession's rebuild sequence.
+let undoStack = [], redoStack = [];
+let undoBaseline = null;      // snapshot of the last committed state
+let strokeInProgress = false; // true between pointerdown and pointerup while drawing
+let restoringUndo = false;    // guards updatePreview's checkpoint during a restore
+const MAX_UNDO = 60;
+
+function _undoSnapshot() {
+    if (!currentSprite) return null;
+    return {
+        bytes: currentSprite.serialize(),
+        frame: currentFrame,
+        quad: currentQuad,
+        setup: { ...setupState }
+    };
+}
+function _undoSameBytes(a, b) {
+    if (!a || !b || a.bytes.length !== b.bytes.length) return false;
+    for (let i = 0; i < a.bytes.length; i++) if (a.bytes[i] !== b.bytes[i]) return false;
+    return true;
+}
+// Called from updatePreview after every edit. Skips mid-stroke / preview /
+// animation, and only records a step when the serialized bytes actually change.
+function maybeCheckpoint() {
+    if (restoringUndo || strokeInProgress || previewMode.active || animaMode.active || !currentSprite) return;
+    const snap = _undoSnapshot();
+    if (!undoBaseline) { undoBaseline = snap; return; }
+    if (_undoSameBytes(snap, undoBaseline)) return;
+    undoStack.push(undoBaseline);
+    if (undoStack.length > MAX_UNDO) undoStack.shift();
+    undoBaseline = snap;
+    redoStack.length = 0;   // a fresh edit invalidates the redo branch
+}
+// Clear history and re-baseline to the current sprite. Called after loading /
+// creating a sprite so undo can't cross a file load back into the prior sprite.
+function resetUndoHistory() {
+    undoStack = [];
+    redoStack = [];
+    undoBaseline = _undoSnapshot();
+}
+function _restoreState(snap) {
+    if (!snap) return;
+    restoringUndo = true;
+    try {
+        currentSprite = new gmSprite(snap.bytes);
+        setupState.isMultiColor = snap.setup.isMultiColor;
+        setupState.vMag = snap.setup.vMag;
+        setupState.hMag = snap.setup.hMag;
+        setupState.numSprites = snap.setup.numSprites;
+        currentFrame = snap.frame;
+        currentQuad = snap.quad;
+        rebuildFatBitsGrid();
+        loadQuadPixelData();
+        updateFrameButton();
+        updateQuadButton();
+        updatePaletteDisplay();
+        updateFatBits();
+        updatePreview();
+    } finally {
+        restoringUndo = false;
+    }
+}
+function undoEdit() {
+    maybeCheckpoint();               // flush any not-yet-recorded change first
+    if (!undoStack.length) return;
+    redoStack.push(undoBaseline);
+    undoBaseline = undoStack.pop();
+    _restoreState(undoBaseline);
+}
+function redoEdit() {
+    if (!redoStack.length) return;
+    undoStack.push(undoBaseline);
+    undoBaseline = redoStack.pop();
+    _restoreState(undoBaseline);
+}
+// Cmd/Ctrl+Z = undo, Cmd/Ctrl+Shift+Z or Ctrl+Y = redo. Skips text fields (so
+// the browser's own undo works there) and preview mode.
+function undoRedoKeyHandler(e) {
+    if (!(e.metaKey || e.ctrlKey)) return;
+    const k = e.key.toLowerCase();
+    if (k !== 'z' && k !== 'y') return;
+    const el = document.activeElement;
+    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+    if (previewMode.active) return;
+    if (k === 'y' || (k === 'z' && e.shiftKey)) redoEdit();
+    else undoEdit();
+    e.preventDefault();
 }
 
 // Close dropdown when clicking elsewhere, and dismiss cmd/file menu mode
@@ -3415,6 +3559,7 @@ function loadSpriteFromDisk(fileName, fileData) {
         updatePaletteForColorMode();
         updateFatBits();
         updatePreview();
+        resetUndoHistory();   // loading a sprite starts fresh undo history
 
         console.log('Loaded sprite:', currentSprite);
     } catch (e) {

@@ -4,14 +4,14 @@ gmc64 is a JavaScript reimplementation of Garry Kitchen’s GameMaker for the Co
 
 <table>
   <tr>
-    <td align="center"><a href="https://gmc64.com/editor.html?play_demo=1"><img src="docs/screenshots/01-intro.png" width="320"></a><br><sub>Intro Demo</sub></td>
+    <td align="center"><a href="https://gmc64.com/program-editor.html?play_demo=1"><img src="docs/screenshots/01-intro.png" width="320"></a><br><sub>Intro Demo</sub></td>
     <td align="center"><a href="https://gmc64.com/sprite-maker.html"><img src="docs/screenshots/02-sprite-maker.png" width="320"></a><br><sub>Sprite Maker</sub></td>
     <td align="center"><a href="https://gmc64.com/scene-maker.html"><img src="docs/screenshots/03-scene-maker.png" width="320"></a><br><sub>Scene Maker</sub></td>
   </tr>
   <tr>
     <td align="center"><a href="https://gmc64.com/sound-maker.html"><img src="docs/screenshots/04-sound-maker.png" width="320"></a><br><sub>Sound Maker</sub></td>
     <td align="center"><a href="https://gmc64.com/music-maker.html"><img src="docs/screenshots/05-music-maker.png" width="320"></a><br><sub>Music Maker</sub></td>
-    <td align="center"><a href="https://gmc64.com/editor.html"><img src="docs/screenshots/06-editor.png" width="320"></a><br><sub>Program Editor</sub></td>
+    <td align="center"><a href="https://gmc64.com/program-editor.html"><img src="docs/screenshots/06-editor.png" width="320"></a><br><sub>Program Editor</sub></td>
   </tr>
 </table>
 
@@ -95,7 +95,7 @@ Then:
 - **Drop a `.d64` into any gmc64 tool** - editor, sprite-maker, scene-maker,
   sound-maker, and music-maker will all open a pop-up file picker.
 - **Host a `.d64`** - you can point to an online `d64` as
-  well: `editor.html?disk=https://your-host/game.d64` opens the same file picker
+  well: `program-editor.html?disk=https://your-host/game.d64` opens the same file picker
 
 When your game is ready, hit **Export Game** to get a single HTML file of your creation.
 
@@ -122,7 +122,7 @@ Example — direct link:
 https://gmc64.com/play.html?disk=demo&file=aliens/prg&nocredit=1
 ```
 
-### Editor (`editor.html`) — loads into the editor, optionally plays
+### Program editor (`program-editor.html`) — loads into the editor, optionally plays
 
 | Param | Purpose |
 |-------|---------|
@@ -135,7 +135,7 @@ https://gmc64.com/play.html?disk=demo&file=aliens/prg&nocredit=1
 Example — send someone a runnable link that still lets them drop into the editor and see the code:
 
 ```
-https://gmc64.com/editor.html?disk=https://your-host.com/game.d64&file=GAME/PRG&play=1
+https://gmc64.com/program-editor.html?disk=https://your-host.com/game.d64&file=GAME/PRG&play=1
 ```
 
 The other editors (`sprite-maker.html`, `scene-maker.html`, `sound-maker.html`,
@@ -180,7 +180,7 @@ the HTML.
 
 | File | What it edits |
 |------|---------------|
-| `editor.html` | Program instructions + runtime + asset assignment |
+| `program-editor.html` | Program instructions + runtime + asset assignment |
 | `sprite-maker.html` | Sprites (multi-color, multi-frame, multi-part) |
 | `scene-maker.html` | Backgrounds (160×200 4 indexed-color scenes) |
 | `sound-maker.html` | Sound effects (SID-style) |

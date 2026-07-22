@@ -60,6 +60,118 @@
 }
 
 /* ==========================================================================
+   CROSS-TOOL TOP NAV (.gm-topbar)
+   ==========================================================================
+
+   Site-chrome strip injected above every editor by js/gmTopbar.js.
+   Same identity mark and link set as index.html + community.html but
+   compressed to a 20px bar and using pure C64 palette values (black bg,
+   gray2 text) so it reads as chrome, not editor UI. Serif font matches
+   the visitor-facing pages rather than the editor's pixel font.
+
+   Keep the link set in loose sync with index.html and community.html's
+   static headers — same destinations, different visual weight. */
+
+.gm-topbar {
+    /* width:100% + flex-shrink:0 so a flex-column body (e.g.
+       sound-maker sets `body { display:flex; align-items:center }`)
+       can't compress or center-shrink the bar. */
+    width: 100%;
+    flex-shrink: 0;
+    height: 20px;
+    background: var(--c64-black);
+    color: var(--c64-gray2);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+    font: 12px/1 ui-serif, Georgia, Cambria, "Times New Roman", serif;
+    letter-spacing: 0.02em;
+    /* Small buffer between the bar and the editor stage so the bar
+       reads as chrome rather than a border of the stage. */
+    margin-bottom: 6px;
+    position: relative;      /* anchor for the dropdown menu below */
+}
+.gm-topbar a { color: var(--c64-gray2); text-decoration: none; }
+.gm-topbar a:hover { color: var(--c64-gray3); }
+.gm-topbar-logo {
+    font-weight: 800;
+    letter-spacing: 0.045em;
+    text-transform: uppercase;
+    display: inline-flex;
+    align-items: center;
+}
+/* Same 4-quadrant gradient square as the landing page — keeps the
+   identity mark consistent across visitor-facing (index.html,
+   community.html) and tool pages. */
+.gm-topbar-logo::before {
+    content: "";
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    margin-right: 6px;
+    border-radius: 2px;
+    background: linear-gradient(135deg,
+        var(--c64-blue) 0 25%,
+        var(--c64-lt-blue) 25% 50%,
+        var(--c64-cyan) 50% 75%,
+        var(--c64-blue) 75%);
+}
+.gm-topbar-links { display: flex; gap: 14px; align-items: center; }
+
+/* Editors dropdown — mirrors the quit-menu popup content so users have
+   two discoverable paths to switch tools. */
+.gm-topbar-dropdown { position: relative; }
+.gm-topbar-dropdown-trigger {
+    /* Reset button chrome so it matches the sibling <a> links visually. */
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    color: var(--c64-gray2);
+    font: inherit;
+    letter-spacing: inherit;
+    cursor: pointer;
+}
+.gm-topbar-dropdown-trigger:hover { color: var(--c64-gray3); }
+.gm-topbar-chevron {
+    /* Slightly smaller than the label — the chevron is a hint, not a
+       feature. font-size: .85em keeps it proportional across zoom. */
+    font-size: 0.85em;
+    margin-left: 2px;
+}
+.gm-topbar-dropdown-menu {
+    display: none;
+    position: absolute;
+    top: 100%;
+    right: 0;
+    /* Match the bar's palette but with a hairline black border so it
+       reads as a distinct surface rather than merging with page content
+       below the bar. */
+    background: var(--c64-black);
+    border: 1px solid var(--c64-gray1);
+    padding: 6px 0;
+    min-width: 140px;
+    z-index: 1000;
+}
+.gm-topbar-dropdown[data-open="true"] .gm-topbar-dropdown-menu {
+    display: block;
+}
+.gm-topbar-dropdown-menu a {
+    display: block;
+    padding: 4px 14px;
+    white-space: nowrap;
+}
+.gm-topbar-dropdown-menu a:hover {
+    background: var(--c64-gray1);
+    color: var(--c64-gray3);
+}
+/* Current-page marker: the dropdown item corresponding to the page
+   you're on renders in gray3 (brighter) so users can see "where they
+   are" among the 5 editors. */
+.gm-topbar-dropdown-menu a[aria-current="page"] { color: var(--c64-gray3); }
+
+/* ==========================================================================
    BASE STYLES
    ========================================================================== */
 

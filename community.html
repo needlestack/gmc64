@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Community disks — gmc64</title>
+  <meta name="description" content="Play GameMaker games shared by the gmc64 community." />
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+
+  <!-- Social preview -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="gmc64" />
+  <meta property="og:title" content="Community disks — gmc64" />
+  <meta property="og:description" content="Play GameMaker games shared by the gmc64 community." />
+
+  <style>
+    /* Palette + typography mirror index.html — the community page is
+       part of the same visitor-facing site, not the editor UI. */
+    :root {
+      --bg: #d4d4d4;
+      --paper: #dcdcdc;
+      --card: #e8e8e8;
+      --ink: #1a1a2e;
+      --muted: #5a5a5c;
+      --line: #b2b2b2;
+      --c64-blue: #40318d;
+      --c64-light-blue: #7869c4;
+      --c64-cyan: #67b6bd;
+      --accent: var(--c64-blue);
+      --shadow: 0 18px 60px rgba(30, 30, 40, .12);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font: 16px/1.55 ui-serif, Georgia, Cambria, "Times New Roman", serif;
+      background: linear-gradient(180deg, var(--bg) 0%, var(--paper) 100%);
+      color: var(--ink);
+      min-height: 100vh;
+    }
+    a { color: inherit; text-decoration-thickness: .08em; text-underline-offset: .18em; }
+    a:hover { color: var(--accent); }
+    .wrap { width: min(1120px, calc(100% - 40px)); margin: 0 auto; }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      padding: 24px 0;
+    }
+    .logo {
+      font-weight: 850;
+      letter-spacing: .045em;
+      font-size: 1.25rem;
+      text-transform: uppercase;
+      text-decoration: none;
+    }
+    .logo::before {
+      content: "";
+      display: inline-block;
+      width: .72em;
+      height: .72em;
+      margin-right: .45em;
+      border-radius: 2px;
+      background: linear-gradient(135deg, var(--c64-blue) 0 25%, var(--c64-light-blue) 25% 50%, var(--c64-cyan) 50% 75%, var(--c64-blue) 75%);
+      vertical-align: -.04em;
+    }
+    nav { display: flex; flex-wrap: wrap; gap: 14px 20px; color: var(--muted); font-size: .92rem; }
+    nav a { text-decoration: none; }
+
+    /* Editors dropdown — mirrors the version in index.html and (with a
+       different palette) the topbar in js/gmTopbar.js. Keep the three
+       in loose sync. */
+    .nav-dropdown { position: relative; display: inline-flex; }
+    .nav-dropdown-trigger {
+        background: none; border: none; padding: 0; margin: 0;
+        color: inherit; font: inherit; letter-spacing: inherit;
+        cursor: pointer;
+    }
+    .nav-dropdown-trigger:hover { color: var(--accent); }
+    .nav-dropdown-chevron { font-size: 0.85em; margin-left: 2px; }
+    .nav-dropdown-menu {
+        display: none;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        padding: 6px 0;
+        margin-top: 8px;
+        min-width: 160px;
+        box-shadow: 0 6px 20px rgba(33, 25, 78, .08);
+        z-index: 100;
+    }
+    .nav-dropdown[data-open="true"] .nav-dropdown-menu { display: block; }
+    .nav-dropdown-menu a {
+        display: block;
+        padding: 6px 16px;
+        color: var(--ink);
+        white-space: nowrap;
+    }
+    .nav-dropdown-menu a:hover {
+        background: rgba(64, 49, 141, 0.06);
+        color: var(--accent);
+    }
+
+    .hero { padding: 20px 0 40px; }
+    h1 {
+      margin: 0;
+      font-size: clamp(2rem, 5vw, 3.4rem);
+      line-height: 1.05;
+      letter-spacing: -.015em;
+    }
+    .dek {
+      margin: 20px 0 0;
+      max-width: 640px;
+      color: var(--muted);
+      font-size: clamp(1.05rem, 1.6vw, 1.2rem);
+    }
+    .dek a { color: var(--c64-blue); }
+
+    /* Grid of community disks. Same visual language as index.html's
+       .strip tiles — square-ish poster on top, name + credit on the
+       bottom — but larger and 3-across so posters are the primary
+       content, not decoration. */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 20px;
+      padding: 0 0 72px;
+    }
+    .disk {
+      display: block;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--card);
+      text-decoration: none;
+      color: inherit;
+      box-shadow: 0 10px 28px rgba(33, 25, 78, .05);
+      transition: transform 0.1s, box-shadow 0.1s;
+    }
+    .disk:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 14px 32px rgba(33, 25, 78, .08);
+    }
+    .disk img {
+      display: block;
+      width: 100%;
+      aspect-ratio: 4 / 3;
+      object-fit: cover;
+      /* image-rendering: pixelated preserves the 320x200 sharpness on
+         high-DPI displays instead of smoothing. Matches the C64 look. */
+      image-rendering: pixelated;
+      background: black;
+    }
+    .disk-body { padding: 12px 14px 14px; }
+    .disk-title { margin: 0; font-size: 1rem; font-weight: 700; }
+    .disk-credit { margin: 2px 0 0; color: var(--muted); font-size: .85rem; }
+    .disk-desc { margin: 8px 0 0; font-size: .9rem; color: var(--muted); }
+
+    .empty {
+      text-align: center;
+      padding: 80px 20px;
+      color: var(--muted);
+    }
+    .empty p { margin: 0 0 12px; }
+    .empty a { color: var(--c64-blue); }
+
+    footer {
+      border-top: 1px solid var(--line);
+      padding: 24px 0 40px;
+      color: var(--muted);
+      font-size: .9rem;
+    }
+
+    @media (max-width: 860px) {
+      header { align-items: flex-start; flex-direction: column; }
+    }
+    @media (max-width: 560px) {
+      .wrap { width: min(100% - 28px, 1120px); }
+      nav { gap: 10px 14px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <a class="logo" href="index.html" aria-label="gmc64 home">gmc64</a>
+      <nav aria-label="Main navigation">
+        <a href="index.html">Home</a>
+        <div class="nav-dropdown" data-open="false">
+          <button class="nav-dropdown-trigger" type="button"
+                  aria-haspopup="true" aria-expanded="false">
+            Editors<span class="nav-dropdown-chevron" aria-hidden="true">▾</span>
+          </button>
+          <div class="nav-dropdown-menu" role="menu">
+            <a role="menuitem" href="program-editor.html">Program editor</a>
+            <a role="menuitem" href="sprite-maker.html">Sprite maker</a>
+            <a role="menuitem" href="sound-maker.html">Sound maker</a>
+            <a role="menuitem" href="scene-maker.html">Scene maker</a>
+            <a role="menuitem" href="music-maker.html">Music maker</a>
+          </div>
+        </div>
+        <a href="community.html" aria-current="page">Community</a>
+        <a href="https://github.com/needlestack/gmc64">GitHub</a>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <h1>Community disks</h1>
+      <p class="dek">
+        GameMaker games shared by the gmc64 community. Click any card to
+        play in your browser.
+        <!-- The submission link is intentionally *below* the browse
+             experience — visitors come to play; contributors go looking
+             for how to add theirs. -->
+      </p>
+    </section>
+
+    <div class="grid" id="grid" aria-live="polite"></div>
+
+    <footer>
+      Have a disk to share?
+      <!-- SUBMIT_LINK placeholder — swap for the actual Google Form URL
+           once it's live. Kept as a mailto so the page ships without
+           the form ready. -->
+      <a href="mailto:hi@gmc64.com?subject=Community%20disk%20submission">Send it in</a>
+      and it'll show up here.
+    </footer>
+  </div>
+
+  <script>
+    // Render the community grid from the manifest. All user-submitted
+    // text (title, credit, description) flows through textContent — not
+    // innerHTML — so a hostile submission can't inject markup.
+    fetch('disks/community/manifest.json')
+        .then(r => r.ok ? r.json() : { disks: [] })
+        .then(manifest => {
+            const grid = document.getElementById('grid');
+            const disks = (manifest && Array.isArray(manifest.disks)) ? manifest.disks : [];
+            if (!disks.length) {
+                grid.outerHTML =
+                    '<div class="empty">' +
+                    '<p>No community disks yet.</p>' +
+                    '<p><a href="mailto:hi@gmc64.com?subject=Community%20disk%20submission">Be the first to share one.</a></p>' +
+                    '</div>';
+                return;
+            }
+            for (const d of disks) {
+                const params = new URLSearchParams({
+                    disk: `disks/community/${d.disk}`,
+                    file: d.file
+                });
+                const a = document.createElement('a');
+                a.className = 'disk';
+                a.href = `play.html?${params}`;
+
+                const img = document.createElement('img');
+                img.src = `disks/community/${d.poster}`;
+                img.alt = `${d.title} — poster frame`;
+                // Not lazy for the first few (above the fold) but the
+                // browser handles that heuristic. Loading=lazy is fine.
+                img.loading = 'lazy';
+                a.appendChild(img);
+
+                const body = document.createElement('div');
+                body.className = 'disk-body';
+                const title = document.createElement('p');
+                title.className = 'disk-title';
+                title.textContent = d.title;
+                body.appendChild(title);
+
+                const credit = document.createElement('p');
+                credit.className = 'disk-credit';
+                credit.textContent = 'by ' + d.credit;
+                body.appendChild(credit);
+
+                if (d.description) {
+                    const desc = document.createElement('p');
+                    desc.className = 'disk-desc';
+                    desc.textContent = d.description;
+                    body.appendChild(desc);
+                }
+
+                a.appendChild(body);
+                grid.appendChild(a);
+            }
+        })
+        .catch(err => {
+            console.error('failed to load manifest', err);
+            document.getElementById('grid').outerHTML =
+                '<div class="empty"><p>Couldn\'t load community disks. Try again in a moment.</p></div>';
+        });
+
+    // Editors-nav dropdown wire-up. Mirrors the inline block in
+    // index.html and the behavior in js/gmTopbar.js.
+    (function() {
+        const dd = document.querySelector('.nav-dropdown');
+        if (!dd) return;
+        const trigger = dd.querySelector('.nav-dropdown-trigger');
+        function setOpen(open) {
+            dd.dataset.open = String(open);
+            trigger.setAttribute('aria-expanded', String(open));
+        }
+        trigger.addEventListener('click', (e) => {
+            e.stopPropagation();
+            setOpen(dd.dataset.open !== 'true');
+        });
+        document.addEventListener('click', (e) => {
+            if (dd.dataset.open === 'true' && !dd.contains(e.target)) setOpen(false);
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && dd.dataset.open === 'true') {
+                setOpen(false);
+                e.preventDefault();
+            }
+        });
+    })();
+  </script>
+</body>
+</html>

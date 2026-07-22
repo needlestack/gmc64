@@ -20,7 +20,7 @@ This document is the internal engineering reference — architecture, file forma
 ## Project Structure
 
 ```
-├── editor.html          Program editor/runner (AST-based VM)
+├── program-editor.html          Program editor/runner (AST-based VM)
 ├── sprite-maker.html    Sprite editor
 ├── scene-maker.html     Scene editor
 ├── sound-maker.html     Sound effect editor
@@ -181,7 +181,13 @@ The address is calculated from the instruction's position in the bytecode.
 
 ### .SPR (Sprites)
 - 37-byte header with position, colors, flags, frame count
-- Each frame: 64 bytes (24×21 pixels)
+- Each frame: 63 real bytes (24×21 pixels), padded to 64 for alignment — **except
+  the last stored frame, which is 63 with no trailing padding** (matches original
+  GM files). Consequence: a sprite embedded in a PRG reads its final frame as 64
+  bytes and over-reads 1 byte (index 63) of the next data entry. That byte is
+  padding and is never rendered (only indices 0–62 are pixels), so it's harmless —
+  don't mistake a non-zero byte 63 for a visible pixel. `gmSprite._frameHasData`
+  scans all 64 bytes, so it is NOT a "visibly blank" test; check bytes 0–62 for that.
 - Multicolor: 12 fat pixels wide, hi-res: 24 thin pixels
 
 ### .PIC (Scenes)
@@ -440,7 +446,7 @@ Total sprite data is split across all 4 entries.
 
 Sprites can be loaded from two different sources, each requiring different handling to produce the same normalized mediaStore structure:
 
-| Aspect | Disk-Loaded (editor.html) | PRG-Loaded (gmParser.js) |
+| Aspect | Disk-Loaded (program-editor.html) | PRG-Loaded (gmParser.js) |
 |--------|---------------------------|--------------------------|
 | Source | .SPR file from D64 disk | Embedded in PRG binary data page |
 | Input format | Single contiguous file | Separate entries per quad |
@@ -457,7 +463,7 @@ mediaStore[N+2]: { sprite: null, quadIndex: 2 }      // Empty marker
 mediaStore[N+3]: { sprite: null, quadIndex: 3 }      // Empty marker
 ```
 
-**Disk-loaded flow (editor.html):**
+**Disk-loaded flow (program-editor.html):**
 1. Load .SPR file (already contiguous with all quads)
 2. Pass entire file to `new gmSprite(fileData)`
 3. Store gmSprite in main entry, create empty markers for quads 1-3
@@ -634,7 +640,7 @@ restyle.
 - Configurable `showPicker` hook so hosts can route through their own file browser
 
 Contracts differ slightly per editor:
-- `editor.html`: on pick → `loadProgramData` + `saveProgram`. Multi-match hands off to `showFilePopup()`.
+- `program-editor.html`: on pick → `loadProgramData` + `saveProgram`. Multi-match hands off to `showFilePopup()`.
 - `play.html`: bare visit shows the picker's drop-zone overlay (game-runner has no file menu of its own).
 - Sprite/scene-maker: multi-match → `enterPreviewMode()` (browsable preview).
 - Sound/music-maker: multi-match → `showFilePopup()` / `showDiskPopup()`.
@@ -645,11 +651,11 @@ Reader-facing coverage of `?disk`, `?file`, `?play`, `?poster_seconds`,
 `?nocredit`, and iframe embedding lives in README's "Sharing your creations"
 section. Internal-only convenience worth calling out:
 
-- `?play_demo=1` — editor.html alias for `?disk=demo&file=GMC64I/PRG&play=1&poster_seconds=8.5`. Kept as a short URL for the marketing site's "Try the demo" button; not documented for embedders.
+- `?play_demo=1` — program-editor.html alias for `?disk=demo&file=GMC64I/PRG&play=1&poster_seconds=8.5`. Kept as a short URL for the marketing site's "Try the demo" button; not documented for embedders.
 
 ## Critical Gotchas
 
-**DO NOT USE requestAnimationFrame in game loop:** Causes severe CPU thrashing. Use `setTimeout` at ~16ms (60fps target — `FRAME_TIME = 16` in editor.html and play.html).
+**DO NOT USE requestAnimationFrame in game loop:** Causes severe CPU thrashing. Use `setTimeout` at ~16ms (60fps target — `FRAME_TIME = 16` in program-editor.html and play.html).
 
 **Don't trim() filenames:** Spaces can be significant (e.g., `"STARS /PIC"`). GameMaker filenames are exactly 6 chars (space-padded if shorter) + `/` + 3-char extension. `disk.readFile` normalizes on lookup, but round-tripping and directory display are picky.
 

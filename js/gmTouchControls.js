@@ -1,7 +1,7 @@
 // gmTouchControls.js — Virtual joystick + fire button overlay for mobile play.
 //
 // Mounts translucent controls onto the game canvas that write directly to the
-// global inputState the VM reads each frame. Both play.html and editor.html
+// global inputState the VM reads each frame. Both play.html and program-editor.html
 // (in play mode) use it.
 //
 // Usage:

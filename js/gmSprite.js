@@ -414,7 +414,16 @@ class gmSprite {
             this.sprite[quad] = quadHeader;
 
             // Read frame data for this quad using totalFrames from header
-            // (totalFrames may exceed numFrames when sprite has hidden frames beyond animation)
+            // (totalFrames may exceed numFrames when sprite has hidden frames beyond animation).
+            //
+            // A C64 sprite is 24×21 = 63 real bytes; frames are padded to 64 for
+            // alignment EXCEPT the very last frame stored, which serialize() writes as
+            // 63 (no trailing padding — matches original GM files). We read a flat 64
+            // here, so for a sprite embedded in a PRG (where more data follows), the
+            // final frame's 64th byte over-reads 1 byte of the next entry. That byte is
+            // index 63 = padding, which the renderer never draws — so it's harmless.
+            // Don't "fix" this by trimming: standalone .SPR reads clamp at EOF anyway,
+            // and code that treats a full 64-byte buffer as authoritative would break.
             this.sprite[quad].imageData = [];
             for (let frame = 0; frame < quadHeader.totalFrames; ++frame) {
                 this.sprite[quad].imageData[frame] = this.fileData.slice(
@@ -561,7 +570,9 @@ class gmSprite {
 
                 const imageData = this.sprite[quad].imageData[frame];
 
-                // Process each of the 21 rows
+                // Process each of the 21 rows. Only bytes 0..62 (row*3+col, 21 rows ×
+                // 3 cols) are pixels; byte 63 is padding and is never read here — so a
+                // frame is "visibly blank" iff bytes 0..62 are zero, regardless of 63.
                 for (let row = 0; row < 21; row++) {
                     // Each row is 3 bytes
                     for (let col = 0; col < 3; col++) {
@@ -960,6 +971,12 @@ class gmSprite {
     // Serialize sprite back to GameMaker .SPR file format.
     // Returns Uint8Array that can be written to D64 disk.
     // True iff `imageData` (a 63/64-byte frame buffer) contains any non-zero bytes.
+    // NOTE: this scans ALL bytes, including the 64th (index 63) — which is padding
+    // that the renderer never draws (see renderFrames: only row*3+col, indices
+    // 0..62, become pixels). So this is a serialization/trim helper, NOT a test for
+    // "visibly blank". An embedded sprite's final frame can carry a non-zero byte 63
+    // (a benign over-read of the next entry — see decodeSpriteData) and still render
+    // completely empty. To ask "does this frame show anything?", check indices 0..62.
     static _frameHasData(imageData) {
         if (!imageData) return false;
         for (let i = 0; i < imageData.length; i++) {

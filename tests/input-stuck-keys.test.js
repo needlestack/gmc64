@@ -20,9 +20,9 @@ import puppeteer from 'puppeteer';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const PROJECT_ROOT = join(__dirname, '..');
-// editor.html loads gmPlayerChrome.js — using it as the browser context
+// program-editor.html loads gmPlayerChrome.js — using it as the browser context
 // avoids maintaining a dedicated test fixture page.
-const HOST_URL = `file://${join(PROJECT_ROOT, 'editor.html')}`;
+const HOST_URL = `file://${join(PROJECT_ROOT, 'program-editor.html')}`;
 
 let browser;
 

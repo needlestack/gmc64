@@ -27,11 +27,15 @@ const PROJECT_ROOT = join(__dirname, '..');
 
 let browser;
 let testDiskBase64;
+let standaloneDiskBase64;
 
 beforeAll(async () => {
     browser = await puppeteer.launch({ headless: true });
     testDiskBase64 = readFileSync(
         join(PROJECT_ROOT, 'tests/disks/gmc64-test.d64')
+    ).toString('base64');
+    standaloneDiskBase64 = readFileSync(
+        join(PROJECT_ROOT, 'tests/disks/standalone.d64')
     ).toString('base64');
 });
 
@@ -46,18 +50,30 @@ afterAll(async () => { if (browser) await browser.close(); });
 // re-arms across the dispatch navigation), but the storage-mutation
 // is guarded by a `_seeded` flag so it only writes once — subsequent
 // navigations don't re-clear the localStorage we're testing against.
-async function openEditor(page, editorPage) {
+async function openEditor(page, editorPage, { diskBase64 = testDiskBase64, diskName = 'gmc64-test.d64' } = {}) {
+    // program-editor.html is a rename hangover: its GMDisk still uses the
+    // legacy 'editor' selection key, and the legacy-seed migration only
+    // recognises the page name 'editor' — so seed under that name for it.
+    const seedPage = editorPage === 'program-editor' ? 'editor' : editorPage;
     await page.evaluateOnNewDocument((data, name, key) => {
         if (window.name === '_seeded') return;
         localStorage.clear();
         localStorage.setItem(key, data);
         localStorage.setItem(key + '_name', name);
         window.name = '_seeded';
-    }, testDiskBase64, 'gmc64-test.d64', `gm_disk_${editorPage}`);
+    }, diskBase64, diskName, `gm_disk_${seedPage}`);
     await page.goto(`file://${join(PROJECT_ROOT, editorPage + '.html')}`, {
         waitUntil: 'domcontentloaded'
     });
-    await page.waitForFunction(() => typeof disk !== 'undefined' && disk.disk !== null);
+    // Every editor exposes its disk instance as `disk` except program-editor,
+    // which names it `gmDisk`. Wait on either, then alias to `disk` so the
+    // shared helpers and tests below can always reference `disk`.
+    await page.waitForFunction(() =>
+        (typeof disk !== 'undefined' && disk.disk !== null) ||
+        (typeof gmDisk !== 'undefined' && gmDisk.disk !== null));
+    await page.evaluate(() => {
+        if (typeof disk === 'undefined' && typeof gmDisk !== 'undefined') window.disk = gmDisk;
+    });
 }
 
 // Each editor has its own top-level function that configures + opens
@@ -141,6 +157,114 @@ describe('cross-editor dispatch — URL construction', () => {
     }, 20000);
 });
 
+describe('cross-editor dispatch — standalone exports', () => {
+    // Standalones only load in the program editor (only it detects the
+    // $0302 magic and routes through standaloneToPRG). Everywhere else the
+    // row is dimmed and Load dispatches to the program editor instead of
+    // erroring on a raw load.
+    test('sprite-maker → Load on a dimmed standalone dispatches to program-editor', async () => {
+        const page = await browser.newPage();
+        await openEditor(page, 'sprite-maker', {
+            diskBase64: standaloneDiskBase64, diskName: 'standalone.d64'
+        });
+        const poolId = await page.evaluate(() => disk.currentDiskId);
+
+        await openDiskPopup(page);
+        // Find the standalone row by its dispatch target, select it, and
+        // confirm it's dimmed with Load enabled (dispatch mode).
+        const info = await page.evaluate(() => {
+            const idx = disk.directoryEntries.findIndex(e => e.dispatchTo === 'program-editor');
+            if (idx < 0) return null;
+            const row = document.querySelector(`.gm-disk-files tr[data-index="${idx}"]`);
+            row.click();
+            return {
+                fileName: disk.directoryEntries[idx].fileName,
+                dimmed: row.classList.contains('gm-disk-row-dimmed'),
+                loadDisabled: document.querySelector('.gm-disk-load').disabled
+            };
+        });
+        expect(info).toBeTruthy();
+        expect(info.dimmed).toBe(true);
+        expect(info.loadDisabled).toBe(false);
+
+        await Promise.all([
+            page.waitForNavigation({ waitUntil: 'domcontentloaded' }),
+            page.click('.gm-disk-load')
+        ]);
+
+        const url = new URL(page.url());
+        expect(url.pathname.endsWith('/program-editor.html')).toBe(true);
+        expect(url.searchParams.get('disk')).toBe(`pool:${poolId}`);
+        expect(url.searchParams.get('file')).toBe(info.fileName);
+        await page.close();
+    }, 20000);
+
+    test('landing on program-editor.html?file=<standalone> loads it (no "wrong file type")', async () => {
+        // Establish the pool + read the standalone's disk filename from a
+        // sprite-maker page, then craft the dispatch URL by hand.
+        const setup = await browser.newPage();
+        await openEditor(setup, 'sprite-maker', {
+            diskBase64: standaloneDiskBase64, diskName: 'standalone.d64'
+        });
+        await openDiskPopup(setup); // populates disk.directoryEntries
+        const { poolId, fileName } = await setup.evaluate(() => {
+            const e = disk.directoryEntries.find(x => x.dispatchTo === 'program-editor');
+            return { poolId: disk.currentDiskId, fileName: e.fileName };
+        });
+        await setup.close();
+
+        const target = await browser.newPage();
+        const errors = [];
+        // The "wrong file type" rejection surfaces via showMessage, which
+        // routes to the on-screen status area — capture console.warn too in
+        // case a headless path logs instead of rendering.
+        target.on('console', m => { if (m.type() === 'warning') errors.push(m.text()); });
+        const params = new URLSearchParams({ disk: `pool:${poolId}`, file: fileName });
+        await target.goto(
+            `file://${join(PROJECT_ROOT, 'program-editor.html')}?${params.toString()}`,
+            { waitUntil: 'domcontentloaded' }
+        );
+        // The standalone loads once loadProgramData → standaloneToPRG has
+        // populated currentProgramData with instructions.
+        await target.waitForFunction(() =>
+            typeof currentProgramData !== 'undefined' &&
+            currentProgramData !== null &&
+            Array.isArray(currentProgramData.instructions) &&
+            currentProgramData.instructions.length > 0,
+            { timeout: 5000 }
+        );
+        await target.close();
+    }, 20000);
+
+    test('program-editor → the same standalone is loadable, not dimmed', async () => {
+        const page = await browser.newPage();
+        await openEditor(page, 'program-editor', {
+            diskBase64: standaloneDiskBase64, diskName: 'standalone.d64'
+        });
+
+        await openDiskPopup(page);
+        const info = await page.evaluate(() => {
+            // In the program editor the standalone is loadable, so it has
+            // no dispatchTo — identify it as the non-GM-extension entry.
+            const idx = disk.directoryEntries.findIndex(e =>
+                e.loadable && !/\/(SPR|PIC|SND|SNG|PRG)$/i.test(e.fileName));
+            if (idx < 0) return null;
+            const row = document.querySelector(`.gm-disk-files tr[data-index="${idx}"]`);
+            const entry = disk.directoryEntries[idx];
+            return {
+                dimmed: row.classList.contains('gm-disk-row-dimmed'),
+                loadable: entry.loadable,
+                hasDispatch: !!entry.dispatchTo
+            };
+        });
+        expect(info).toBeTruthy();
+        expect(info.dimmed).toBe(false);
+        expect(info.loadable).toBe(true);
+        expect(info.hasDispatch).toBe(false);
+        await page.close();
+    }, 20000);
+});
+
 describe('cross-editor dispatch — target auto-loads the file', () => {
     test('landing on scene-maker.html?disk=pool:X&file=STARS /PIC loads STARS into the editor', async () => {
         // Establish sprite-maker's pool + selection, then read the pool
@@ -181,32 +305,49 @@ describe('cross-editor dispatch — session state survives', () => {
         const page = await browser.newPage();
         await openEditor(page, 'sprite-maker');
 
-        // Manually seed a session blob so we don't have to script an
-        // edit gesture through the sprite editor's DOM (which is
-        // complex and orthogonal to the state-retention contract).
-        // The blob shape mirrors what saveSpriteSession() writes.
-        const sentinel = 'DISPATCH-CANARY-' + Date.now();
-        await page.evaluate((s) => {
-            GMTools.session.save('sprite-maker', { canary: s });
-        }, sentinel);
+        // Let sprite-maker write its OWN session rather than seeding a
+        // synthetic blob. sprite-maker autosaves on every render via a
+        // debounced saver (updatePreview → saveSpriteSession, ~500ms), so
+        // an earlier version of this test that seeded a canary then
+        // immediately dispatched was racing that pending write: under
+        // full-suite CPU load the debounce fired *after* the seed and
+        // clobbered it, making the test flaky. Waiting for the editor's
+        // real write to land (instead of racing it) removes the race and
+        // tests the actual contract — the in-progress session the editor
+        // itself persisted survives dispatch. Poll for the real blob
+        // (identified by its `bytes` field) so we know the debounce fired.
+        await page.waitForFunction(() => {
+            const raw = localStorage.getItem('gm_session_sprite-maker');
+            if (!raw) return false;
+            try { return typeof JSON.parse(raw).bytes === 'string'; }
+            catch { return false; }
+        }, { timeout: 5000 });
 
-        // Dispatch away.
         await openDiskPopup(page);
         await selectRow(page, 'STARS /PIC');
+
+        // Snapshot the live session at the last moment before dispatch.
+        // Nothing re-renders sprite-maker during the popup interaction, so
+        // this value is stable; comparing it verbatim after navigation is
+        // a race-free assertion that dispatch neither wipes nor mutates it.
+        const before = await page.evaluate(() =>
+            localStorage.getItem('gm_session_sprite-maker')
+        );
+        expect(before).toBeTruthy();
+
         await Promise.all([
             page.waitForNavigation({ waitUntil: 'domcontentloaded' }),
             page.click('.gm-disk-load')
         ]);
 
-        // Now on scene-maker. Confirm sprite-maker's session survived.
-        // (localStorage is shared across pages on the same origin;
-        // dispatch doesn't clear anything, so the session blob is
-        // still there for sprite-maker to restore on the next visit.)
-        const restored = await page.evaluate(() =>
-            GMTools.session.load('sprite-maker')
+        // Now on scene-maker. localStorage is shared across pages on the
+        // same origin and scene-maker never touches sprite-maker's key, so
+        // the blob must be byte-identical — ready for sprite-maker to
+        // restore verbatim on the next visit (browser-back).
+        const after = await page.evaluate(() =>
+            localStorage.getItem('gm_session_sprite-maker')
         );
-        expect(restored).toBeTruthy();
-        expect(restored.canary).toBe(sentinel);
+        expect(after).toBe(before);
         await page.close();
     }, 20000);
 });

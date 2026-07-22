@@ -22,7 +22,7 @@
 //
 // TWO ENTRY POINTS exist for loading sprites, both normalizing to the same structure:
 //
-//   1. DISK-LOADED (editor.html): User picks .SPR file from disk
+//   1. DISK-LOADED (program-editor.html): User picks .SPR file from disk
 //      - .SPR files are already contiguous (all quads in one file)
 //      - Just pass entire file to gmSprite, create empty markers
 //

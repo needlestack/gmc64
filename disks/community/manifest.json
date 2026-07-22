@@ -1,0 +1,14 @@
+{
+  "disks": [
+    {
+      "slug": "gmc64-intro",
+      "title": "GMC64 Intro",
+      "description": "The bundled demo — intro, alien-shooter, sound tests, and music.",
+      "credit": "gmc64",
+      "disk": "gmc64-intro.d64",
+      "file": "GMC64I/PRG",
+      "poster": "gmc64-intro.png",
+      "added": "2026-07-12"
+    }
+  ]
+}

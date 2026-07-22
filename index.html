@@ -111,6 +111,53 @@
 
     nav a { text-decoration: none; }
 
+    /* Editors dropdown — landing-page-styled sibling of the C64-themed
+       dropdown in the editor topbar (js/gmTopbar.js). Same 5-item list,
+       same behavior (click / click-outside / Escape), but rendered with
+       the serif nav palette so it belongs on the landing page.
+       Keep in loose sync with community.html and js/gmTopbar.js. */
+    .nav-dropdown { position: relative; display: inline-flex; }
+    .nav-dropdown-trigger {
+        background: none;
+        border: none;
+        padding: 0;
+        margin: 0;
+        color: inherit;
+        font: inherit;
+        letter-spacing: inherit;
+        cursor: pointer;
+    }
+    .nav-dropdown-trigger:hover { color: var(--accent); }
+    .nav-dropdown-chevron {
+        font-size: 0.85em;
+        margin-left: 2px;
+    }
+    .nav-dropdown-menu {
+        display: none;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        padding: 6px 0;
+        margin-top: 8px;
+        min-width: 160px;
+        box-shadow: 0 6px 20px rgba(33, 25, 78, .08);
+        z-index: 100;
+    }
+    .nav-dropdown[data-open="true"] .nav-dropdown-menu { display: block; }
+    .nav-dropdown-menu a {
+        display: block;
+        padding: 6px 16px;
+        color: var(--ink);
+        white-space: nowrap;
+    }
+    .nav-dropdown-menu a:hover {
+        background: rgba(64, 49, 141, 0.06);
+        color: var(--accent);
+    }
+
     .hero {
       display: grid;
       grid-template-columns: minmax(0, 1.05fr) minmax(320px, .95fr);
@@ -396,10 +443,20 @@
     <header>
       <a class="logo" href="#top" aria-label="GMC64 home">gmc64</a>
       <nav aria-label="Main navigation">
-        <a href="#play">Play</a>
-        <a href="#make">Make</a>
-        <a href="#compatibility">Compatibility</a>
-        <a href="#resources">Resources</a>
+        <div class="nav-dropdown" data-open="false">
+          <button class="nav-dropdown-trigger" type="button"
+                  aria-haspopup="true" aria-expanded="false">
+            Editors<span class="nav-dropdown-chevron" aria-hidden="true">▾</span>
+          </button>
+          <div class="nav-dropdown-menu" role="menu">
+            <a role="menuitem" href="program-editor.html">Program editor</a>
+            <a role="menuitem" href="sprite-maker.html">Sprite maker</a>
+            <a role="menuitem" href="sound-maker.html">Sound maker</a>
+            <a role="menuitem" href="scene-maker.html">Scene maker</a>
+            <a role="menuitem" href="music-maker.html">Music maker</a>
+          </div>
+        </div>
+        <a href="community.html">Community</a>
         <a href="https://github.com/needlestack/gmc64">GitHub</a>
       </nav>
     </header>
@@ -410,12 +467,12 @@
           <h1 id="title">GameMaker, now in your browser.</h1>
           <p class="dek">A faithful, modern recreation of Garry Kitchen’s GameMaker. Load old disks, make new games, edit sprites and scenes, share as a link or a single HTML file.</p>
           <div class="actions">
-            <a class="button primary" href="editor.html?play_demo=1">Play the demo</a>
-            <a class="button" href="editor.html">Open the editor</a>
+            <a class="button primary" href="program-editor.html?play_demo=1">Play the demo</a>
+            <a class="button" href="program-editor.html">Open the editor</a>
             <a class="button" href="https://github.com/needlestack/gmc64">View source</a>
           </div>
         </div>
-        <a class="screen" href="editor.html?play_demo=1" aria-label="Try the gmc64 intro demo">
+        <a class="screen" href="program-editor.html?play_demo=1" aria-label="Try the gmc64 intro demo">
           <img src="docs/screenshots/01-intro.png" alt="gmc64 intro demo screenshot" />
         </a>
       </section>
@@ -431,7 +488,7 @@
         <div class="section-grid">
           <div>
             <h2>Play</h2>
-            <a class="tile tile--big tile--play" href="editor.html?disk=demo&file=aliens/prg&play=1">
+            <a class="tile tile--big tile--play" href="program-editor.html?disk=demo&file=aliens/prg&play=1">
               <img src="docs/screenshots/07-aliens.png" alt="Aliens demo screenshot" />
               <span>Play the ALIENS demo</span>
             </a>
@@ -451,7 +508,7 @@
         <div class="section-grid">
           <div>
             <h2>Make</h2>
-            <a class="tile tile--big tile--editor" href="editor.html">
+            <a class="tile tile--big tile--editor" href="program-editor.html">
               <img src="docs/screenshots/06-editor.png" alt="Program editor screenshot" />
               <span>Program editor</span>
             </a>
@@ -472,7 +529,7 @@
         <div class="section-grid">
           <div>
             <h2>Compatibility</h2>
-            <a class="tile tile--big tile--files" href="editor.html?disk=demo">
+            <a class="tile tile--big tile--files" href="program-editor.html?disk=demo">
               <img src="docs/screenshots/08-files.png" alt="Demo disk file browser screenshot" />
               <span>Browse the demo disk</span>
             </a>
@@ -541,6 +598,35 @@
       &copy; 2024&ndash;2026 Jonathan Field &middot; <a href="https://github.com/needlestack/gmc64/blob/main/LICENSE">MIT</a>
     </footer>
   </div>
+
+  <script>
+    // Editors-nav dropdown wire-up. Same behavior as js/gmTopbar.js's
+    // dropdown but written inline because the landing page doesn't
+    // load the topbar module. Keep the two in sync when tweaking
+    // interaction rules.
+    (function() {
+        const dd = document.querySelector('.nav-dropdown');
+        if (!dd) return;
+        const trigger = dd.querySelector('.nav-dropdown-trigger');
+        function setOpen(open) {
+            dd.dataset.open = String(open);
+            trigger.setAttribute('aria-expanded', String(open));
+        }
+        trigger.addEventListener('click', (e) => {
+            e.stopPropagation();
+            setOpen(dd.dataset.open !== 'true');
+        });
+        document.addEventListener('click', (e) => {
+            if (dd.dataset.open === 'true' && !dd.contains(e.target)) setOpen(false);
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && dd.dataset.open === 'true') {
+                setOpen(false);
+                e.preventDefault();
+            }
+        });
+    })();
+  </script>
 
 </body>
 </html>

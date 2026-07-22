@@ -1235,7 +1235,7 @@ const GMTools = {
                 <div class="quit-menu-outer">
                     <div class="quit-menu-container">
                         <div class="quit-menu-box">
-                            <a href="editor.html">editor</a>
+                            <a href="program-editor.html">program editor</a>
                             <a href="sprite-maker.html">sprite maker</a>
                             <a href="sound-maker.html">sound maker</a>
                             <a href="scene-maker.html">scene maker</a>
@@ -1473,7 +1473,7 @@ const GMTools = {
      *
      * `params` is optional. If omitted, we read `location.search`. Pass
      * a synthesized URLSearchParams to dispatch a load without changing
-     * the browser URL — used by editor.html's `?play_demo=1` alias,
+     * the browser URL — used by program-editor.html's `?play_demo=1` alias,
      * which rewrites itself to `disk=demo&file=GMC64I/PRG&play=1&…`.
      *
      * No-op when `?disk=` isn't in the URL. Surfaces all errors via
@@ -1511,12 +1511,24 @@ const GMTools = {
         const actualName = GMTools.findFileCaseInsensitive(disk.disk, fileName);
         if (!actualName) return msg(`"${fileName}" not on disk`);
         if (!actualName.toUpperCase().endsWith(expectedExt.toUpperCase())) {
-            const ext = actualName.split('/').pop().toLowerCase();
-            const target = {
-                prg: 'editor', spr: 'sprite-maker', pic: 'scene-maker',
-                snd: 'sound-maker', sng: 'music-maker'
-            }[ext];
-            return msg(target ? `"${actualName}" is a ${ext} — try ${target}.html` : `wrong file type`);
+            // Standalone exports have no GM extension but ARE program files:
+            // the program editor's loader sniffs the $0302 self-launch magic
+            // and converts them via standaloneToPRG. So when the program
+            // editor (expectedExt /PRG) is handed an extension-less file
+            // that starts with $0302, let it through rather than rejecting
+            // on the extension mismatch — the dispatch from other editors'
+            // disk popups relies on this path. Genuine type mismatches
+            // (a /SPR opened in the program editor, etc.) still bounce.
+            const data = disk.disk.readFile(actualName);
+            const isStandalone = data && data.length >= 2 && data[0] === 0x02 && data[1] === 0x03;
+            if (!(expectedExt.toUpperCase() === '/PRG' && isStandalone)) {
+                const ext = actualName.split('/').pop().toLowerCase();
+                const target = {
+                    prg: 'program-editor', spr: 'sprite-maker', pic: 'scene-maker',
+                    snd: 'sound-maker', sng: 'music-maker'
+                }[ext];
+                return msg(target ? `"${actualName}" is a ${ext} — try ${target}.html` : `wrong file type`);
+            }
         }
         proceed(actualName);
     }

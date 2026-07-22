@@ -34,7 +34,7 @@ const SPRITE_MAKER_URL = `file://${join(PROJECT_ROOT, 'sprite-maker.html')}`;
 const SCENE_MAKER_URL = `file://${join(PROJECT_ROOT, 'scene-maker.html')}`;
 const SOUND_MAKER_URL = `file://${join(PROJECT_ROOT, 'sound-maker.html')}`;
 const MUSIC_MAKER_URL = `file://${join(PROJECT_ROOT, 'music-maker.html')}`;
-const EDITOR_URL = `file://${join(PROJECT_ROOT, 'editor.html')}`;
+const EDITOR_URL = `file://${join(PROJECT_ROOT, 'program-editor.html')}`;
 const SPRITE_SELECTION_KEY = 'gm_disk_selection_sprite-maker';
 const SCENE_SELECTION_KEY = 'gm_disk_selection_scene-maker';
 const SOUND_SELECTION_KEY = 'gm_disk_selection_sound-maker';
@@ -728,7 +728,7 @@ describe('music-maker note drag — touch drag registers as a drag (not a stray 
 });
 
 // ---------------------------------------------------------------------------
-// editor.html — arg-field drag + viewport meta swap on play/edit
+// program-editor.html — arg-field drag + viewport meta swap on play/edit
 // ---------------------------------------------------------------------------
 // Two things tested here:
 //   • Numeric arg-field drag on touch (the "add 00000 to score 1" ish

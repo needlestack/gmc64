@@ -1,7 +1,7 @@
 /**
  * Editor interaction tests
  *
- * Random functionality tests for editor.html bugs we've encountered. Drives the
+ * Random functionality tests for program-editor.html bugs we've encountered. Drives the
  * editor through a real headless browser so focus/blur and event-ordering issues
  * (which JSDOM gets wrong) reflect real-world behavior.
  *
@@ -18,7 +18,7 @@ import puppeteer from 'puppeteer';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const PROJECT_ROOT = join(__dirname, '..');
-const EDITOR_URL = `file://${join(PROJECT_ROOT, 'editor.html')}`;
+const EDITOR_URL = `file://${join(PROJECT_ROOT, 'program-editor.html')}`;
 
 let browser;
 let testProgramFixture;
@@ -127,6 +127,57 @@ describe('editor — clicking outside a comment/print edit commits the edit', ()
         }, commentLineIndex);
 
         expect(committed).toMatch(/^\/ hello world/);
+
+        await page.close();
+    });
+
+});
+
+describe('editor — editing a print statement refreshes the runtime bytes (printBytes)', () => {
+    // Regression: the print/comment text editor updated instr.instructionName
+    // (the on-screen text) but never instr.printBytes — the bytes gmRuntime
+    // actually renders. So edited prints ran the OLD text and newly inserted
+    // prints rendered nothing, even though the listing looked correct.
+    test('committing a print edit writes GM-encoded printBytes', async () => {
+        const page = await openEditorWithProgram();
+
+        // Use an existing print (0x3B) if the fixture has one; otherwise append
+        // one with deliberately stale bytes so we can prove the edit refreshes.
+        const idx = await page.evaluate(() => {
+            let i = currentProgramData.instructions.findIndex(x => x.opcode === 0x3B);
+            if (i < 0) {
+                const ins = currentProgramData.instructions;
+                let pos = ins.length;
+                if (pos > 0 && ins[pos - 1].opcode === 0x00) pos -= 1; // before trailing blank
+                ins.splice(pos, 0, {
+                    label: 0, arg1: 0, arg2: 0, opcode: 0x3B,
+                    instructionName: 'print old_________________',
+                    printBytes: new Array(20).fill(0x3B)
+                });
+                renderProgramListing();
+                i = pos;
+            }
+            return i;
+        });
+        expect(idx).toBeGreaterThanOrEqual(0);
+
+        // Open the text input, replace the text with "hi", commit via blur.
+        await page.click(`.program-line[data-index="${idx}"] .editable-field[data-type="print"]`);
+        await page.waitForSelector('.string-edit-input');
+        await page.keyboard.type('hi');
+        await page.evaluate(() => document.querySelector('.string-edit-input').blur());
+        await page.waitForFunction(() => !document.querySelector('.string-edit-input'));
+
+        const result = await page.evaluate((i) => {
+            const instr = currentProgramData.instructions[i];
+            return { printBytes: instr.printBytes, name: instr.instructionName };
+        }, idx);
+
+        // 'hi' -> GM screen codes h=8, i=9 (NOT ASCII 104,105), 0x3B-padded to 20.
+        expect(result.printBytes.length).toBe(20);
+        expect(result.printBytes.slice(0, 2)).toEqual([8, 9]);
+        expect(result.printBytes.slice(2)).toEqual(new Array(18).fill(0x3B));
+        expect(result.name).toMatch(/^print hi/);
 
         await page.close();
     });
@@ -351,7 +402,7 @@ describe('editor — changing a multi-quad sprite replaces marker lines instead 
         // editor's serializer overwrites their name bytes via encodeString.
         //
         // To exercise the bug we save the .SPR via sprite-maker.html (the
-        // buggy path), then load+save+reload through editor.html.
+        // buggy path), then load+save+reload through program-editor.html.
         const blankDiskBase64 = readFileSync(join(PROJECT_ROOT, 'tests/disks/BlankDisk.d64')).toString('base64');
         const sprPage = await browser.newPage();
         sprPage.on('pageerror', err => console.error('sprite-maker page err:', err.message));
@@ -1543,6 +1594,88 @@ describe('editor — session save records scene filenames with GM-style padding'
         const page = await openEditorWithProgram();
         const name = await probeSavedSceneFilename(page, 'SKY   ');
         expect(name).toBe('SKY   /PIC');
+        await page.close();
+    });
+});
+
+describe('editor — placing a label commits it to the clicked line', () => {
+    // Regression (broke in the pointer/touch migration, commit 70d81af):
+    // onLabelMouseDown re-rendered the whole listing, which destroyed the
+    // e.target span, and THEN tried to setPointerCapture + attach
+    // pointermove/up/cancel listeners to that now-detached span. pointerup
+    // never fired, so the pending label never committed and the drag state
+    // never reset — every subsequent click just re-targeted the same
+    // uncommitted label, making it impossible to ever add a label.
+
+    // Drive the real gesture: pointerdown on a line's (empty) label span,
+    // then pointerup with no movement = a plain click = "place label here".
+    // Listeners live on document (the fix), so pointerup is dispatched there.
+    async function placeLabelViaGesture(page, lineIndex) {
+        await page.evaluate((idx) => {
+            const span = document.querySelectorAll('.program-line .label')[idx];
+            const programArea = document.getElementById('programArea');
+            const pr = programArea.getBoundingClientRect();
+            // clientX well inside the program area so onLabelMouseUp doesn't
+            // read this as a drag-off-to-the-left delete gesture.
+            const opts = {
+                bubbles: true, cancelable: true, pointerId: 1, isPrimary: true,
+                clientX: pr.left + 10, clientY: span.getBoundingClientRect().top + 2
+            };
+            span.dispatchEvent(new PointerEvent('pointerdown', opts));
+            document.dispatchEvent(new PointerEvent('pointerup', opts));
+        }, lineIndex);
+    }
+
+    test('clicking a line places a label that persists there', async () => {
+        const page = await openEditorWithProgram();
+
+        // Pick a real instruction line that currently has no label.
+        const targetIndex = await page.evaluate(() =>
+            currentProgramData.instructions.findIndex(i => i.label === 0 && i.opcode !== 0)
+        );
+        expect(targetIndex).toBeGreaterThanOrEqual(0);
+
+        await placeLabelViaGesture(page, targetIndex);
+
+        const label = await page.evaluate((idx) =>
+            currentProgramData.instructions[idx].label, targetIndex);
+        expect(label).toBeGreaterThan(0);   // committed, not left pending
+
+        await page.close();
+    });
+
+    test('placing a second label does not steal the first', async () => {
+        const page = await openEditorWithProgram();
+
+        const [firstIndex, secondIndex] = await page.evaluate(() => {
+            const idxs = [];
+            const ins = currentProgramData.instructions;
+            for (let i = 0; i < ins.length && idxs.length < 2; i++) {
+                if (ins[i].label === 0 && ins[i].opcode !== 0) idxs.push(i);
+            }
+            return idxs;
+        });
+        expect(firstIndex).toBeGreaterThanOrEqual(0);
+        expect(secondIndex).toBeGreaterThanOrEqual(0);
+
+        await placeLabelViaGesture(page, firstIndex);
+        const firstLabel = await page.evaluate((idx) =>
+            currentProgramData.instructions[idx].label, firstIndex);
+        expect(firstLabel).toBeGreaterThan(0);
+
+        // Clicking a different line must place a NEW label there, and must
+        // leave the first line's label untouched (the bug made the single
+        // uncommitted label hop to whatever line was clicked next).
+        await placeLabelViaGesture(page, secondIndex);
+        const result = await page.evaluate((a, b) => ({
+            first: currentProgramData.instructions[a].label,
+            second: currentProgramData.instructions[b].label
+        }), firstIndex, secondIndex);
+
+        expect(result.first).toBe(firstLabel);          // first label stayed put
+        expect(result.second).toBeGreaterThan(0);       // second line got its own
+        expect(result.second).not.toBe(result.first);   // distinct numbers
+
         await page.close();
     });
 });

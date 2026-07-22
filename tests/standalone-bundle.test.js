@@ -3,7 +3,7 @@
  * runtime JS it inlines. Re-run `node tools/bundle-standalone.js` to
  * refresh after changing either; this test fails until you do.
  *
- * The bundle exists so editor.html's Export Game flow works from
+ * The bundle exists so program-editor.html's Export Game flow works from
  * file:// — see tools/bundle-standalone.js for the rationale.
  */
 

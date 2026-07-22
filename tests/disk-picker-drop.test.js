@@ -72,8 +72,8 @@ async function simulateDrop(page, bytes, filename) {
 }
 
 describe('drop → pool + select', () => {
-    test('editor.html: dropped disk is added to pool AND becomes current', async () => {
-        const page = await openPage('editor.html');
+    test('program-editor.html: dropped disk is added to pool AND becomes current', async () => {
+        const page = await openPage('program-editor.html');
         await simulateDrop(page, TEST_DISK_BYTES, 'gmc64-test.d64');
 
         const state = await page.evaluate(() => ({

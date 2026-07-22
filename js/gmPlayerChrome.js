@@ -1,6 +1,6 @@
-// Shared player chrome behaviors — used by play.html, editor.html's game
+// Shared player chrome behaviors — used by play.html, program-editor.html's game
 // overlay, and the standalone Export Game bundle. Each host owns its own
-// DOM structure (they only differ around it — editor.html has additional
+// DOM structure (they only differ around it — program-editor.html has additional
 // dev controls in the settings popup, play.html doesn't need a stop
 // button, etc.), but the icon set, joystick presets, input listeners,
 // pause-icon swap, and settings persistence are all identical, so they
@@ -120,6 +120,9 @@ globalThis.GMPlayerChrome = (function () {
     // Returns a `detach()` function for cleanup — useful for the editor
     // where the overlay comes and goes.
     function setupInputListeners({ inputState, getPresets, isEnabled }) {
+        // Opposite direction for SOCD cleaning (see applyKey).
+        const OPPOSITE = { up: 'down', down: 'up', left: 'right', right: 'left' };
+
         function applyKey(key, active, e) {
             const { joy1, joy2 } = getPresets();
             let consumed = false;
@@ -129,16 +132,26 @@ globalThis.GMPlayerChrome = (function () {
             const act1 = m1[key];
             if (act1) {
                 if (act1 === 'fire') inputState.button1 = active;
-                else inputState.joystick1[act1] = active;
+                else setDirection(inputState.joystick1, act1, active);
                 consumed = true;
             }
             const act2 = m2[key];
             if (act2) {
                 if (act2 === 'fire') inputState.button2 = active;
-                else inputState.joystick2[act2] = active;
+                else setDirection(inputState.joystick2, act2, active);
                 consumed = true;
             }
             if (consumed && e) e.preventDefault();
+        }
+
+        // SOCD cleaning: a physical joystick can't hold two opposite directions
+        // at once, so on a press we force the opposite off — "last direction
+        // wins". This is also the recovery path when a keyup goes missing (macOS
+        // suppresses arrow keyups while Cmd/fire is held): pressing the other
+        // way clears the stranded direction instead of the ship staying stuck.
+        function setDirection(joystick, dir, active) {
+            joystick[dir] = active;
+            if (active) joystick[OPPOSITE[dir]] = false;
         }
 
         // Clear all four direction booleans on both joysticks. Used as a

@@ -16,7 +16,7 @@ const PROJECT_ROOT = join(__dirname, '..');
 
 // HTML files to test
 const HTML_FILES = [
-    'editor.html',
+    'program-editor.html',
     'sprite-maker.html',
     'scene-maker.html',
     'sound-maker.html',
