@@ -55,6 +55,10 @@ const OPCODES = {
 
 const BRANCHES = new Set(['BCC','BCS','BEQ','BMI','BNE','BPL','BVC','BVS']);
 
+// inverse condition, used to auto-promote an out-of-range branch into
+// `<inverse-branch> +3 ; JMP target` (the branch hops over an absolute jump).
+const INV_BRANCH = { BCC:'BCS', BCS:'BCC', BEQ:'BNE', BNE:'BEQ', BMI:'BPL', BPL:'BMI', BVC:'BVS', BVS:'BVC' };
+
 // modes that take a 1-byte operand
 const ONE_BYTE = new Set(['imm','zp','zpx','zpy','indx','indy','rel']);
 // modes that take a 2-byte operand
@@ -154,7 +158,6 @@ function sizeMode(expr, symbols, pc, resolve, zpOk, zpMode, absMode) {
 
 export function assemble(source, opts = {}) {
   const lines = source.split(/\r?\n/);
-  const symbols = Object.create(null);
 
   // ---- structured parse (shared by both passes) ----
   const parsed = [];
@@ -168,56 +171,66 @@ export function assemble(source, opts = {}) {
     parsed.push({ ln: ln + 1, label, text });
   }
 
-  // ---- pass 1: assign addresses to labels, size everything ----
-  let pc = opts.origin ?? 0x0801;
-  let originSet = opts.origin !== undefined;
-  const sized = [];
-  for (const item of parsed) {
-    if (item.label) symbols[item.label] = pc;
-    let t = item.text;
-    if (t === '') { sized.push({ ...item, kind: 'none' }); continue; }
+  // ---- pass 1: size everything; iterate to promote out-of-range branches ----
+  // A branch that can't reach its target in one signed byte is expanded to
+  // `<inverse-branch> +3 ; JMP target` (2 -> 5 bytes). Expansion only grows
+  // code, so re-sizing converges: keep promoting until nothing new is oversize.
+  const promoted = new Set();   // parsed indices of branches to expand
+  function sizePass() {
+    const symbols = Object.create(null);
+    let pc = opts.origin ?? 0x0801;
+    const sized = [];
+    parsed.forEach((item, pi) => {
+      if (item.label) symbols[item.label] = pc;
+      let t = item.text;
+      if (t === '') { sized.push({ ...item, pi, kind: 'none' }); return; }
+      if (t[0] === '*') {
+        const m = t.match(/^\*\s*=\s*(.+)$/);
+        pc = evalExpr(m[1], symbols, pc);
+        sized.push({ ...item, pi, kind: 'org', pc });
+        return;
+      }
+      let am = t.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$/);
+      if (am) { symbols[am[1]] = evalExpr(am[2], symbols, pc); sized.push({ ...item, pi, kind: 'equ' }); return; }
+      if (t[0] === '!') {
+        const [dir] = t.slice(1).split(/\s+/);
+        const argstr = t.slice(1 + dir.length).trim();
+        let size = 0;
+        if (dir === 'byte' || dir === 'byt') size = argstr.split(',').length;
+        else if (dir === 'word') size = argstr.split(',').length * 2;
+        else if (dir === 'fill') size = evalExpr(argstr.split(',')[0], symbols, pc);
+        else throw new Error(`line ${item.ln}: unknown directive !${dir}`);
+        sized.push({ ...item, pi, kind: 'data', dir, argstr, at: pc });
+        pc += size;
+        return;
+      }
+      const sp = t.indexOf(' ');
+      const mnem = (sp < 0 ? t : t.slice(0, sp)).toUpperCase();
+      const operand = sp < 0 ? '' : t.slice(sp + 1).trim();
+      if (!(mnem in OPCODES)) throw new Error(`line ${item.ln}: unknown mnemonic ${mnem}`);
+      const { mode, expr } = parseOperand(mnem, operand, symbols, pc, false);
+      if (!(mode in OPCODES[mnem]))
+        throw new Error(`line ${item.ln}: ${mnem} has no ${mode} addressing mode`);
+      const prom = mode === 'rel' && promoted.has(pi);
+      const len = prom ? 5 : 1 + (ONE_BYTE.has(mode) ? 1 : TWO_BYTE.has(mode) ? 2 : 0);
+      sized.push({ ...item, pi, kind: 'insn', mnem, operand, mode, expr, at: pc, len, promoted: prom });
+      pc += len;
+    });
+    return { sized, symbols };
+  }
 
-    // directives
-    if (t[0] === '*') {
-      const m = t.match(/^\*\s*=\s*(.+)$/);
-      pc = evalExpr(m[1], symbols, pc);
-      originSet = true;
-      sized.push({ ...item, kind: 'org', pc });
-      continue;
+  let sized, symbols;
+  for (let iter = 0; ; iter++) {
+    ({ sized, symbols } = sizePass());
+    let changed = false;
+    for (const s of sized) {
+      if (s.kind === 'insn' && s.mode === 'rel' && !promoted.has(s.pi)) {
+        const rel = evalExpr(s.expr, symbols, s.at + 2) - (s.at + 2);
+        if (rel < -128 || rel > 127) { promoted.add(s.pi); changed = true; }
+      }
     }
-    // constant assignment:  name = expr   (but not '==' etc.)
-    let am = t.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$/);
-    if (am) {
-      symbols[am[1]] = evalExpr(am[2], symbols, pc);
-      sized.push({ ...item, kind: 'equ' });
-      continue;
-    }
-    if (t[0] === '!') {
-      const [dir, ...rest] = t.slice(1).split(/\s+/);
-      const argstr = t.slice(1 + dir.length).trim();
-      let size = 0;
-      if (dir === 'byte' || dir === 'byt') size = argstr.split(',').length;
-      else if (dir === 'word') size = argstr.split(',').length * 2;
-      else if (dir === 'fill') {
-        const count = evalExpr(argstr.split(',')[0], symbols, pc);
-        size = count;
-      } else throw new Error(`line ${item.ln}: unknown directive !${dir}`);
-      sized.push({ ...item, kind: 'data', dir, argstr, at: pc });
-      pc += size;
-      continue;
-    }
-
-    // instruction
-    const sp = t.indexOf(' ');
-    const mnem = (sp < 0 ? t : t.slice(0, sp)).toUpperCase();
-    const operand = sp < 0 ? '' : t.slice(sp + 1).trim();
-    if (!(mnem in OPCODES)) throw new Error(`line ${item.ln}: unknown mnemonic ${mnem}`);
-    const { mode, expr } = parseOperand(mnem, operand, symbols, pc, false);
-    if (!(mode in OPCODES[mnem]))
-      throw new Error(`line ${item.ln}: ${mnem} has no ${mode} addressing mode`);
-    const len = 1 + (ONE_BYTE.has(mode) ? 1 : TWO_BYTE.has(mode) ? 2 : 0);
-    sized.push({ ...item, kind: 'insn', mnem, operand, mode, expr, at: pc, len });
-    pc += len;
+    if (!changed) break;
+    if (iter > parsed.length) throw new Error('branch promotion did not converge');
   }
 
   // ---- pass 2: emit bytes ----
@@ -257,8 +270,18 @@ export function assemble(source, opts = {}) {
       continue;
     }
     // insn
-    const op = OPCODES[s.mnem][s.mode];
     const startIdx = out.length;
+    if (s.mode === 'rel' && s.promoted) {
+      // out-of-range branch -> inverse-branch over an absolute JMP
+      const target = evalExpr(s.expr, symbols, s.at + 2);
+      emit(OPCODES[INV_BRANCH[s.mnem]].rel);
+      emit(0x03);
+      emit(0x4C);                          // JMP abs
+      emit(target & 0xFF); emit((target >> 8) & 0xFF);
+      listing.push({ at: s.at, bytes: out.slice(startIdx), src: `${s.mnem} ${s.operand} ;far` });
+      continue;
+    }
+    const op = OPCODES[s.mnem][s.mode];
     emit(op);
     if (s.mode === 'imp' || s.mode === 'acc') {
       // no operand

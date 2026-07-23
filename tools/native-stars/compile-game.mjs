@@ -782,14 +782,12 @@ sd_row: lda (fptr),y            ; each font bit -> a 2-bit mc pixel (fg/bg per s
         sta (ptr2),y
         iny
         cpy #8
-        beq sd_out
-        jmp sd_row
-sd_out: inc dcol
+        bne sd_row
+        inc dcol
         lda dcol
         cmp #5
-        beq ss_ret
-        jmp ss_lp
-ss_ret: rts
+        bne ss_lp
+        rts
 
 ${pauseSubs}
 
