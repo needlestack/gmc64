@@ -616,8 +616,15 @@ mvl:    stx curv
         lda mPtr,x
         cmp mNum,x
         bcc mld
-        lda #0
-        sta mPtr,x
+        lda #0                  ; end of channel -> stop (song plays once, no loop)
+        sta mAct,x
+        lda vAct,x              ; SFX owns this voice? leave the gate to the SFX
+        bne mvn
+        ldy v7,x
+        lda $d404,y
+        and #$fe                ; gate off -> last note releases
+        sta $d404,y
+        jmp mvn
 mld:    lda mBase,x
         clc
         adc mPtr,x
