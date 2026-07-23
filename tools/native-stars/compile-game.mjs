@@ -869,3 +869,11 @@ writeFileSync(outPath.replace(/\.prg$/, '.asm'), asm);
 const r = assemble(asm);
 writeFileSync(outPath, Buffer.from(r.prg));
 console.log(`  -> ${outPath}  (${r.bytes.length} bytes, org=$${r.org.toString(16)} end=$${r.end.toString(16)})`);
+
+// also emit a runnable .d64 (wrap the .prg) so the two never drift out of sync
+const gameName = prgName.split('/')[0].trim().slice(0, 16) || 'GAME';
+const d64 = globalThis.D64.createEmpty(gameName, '01');
+d64.writeFile(gameName, r.prg, globalThis.D64.FILE_TYPE_PRG);
+const d64Path = outPath.replace(/\.prg$/, '.d64');
+writeFileSync(d64Path, Buffer.from(d64.getData()));
+console.log(`  -> ${d64Path}  (disk "${gameName}", file "${gameName}")`);
