@@ -42,7 +42,7 @@ for (const [i, m] of pd.mediaStore.entries()) {
     const h = m.sprite.sprite[0];
     const base = frameBytes.length / 64;
     for (let f = 0; f < h.totalFrames; f++) frameBytes.push(...pad64(m.sprite.sprite[0].imageData[f]));
-    spriteMeta[i] = { base, num: h.totalFrames, mc: h.isMultiColor ? 1 : 0, c1: h._gmColor1, c2: h._gmColor2, c3: h._gmColor3 };
+    spriteMeta[i] = { base, num: h.totalFrames, mc: h.isMultiColor ? 1 : 0, c1: h._gmColor1, c2: h._gmColor2, c3: h._gmColor3, xd: h.xDouble ? 1 : 0, yd: h.yDouble ? 1 : 0 };
   }
   else if (m.type === 'sound' && m.soundFileData) {
     const s = new globalThis.gmSound(m.soundFileData);
@@ -149,22 +149,36 @@ function emitIfHead(op) {
       else fbr('beq', elseL);
       break;
     }
-    case 0x1b: {                                                                          // if sprite A hit sprite B
-      // $d01e (VIC hardware sprite-sprite collision) is pixel-accurate but only
-      // reports the *set* of colliding sprites, not pairs. So: both bits lit is
-      // required; if they're the ONLY bits lit it's an unambiguous A-B pixel hit;
-      // if other sprites are colliding too, a bounding-box test on just A and B
-      // disambiguates (rare, and "overlapping pile all reacts" is acceptable).
-      const A = a1, Bx = a2;
-      const both = ((1 << A) | (1 << Bx)) & 0xff;
-      const others = (~both) & 0xff;
+    case 0x1b: {                                                                          // if sprite A hit <target>
+      // Mirrors GKGM's own runtime (disassembled from the ALIENS standalone):
+      // $d01e/$d01f are latched once/frame; A's bit must be set, and for a
+      // specific sprite B, B's bit too, then a bounding-box test disambiguates.
+      // GKGM widens the box for hardware-expanded sprites ($d01d x / $d017 y:
+      // 12->24, 21->42) using the LEFT/UPPER sprite's expansion. arg2: 0-7 =
+      // sprite B, 8 = "hit anyone", 9 = "hit background" (scene colors 2/3 =
+      // the VIC's sprite-background collision).
+      const A = a1, maskA = (1 << A) & 0xff;
+      if (a2 === 8) { c(`  lda collFlags`); c(`  and #${maskA}`); fbr('beq', elseL); break; }  // hit anyone
+      if (a2 === 9) { c(`  lda bgFlags`);   c(`  and #${maskA}`); fbr('beq', elseL); break; }  // hit background
+      const Bx = a2, maskB = (1 << Bx) & 0xff;
+      const both = (maskA | maskB) & 0xff, others = (~both) & 0xff;
       const hit = `hit_${n}`;
       c(`  lda collFlags`); c(`  and #${both}`); c(`  cmp #${both}`); fbr('bne', elseL);  // both must be colliding
       c(`  lda collFlags`); c(`  and #${others}`); c(`  beq ${hit}`);                     // only A,B lit -> certain hit
-      c(`  lda sPosXhi+${A}`); c(`  sec`); c(`  sbc sPosXhi+${Bx}`); c(`  bpl xp_${n}`);   // ambiguous -> bbox A vs B
-      c(`  eor #$ff`); c(`  clc`); c(`  adc #1`); c(`xp_${n}:`); c(`  cmp #12`); fbr('bcs', elseL);
-      c(`  lda sPosYhi+${A}`); c(`  sec`); c(`  sbc sPosYhi+${Bx}`); c(`  bpl yp_${n}`);
-      c(`  eor #$ff`); c(`  clc`); c(`  adc #1`); c(`yp_${n}:`); c(`  cmp #21`); fbr('bcs', elseL);
+      // X box: |A.x-B.x| vs 12 (24 if the left sprite is x-expanded)
+      c(`  lda sPosXhi+${A}`); c(`  sec`); c(`  sbc sPosXhi+${Bx}`); c(`  bcs xge_${n}`);
+      c(`  eor #$ff`); c(`  clc`); c(`  adc #1`); c(`  ldx #${maskA}`); c(`  jmp xhv_${n}`);  // A<B: left=A
+      c(`xge_${n}:`); c(`  ldx #${maskB}`);                                                   // A>=B: left=B
+      c(`xhv_${n}:`); c(`  sta tmp`); c(`  txa`); c(`  and $d01d`); c(`  beq xnr_${n}`);
+      c(`  lda #24`); c(`  bne xcm_${n}`); c(`xnr_${n}:`); c(`  lda #12`);
+      c(`xcm_${n}:`); c(`  sta sval`); c(`  lda tmp`); c(`  cmp sval`); fbr('bcs', elseL);
+      // Y box: |A.y-B.y| vs 21 (42 if the upper sprite is y-expanded)
+      c(`  lda sPosYhi+${A}`); c(`  sec`); c(`  sbc sPosYhi+${Bx}`); c(`  bcs yge_${n}`);
+      c(`  eor #$ff`); c(`  clc`); c(`  adc #1`); c(`  ldx #${maskA}`); c(`  jmp yhv_${n}`);
+      c(`yge_${n}:`); c(`  ldx #${maskB}`);
+      c(`yhv_${n}:`); c(`  sta tmp`); c(`  txa`); c(`  and $d017`); c(`  beq ynr_${n}`);
+      c(`  lda #42`); c(`  bne ycm_${n}`); c(`ynr_${n}:`); c(`  lda #21`);
+      c(`ycm_${n}:`); c(`  sta sval`); c(`  lda tmp`); c(`  cmp sval`); fbr('bcs', elseL);
       c(`${hit}:`);
       break;
     }
@@ -230,6 +244,11 @@ function emitOp(op) {
       if (meta.mc) { c(`  lda $d01c`); c(`  ora #${1 << s}`); c(`  sta $d01c`);
                      c(`  lda #${meta.c2}`); c(`  sta $d025`); c(`  lda #${meta.c3}`); c(`  sta $d026`); }
       else { c(`  lda $d01c`); c(`  and #${(~(1 << s)) & 0xff}`); c(`  sta $d01c`); }
+      // hardware sprite expansion (x/y double) — scales the sprite AND widens its collision box
+      if (meta.xd) { c(`  lda $d01d`); c(`  ora #${1 << s}`); c(`  sta $d01d`); }
+      else { c(`  lda $d01d`); c(`  and #${(~(1 << s)) & 0xff}`); c(`  sta $d01d`); }
+      if (meta.yd) { c(`  lda $d017`); c(`  ora #${1 << s}`); c(`  sta $d017`); }
+      else { c(`  lda $d017`); c(`  and #${(~(1 << s)) & 0xff}`); c(`  sta $d017`); }
       c(`  lda $d015`); c(`  ora #${1 << s}`); c(`  sta $d015`);
       break;
     }
@@ -336,6 +355,7 @@ animtog = $f8
 ptr2   = $f9
 nidx   = $fa
 collFlags = $fd
+bgFlags = $fe
 ; --- slot state arrays (8 slots) in RAM ---
 sBase    = $c000
 sNum     = $c008
@@ -409,6 +429,7 @@ islot:  lda #$ff
         sta $d01d
         sta $d01b               ; all sprites in front of the bitmap
         sta collFlags
+        sta bgFlags
         sta scoreLo
         sta scoreHi
         sta vAct+0
@@ -436,6 +457,8 @@ fw:     lda $d012
         bne fw
         lda $d01e               ; latch sprite-sprite collisions once/frame (reading clears)
         sta collFlags
+        lda $d01f               ; latch sprite-background collisions likewise
+        sta bgFlags
         inc animtog             ; animation ticks at 30fps (every other frame)
         ldx #$00
 fsl:    lda sBase,x
