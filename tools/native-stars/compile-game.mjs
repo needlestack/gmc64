@@ -29,8 +29,8 @@ const ins = pd.instructions;
 let scene = null;
 const spriteMeta = {};   // mediaIndex -> {base, num, mc, c1, c2, c3}
 const frameBytes = [];   // concatenated 64-byte frames
-const soundMeta = {};    // mediaIndex -> {base, num} into the SID frame tables
-const sndFL = [], sndFH = [], sndPL = [], sndPH = [], sndCT = [], sndAD = [], sndSR = [], sndDU = [];
+const soundMeta = {};    // mediaIndex -> {base, num, rep} into the SID frame tables
+const sndFL = [], sndFH = [], sndPL = [], sndPH = [], sndCT = [], sndAD = [], sndSR = [], sndDU = [], sndSL = [], sndSH = [];
 const pad64 = a => { const r = Array.from(a).slice(0, 64); while (r.length < 64) r.push(0); return r; };
 for (const [i, m] of pd.mediaStore.entries()) {
   if (!m) continue;
@@ -43,15 +43,19 @@ for (const [i, m] of pd.mediaStore.entries()) {
   }
   else if (m.type === 'sound' && m.soundFileData) {
     const s = new globalThis.gmSound(m.soundFileData);
-    soundMeta[i] = { base: sndFL.length, num: s.frames.length };
+    const sm = s.speed > 0 ? 254 / s.speed : 254;        // global speed -> duration scale
+    soundMeta[i] = { base: sndFL.length, num: s.frames.length, rep: s.repeatCount };
     for (const f of s.frames) {
+      const sw = s._decodeSpeed(f.spd);                  // software pitch sweep
+      const swd = sw.active ? sw.direction * sw.steps : 0; // ~per-frame freq-register delta
       sndFL.push(f.freqLo); sndFH.push(f.freqHi); sndPL.push(f.pulseLo); sndPH.push(f.pulseHi);
       sndCT.push((f.wave | 0x01) & 0xff); sndAD.push(((f.att << 4) | f.dec) & 0xff);
-      sndSR.push(((f.sus << 4) | f.rel) & 0xff); sndDU.push(Math.max(1, f.dur));
+      sndSR.push(((f.sus << 4) | f.rel) & 0xff); sndDU.push(Math.max(1, Math.round(f.dur * sm)));
+      sndSL.push(swd & 0xff); sndSH.push((swd >> 8) & 0xff);
     }
   }
 }
-if (sndFL.length === 0) { sndFL.push(0); sndFH.push(0); sndPL.push(0); sndPH.push(0); sndCT.push(0); sndAD.push(0); sndSR.push(0); sndDU.push(1); }
+if (sndFL.length === 0) { sndFL.push(0); sndFH.push(0); sndPL.push(0); sndPH.push(0); sndCT.push(0); sndAD.push(0); sndSR.push(0); sndDU.push(1); sndSL.push(0); sndSH.push(0); }
 const bitmap = scene.rawImageData;
 const screenByte = (((scene.color1 & 0xf) << 4) | (scene.color2 & 0xf));
 
@@ -128,10 +132,11 @@ function emitOp(op) {
       if (!meta) break;
       c(`  lda #${meta.base}`); c(`  sta vBase+${v}`);
       c(`  lda #${meta.num}`); c(`  sta vNum+${v}`);
+      c(`  lda #${meta.rep}`); c(`  sta vRep+${v}`);
       c(`  lda #0`); c(`  sta vFrm+${v}`);
       c(`  lda #1`); c(`  sta vAct+${v}`);
-      c(`  ldx #${meta.base}`); c(`  ldy #${v * 7}`); c(`  jsr writesnd`);
-      c(`  lda sndDU+${meta.base}`); c(`  sta vTmr+${v}`);
+      c(`  lda #${v}`); c(`  sta curv`);
+      c(`  ldx #${meta.base}`); c(`  jsr loadframe`);
       break;
     }
     case 0x41: {                                                      // sound channel(arg2) off
@@ -249,6 +254,8 @@ dcol   = $f4
 tmp    = $f5
 fptr   = $f6
 curv   = $f7
+animtog = $f8
+ptr2   = $f9
 ; --- slot state arrays (8 slots) in RAM ---
 sBase    = $c000
 sNum     = $c008
@@ -268,6 +275,11 @@ vBase    = $c068
 vNum     = $c06c
 vFrm     = $c070
 vTmr     = $c074
+vRep     = $c078
+vFreqLo  = $c07c
+vFreqHi  = $c080
+vSwLo    = $c084
+vSwHi    = $c088
 
         * = $0801
         !byte $0c,$08, $0a,$00, $9e, $32,$30,$36,$31, $00, $00,$00
@@ -337,6 +349,7 @@ frame:
 fw:     lda $d012
         cmp #250
         bne fw
+        inc animtog             ; animation ticks at 30fps (every other frame)
         ldx #$00
 fsl:    lda sBase,x
         cmp #$ff
@@ -388,7 +401,10 @@ fleft:  sec
         sbc xmagHi,y
         sta sPosXhi,x
 fnomove:
-        ; --- animation (animspd>0) ---
+        ; --- animation (animspd>0, advanced only on 30fps ticks) ---
+        lda animtog
+        and #$01
+        beq fdraw
         lda sAnimSpd,x
         bne fp2
         jmp fdraw
@@ -435,40 +451,56 @@ fnext:  inx
         beq fret
         jmp fsl
 fret:
-        ; --- advance the 3 SID sound voices ---
+        ; --- advance the 3 SID sound voices (sweep + repeat) ---
         ldx #0
 svl:    stx curv
         lda vAct,x
-        beq svn
+        bne svgo
+        jmp svn
+svgo:   ldy v7,x                ; sweep: vFreq += vSw, write to SID
+        clc
+        lda vFreqLo,x
+        adc vSwLo,x
+        sta vFreqLo,x
+        sta $d400,y
+        lda vFreqHi,x
+        adc vSwHi,x
+        sta vFreqHi,x
+        sta $d401,y
         dec vTmr,x
-        bne svn
-        inc vFrm,x
+        beq svadv
+        jmp svn
+svadv:  inc vFrm,x
         lda vFrm,x
         cmp vNum,x
-        bcc svp
-        ldy v7,x                ; sound finished -> gate off (release)
+        bcc svload
+        lda vRep,x              ; frames done -> repeat, or gate off
+        bne svrep
+        ldy v7,x
         lda $d404,y
         and #$fe
         sta $d404,y
         lda #0
         sta vAct,x
         jmp svn
-svp:    lda vBase,x             ; next frame -> global index vBase+vFrm
+svrep:  dec vRep,x
+        lda #0
+        sta vFrm,x
+svload: lda vBase,x
         clc
         adc vFrm,x
-        ldy v7,x
         tax
-        jsr writesnd
-        lda sndDU,x
-        ldx curv
-        sta vTmr,x
+        jsr loadframe
 svn:    ldx curv
         inx
         cpx #3
         bne svl
         rts
 
-writesnd:                       ; x = sound frame index, y = voice*7
+loadframe:                      ; X = sound frame index, curv = voice
+        ldy curv
+        lda v7,y
+        tay                     ; Y = voice*7
         lda sndFL,x
         sta $d400,y
         lda sndFH,x
@@ -483,6 +515,17 @@ writesnd:                       ; x = sound frame index, y = voice*7
         sta $d406,y
         lda sndCT,x
         sta $d404,y
+        ldy curv
+        lda sndFL,x
+        sta vFreqLo,y
+        lda sndFH,x
+        sta vFreqHi,y
+        lda sndSL,x
+        sta vSwLo,y
+        lda sndSH,x
+        sta vSwHi,y
+        lda sndDU,x
+        sta vTmr,y
         rts
 
 ; score_show: print scoreLo/Hi as 5 decimal digits at bitmap cell (col 7, row 1)
@@ -515,7 +558,8 @@ ss_do:  sec
         ldx dcol
         jmp ss_sub
 ss_done:
-        lda dcol                ; dest = SCOREBASE + dcol*8
+        lda dcol                ; dest = SCOREBASE + dcol*16 (2 mc cells per digit)
+        asl
         asl
         asl
         asl
@@ -525,6 +569,13 @@ ss_done:
         lda #>SCOREBASE
         adc #0
         sta ptr+1
+        clc                     ; ptr2 = ptr + 8 (right cell)
+        lda ptr
+        adc #8
+        sta ptr2
+        lda ptr+1
+        adc #0
+        sta ptr2+1
         lda tmp                 ; font src = digfont + digit*8
         asl
         asl
@@ -536,8 +587,20 @@ ss_done:
         adc #>digfont
         sta fptr+1
         ldy #0
-sd_row: lda (fptr),y
+sd_row: lda (fptr),y            ; each font bit -> a 2-bit (color 1) mc pixel
+        pha
+        lsr
+        lsr
+        lsr
+        lsr
+        tax
+        lda expand01,x
         sta (ptr),y
+        pla
+        and #$0f
+        tax
+        lda expand01,x
+        sta (ptr2),y
         iny
         cpy #8
         bne sd_row
@@ -553,6 +616,7 @@ ${pauseSubs}
 bit8:   !byte 1,2,4,8,16,32,64,128
 bit8i:  !byte 254,253,251,247,239,223,191,127
 v7:     !byte 0,7,14
+expand01: !byte 0,1,4,5,16,17,20,21,64,65,68,69,80,81,84,85
 sndFL:  !byte ${sndFL.join(',')}
 sndFH:  !byte ${sndFH.join(',')}
 sndPL:  !byte ${sndPL.join(',')}
@@ -561,6 +625,8 @@ sndCT:  !byte ${sndCT.join(',')}
 sndAD:  !byte ${sndAD.join(',')}
 sndSR:  !byte ${sndSR.join(',')}
 sndDU:  !byte ${sndDU.join(',')}
+sndSL:  !byte ${sndSL.join(',')}
+sndSH:  !byte ${sndSH.join(',')}
 powlo:  !byte <10000,<1000,<100,<10,<1
 powhi:  !byte >10000,>1000,>100,>10,>1
 digfont:
