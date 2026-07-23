@@ -161,10 +161,13 @@ function emitIfHead(op) {
       if (a2 === 8) { c(`  lda collFlags`); c(`  and #${maskA}`); fbr('beq', elseL); break; }  // hit anyone
       if (a2 === 9) { c(`  lda bgFlags`);   c(`  and #${maskA}`); fbr('beq', elseL); break; }  // hit background
       const Bx = a2, maskB = (1 << Bx) & 0xff;
-      const both = (maskA | maskB) & 0xff, others = (~both) & 0xff;
-      const hit = `hit_${n}`;
+      const both = (maskA | maskB) & 0xff;
       c(`  lda collFlags`); c(`  and #${both}`); c(`  cmp #${both}`); fbr('bne', elseL);  // both must be colliding
-      c(`  lda collFlags`); c(`  and #${others}`); c(`  beq ${hit}`);                     // only A,B lit -> certain hit
+      // ALWAYS run the box (like GKGM) — never shortcut on "only these two bits".
+      // collFlags lags the displayed sprites by a frame, so right after a hit
+      // hides/moves a sprite the register still reports the collision for one
+      // more frame; the box re-checks LIVE positions and rejects that stale hit.
+      // (Shortcutting here double-counted every hit.)
       // X box: |A.x-B.x| vs 12 (24 if the left sprite is x-expanded)
       c(`  lda sPosXhi+${A}`); c(`  sec`); c(`  sbc sPosXhi+${Bx}`); c(`  bcs xge_${n}`);
       c(`  eor #$ff`); c(`  clc`); c(`  adc #1`); c(`  ldx #${maskA}`); c(`  jmp xhv_${n}`);  // A<B: left=A
@@ -179,7 +182,6 @@ function emitIfHead(op) {
       c(`yhv_${n}:`); c(`  sta tmp`); c(`  txa`); c(`  and $d017`); c(`  beq ynr_${n}`);
       c(`  lda #42`); c(`  bne ycm_${n}`); c(`ynr_${n}:`); c(`  lda #21`);
       c(`ycm_${n}:`); c(`  sta sval`); c(`  lda tmp`); c(`  cmp sval`); fbr('bcs', elseL);
-      c(`${hit}:`);
       break;
     }
     case 0x4a: {                                                                          // if score1 > N
