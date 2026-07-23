@@ -7,4 +7,6 @@ shooter_*.asm
 archer.asm
 archer_native.asm
 archer_dbg.asm
+archer_snd_test.asm
 ytest.asm
+snd_test.asm

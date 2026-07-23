@@ -29,6 +29,8 @@ const ins = pd.instructions;
 let scene = null;
 const spriteMeta = {};   // mediaIndex -> {base, num, mc, c1, c2, c3}
 const frameBytes = [];   // concatenated 64-byte frames
+const soundMeta = {};    // mediaIndex -> {base, num} into the SID frame tables
+const sndFL = [], sndFH = [], sndPL = [], sndPH = [], sndCT = [], sndAD = [], sndSR = [], sndDU = [];
 const pad64 = a => { const r = Array.from(a).slice(0, 64); while (r.length < 64) r.push(0); return r; };
 for (const [i, m] of pd.mediaStore.entries()) {
   if (!m) continue;
@@ -39,7 +41,17 @@ for (const [i, m] of pd.mediaStore.entries()) {
     for (let f = 0; f < h.totalFrames; f++) frameBytes.push(...pad64(m.sprite.sprite[0].imageData[f]));
     spriteMeta[i] = { base, num: h.totalFrames, mc: h.isMultiColor ? 1 : 0, c1: h._gmColor1, c2: h._gmColor2, c3: h._gmColor3 };
   }
+  else if (m.type === 'sound' && m.soundFileData) {
+    const s = new globalThis.gmSound(m.soundFileData);
+    soundMeta[i] = { base: sndFL.length, num: s.frames.length };
+    for (const f of s.frames) {
+      sndFL.push(f.freqLo); sndFH.push(f.freqHi); sndPL.push(f.pulseLo); sndPH.push(f.pulseHi);
+      sndCT.push((f.wave | 0x01) & 0xff); sndAD.push(((f.att << 4) | f.dec) & 0xff);
+      sndSR.push(((f.sus << 4) | f.rel) & 0xff); sndDU.push(Math.max(1, f.dur));
+    }
+  }
 }
+if (sndFL.length === 0) { sndFL.push(0); sndFH.push(0); sndPL.push(0); sndPH.push(0); sndCT.push(0); sndAD.push(0); sndSR.push(0); sndDU.push(1); }
 const bitmap = scene.rawImageData;
 const screenByte = (((scene.color1 & 0xf) << 4) | (scene.color2 & 0xf));
 
@@ -110,7 +122,24 @@ function emitIfHead(op) {
 function emitOp(op) {
   const a1 = op.arg1, a2 = op.arg2;
   switch (op.opcode) {
-    case 0x2b: case 0x28: case 0x60: case 0x40: case 0x41: break;     // comment / scene(init) / sound: no-op
+    case 0x2b: case 0x28: case 0x60: break;                          // comment / scene(init) / song: no-op
+    case 0x40: {                                                      // sound channel(arg1) = sound(arg2)
+      const v = a1, meta = soundMeta[a2];
+      if (!meta) break;
+      c(`  lda #${meta.base}`); c(`  sta vBase+${v}`);
+      c(`  lda #${meta.num}`); c(`  sta vNum+${v}`);
+      c(`  lda #0`); c(`  sta vFrm+${v}`);
+      c(`  lda #1`); c(`  sta vAct+${v}`);
+      c(`  ldx #${meta.base}`); c(`  ldy #${v * 7}`); c(`  jsr writesnd`);
+      c(`  lda sndDU+${meta.base}`); c(`  sta vTmr+${v}`);
+      break;
+    }
+    case 0x41: {                                                      // sound channel(arg2) off
+      const v = a2;
+      c(`  lda $d404+${v * 7}`); c(`  and #$fe`); c(`  sta $d404+${v * 7}`);
+      c(`  lda #0`); c(`  sta vAct+${v}`);
+      break;
+    }
     case 0x07: c(`  lda #${a2}`); c(`  sta ${V(a1)}`); break;
     case 0x01: c(`  jmp LBL_${a2}`); break;
     case 0x27: {                                                       // sprite N is <media>
@@ -219,6 +248,7 @@ sval1  = $f3
 dcol   = $f4
 tmp    = $f5
 fptr   = $f6
+curv   = $f7
 ; --- slot state arrays (8 slots) in RAM ---
 sBase    = $c000
 sNum     = $c008
@@ -233,6 +263,11 @@ sPosYlo  = $c048
 sPosYhi  = $c050
 scoreLo  = $c060
 scoreHi  = $c061
+vAct     = $c064
+vBase    = $c068
+vNum     = $c06c
+vFrm     = $c070
+vTmr     = $c074
 
         * = $0801
         !byte $0c,$08, $0a,$00, $9e, $32,$30,$36,$31, $00, $00,$00
@@ -288,6 +323,11 @@ islot:  lda #$ff
         sta $d01b               ; all sprites in front of the bitmap
         sta scoreLo
         sta scoreHi
+        sta vAct+0
+        sta vAct+1
+        sta vAct+2
+        lda #$0f
+        sta $d418               ; SID master volume
 
 ${codeBody}
 
@@ -394,7 +434,56 @@ fnext:  inx
         cpx #8
         beq fret
         jmp fsl
-fret:   rts
+fret:
+        ; --- advance the 3 SID sound voices ---
+        ldx #0
+svl:    stx curv
+        lda vAct,x
+        beq svn
+        dec vTmr,x
+        bne svn
+        inc vFrm,x
+        lda vFrm,x
+        cmp vNum,x
+        bcc svp
+        ldy v7,x                ; sound finished -> gate off (release)
+        lda $d404,y
+        and #$fe
+        sta $d404,y
+        lda #0
+        sta vAct,x
+        jmp svn
+svp:    lda vBase,x             ; next frame -> global index vBase+vFrm
+        clc
+        adc vFrm,x
+        ldy v7,x
+        tax
+        jsr writesnd
+        lda sndDU,x
+        ldx curv
+        sta vTmr,x
+svn:    ldx curv
+        inx
+        cpx #3
+        bne svl
+        rts
+
+writesnd:                       ; x = sound frame index, y = voice*7
+        lda sndFL,x
+        sta $d400,y
+        lda sndFH,x
+        sta $d401,y
+        lda sndPL,x
+        sta $d402,y
+        lda sndPH,x
+        sta $d403,y
+        lda sndAD,x
+        sta $d405,y
+        lda sndSR,x
+        sta $d406,y
+        lda sndCT,x
+        sta $d404,y
+        rts
 
 ; score_show: print scoreLo/Hi as 5 decimal digits at bitmap cell (col 7, row 1)
 SCOREBASE = BITMAP + 376        ; $6000 + 1*320 + 7*8
@@ -463,6 +552,15 @@ ${pauseSubs}
 ; ---- data ----
 bit8:   !byte 1,2,4,8,16,32,64,128
 bit8i:  !byte 254,253,251,247,239,223,191,127
+v7:     !byte 0,7,14
+sndFL:  !byte ${sndFL.join(',')}
+sndFH:  !byte ${sndFH.join(',')}
+sndPL:  !byte ${sndPL.join(',')}
+sndPH:  !byte ${sndPH.join(',')}
+sndCT:  !byte ${sndCT.join(',')}
+sndAD:  !byte ${sndAD.join(',')}
+sndSR:  !byte ${sndSR.join(',')}
+sndDU:  !byte ${sndDU.join(',')}
 powlo:  !byte <10000,<1000,<100,<10,<1
 powhi:  !byte >10000,>1000,>100,>10,>1
 digfont:
