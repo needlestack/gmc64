@@ -38,11 +38,17 @@ const pad64 = a => { const r = Array.from(a).slice(0, 64); while (r.length < 64)
 for (const [i, m] of pd.mediaStore.entries()) {
   if (!m) continue;
   if (m.type === 'scene') scene = m.scene;
-  else if (m.type === 'sprite') {
-    const h = m.sprite.sprite[0];
-    const base = frameBytes.length / 64;
-    for (let f = 0; f < h.totalFrames; f++) frameBytes.push(...pad64(m.sprite.sprite[0].imageData[f]));
-    spriteMeta[i] = { base, num: h.totalFrames, mc: h.isMultiColor ? 1 : 0, c1: h._gmColor1, c2: h._gmColor2, c3: h._gmColor3, xd: h.xDouble ? 1 : 0, yd: h.yDouble ? 1 : 0 };
+  else if (m.type === 'sprite' && m.sprite) {   // m.sprite===null are multi-quad markers -> skip
+    const s = m.sprite, h = s.sprite[0], F = h.totalFrames, Q = s.sprite.length;
+    // bundle every quad's frames back-to-back; each quad gets its own frame base.
+    // quad 0 offset is (0,0); quads 1+ carry a relative offset from the parent.
+    const quads = [];
+    for (let q = 0; q < Q; q++) {
+      const base = frameBytes.length / 64;
+      for (let f = 0; f < F; f++) frameBytes.push(...pad64(s.sprite[q].imageData[f]));
+      quads.push({ base, xoff: q === 0 ? 0 : s.sprite[q].xPosition, yoff: q === 0 ? 0 : s.sprite[q].yPosition });
+    }
+    spriteMeta[i] = { base: quads[0].base, num: F, quads, mc: h.isMultiColor ? 1 : 0, c1: h._gmColor1, c2: h._gmColor2, c3: h._gmColor3, xd: h.xDouble ? 1 : 0, yd: h.yDouble ? 1 : 0 };
   }
   else if (m.type === 'sound' && m.soundFileData) {
     const s = new globalThis.gmSound(m.soundFileData);
@@ -184,6 +190,7 @@ function emitIfHead(op) {
       c(`ycm_${n}:`); c(`  sta sval`); c(`  lda tmp`); c(`  cmp sval`); fbr('bcs', elseL);
       break;
     }
+    case 0x18: c(`  lda ${V(a1)}`); c(`  cmp ${V(a2)}`); fbr('bcs', elseL); break;        // if var < var
     case 0x4a: {                                                                          // if score1 > N
       const N = numFrom(op.instructionName);
       c(`  lda scoreHi`); c(`  cmp #>${N + 1}`); fbr('bcc', elseL); c(`  bne sk_${n}`);
@@ -237,21 +244,30 @@ function emitOp(op) {
     case 0x07: c(`  lda #${a2}`); c(`  sta ${V(a1)}`); break;
     case 0x01: c(`  jmp LBL_${a2}`); break;
     case 0x27: {                                                       // sprite N is <media>
-      const s = a1, meta = spriteMeta[a2];
-      c(`  lda #${meta.base}`); c(`  sta sBase+${s}`);
-      c(`  lda #${meta.num}`); c(`  sta sNum+${s}`);
-      c(`  lda #$00`); c(`  sta sFrame+${s}`); c(`  sta sPosXlo+${s}`); c(`  sta sPosYlo+${s}`);
-      c(`  sta sSpeed+${s}`); c(`  sta sDir+${s}`); c(`  sta sAnimSpd+${s}`);
-      c(`  lda #${meta.c1}`); c(`  sta $d027+${s}`);
-      if (meta.mc) { c(`  lda $d01c`); c(`  ora #${1 << s}`); c(`  sta $d01c`);
-                     c(`  lda #${meta.c2}`); c(`  sta $d025`); c(`  lda #${meta.c3}`); c(`  sta $d026`); }
-      else { c(`  lda $d01c`); c(`  and #${(~(1 << s)) & 0xff}`); c(`  sta $d01c`); }
-      // hardware sprite expansion (x/y double) — scales the sprite AND widens its collision box
-      if (meta.xd) { c(`  lda $d01d`); c(`  ora #${1 << s}`); c(`  sta $d01d`); }
-      else { c(`  lda $d01d`); c(`  and #${(~(1 << s)) & 0xff}`); c(`  sta $d01d`); }
-      if (meta.yd) { c(`  lda $d017`); c(`  ora #${1 << s}`); c(`  sta $d017`); }
-      else { c(`  lda $d017`); c(`  and #${(~(1 << s)) & 0xff}`); c(`  sta $d017`); }
-      c(`  lda $d015`); c(`  ora #${1 << s}`); c(`  sta $d015`);
+      const meta = spriteMeta[a2];
+      const quads = meta.quads || [{ base: meta.base, xoff: 0, yoff: 0 }];
+      for (let q = 0; q < quads.length; q++) {           // multi-quad -> occupy adjacent slots
+        const sl = a1 + q;
+        c(`  lda #${quads[q].base}`); c(`  sta sBase+${sl}`);
+        c(`  lda #${meta.num}`); c(`  sta sNum+${sl}`);
+        c(`  lda #$00`); c(`  sta sFrame+${sl}`); c(`  sta sSpeed+${sl}`); c(`  sta sDir+${sl}`);
+        c(`  sta sAnimSpd+${sl}`); c(`  sta sAnimTmr+${sl}`);
+        if (q === 0) { c(`  lda #$ff`); c(`  sta sParent+${sl}`);      // main = independent
+                       c(`  lda #0`); c(`  sta sPosXlo+${sl}`); c(`  sta sPosYlo+${sl}`); }
+        else { c(`  lda #${a1}`); c(`  sta sParent+${sl}`);           // sub-quad -> tracks parent
+               c(`  lda #${quads[q].xoff}`); c(`  sta sQXoff+${sl}`);
+               c(`  lda #${quads[q].yoff}`); c(`  sta sQYoff+${sl}`); }
+        c(`  lda #${meta.c1}`); c(`  sta $d027+${sl}`);
+        if (meta.mc) { c(`  lda $d01c`); c(`  ora #${1 << sl}`); c(`  sta $d01c`);
+                       c(`  lda #${meta.c2}`); c(`  sta $d025`); c(`  lda #${meta.c3}`); c(`  sta $d026`); }
+        else { c(`  lda $d01c`); c(`  and #${(~(1 << sl)) & 0xff}`); c(`  sta $d01c`); }
+        // hardware sprite expansion (x/y double) — scales the sprite AND widens its collision box
+        if (meta.xd) { c(`  lda $d01d`); c(`  ora #${1 << sl}`); c(`  sta $d01d`); }
+        else { c(`  lda $d01d`); c(`  and #${(~(1 << sl)) & 0xff}`); c(`  sta $d01d`); }
+        if (meta.yd) { c(`  lda $d017`); c(`  ora #${1 << sl}`); c(`  sta $d017`); }
+        else { c(`  lda $d017`); c(`  and #${(~(1 << sl)) & 0xff}`); c(`  sta $d017`); }
+        c(`  lda $d015`); c(`  ora #${1 << sl}`); c(`  sta $d015`);
+      }
       break;
     }
     case 0x1f: c(`  lda #${a2}`); c(`  sta sPosXhi+${a1}`); c(`  lda #0`); c(`  sta sPosXlo+${a1}`); break;
@@ -277,12 +293,29 @@ function emitOp(op) {
     case 0x57: c(`  jsr pause_${++uid}`); pauseStubs.push(uid);           // pause for arg2/10 seconds
       pauseFrames.push(Math.max(1, Math.round(a2 / 10 * 59.94)));
       break;
+    case 0x03: c(`  jsr LBL_${a2}`); break;                          // jump to subroutine at label
+    case 0x05: c(`  rts`); break;                                    // return from subroutine
+    case 0x06: c(`  jmp gmstop`); break;                             // stop program (halt)
+    case 0x08: c(`  lda ${V(a2)}`); c(`  sta ${V(a1)}`); break;      // set var = var
+    case 0x0b: c(`  clc`); c(`  lda ${V(a1)}`); c(`  adc #${a2}`); c(`  sta ${V(a1)}`); break;   // var += const
+    case 0x0c: c(`  clc`); c(`  lda ${V(a1)}`); c(`  adc ${V(a2)}`); c(`  sta ${V(a1)}`); break; // var += var
+    case 0x0d: c(`  sec`); c(`  lda ${V(a1)}`); c(`  sbc #${a2}`); c(`  sta ${V(a1)}`); break;   // var -= const
+    case 0x0e: c(`  sec`); c(`  lda ${V(a1)}`); c(`  sbc ${V(a2)}`); c(`  sta ${V(a1)}`); break; // var -= var
+    case 0x11: {                                                     // var /= const (power of 2)
+      let sh = 0, t = a2; while (t > 1) { if (t & 1) throw new Error(`0x11 divide by non-power-of-2: ${a2}`); t >>= 1; sh++; }
+      c(`  lda ${V(a1)}`); for (let k = 0; k < sh; k++) c(`  lsr`); c(`  sta ${V(a1)}`); break;
+    }
+    case 0x24: c(`  lda ${V(a2)}`); c(`  sta sDir+${a1}`); break;    // sprite dir = var
+    case 0x26: c(`  lda ${V(a2)}`); c(`  sta sSpeed+${a1}`); break;  // sprite movement speed = var
+    case 0x2f: c(`  lda #${a2}`); c(`  sta $d027+${a1}`); break;     // sprite color1 = const
+    case 0x33: c(`  lda #${a2}`); c(`  sta $d021`); c(`  sta $d020`); break;    // scene background = const
+    case 0x34: c(`  lda ${V(a2)}`); c(`  sta $d021`); c(`  sta $d020`); break;  // scene background = var
     // if-family handled by the driver loop
     default: throw new Error(`emitOp: unhandled opcode 0x${op.opcode.toString(16)} (${op.instructionName})`);
   }
 }
 
-const IF_OPS = new Set([0x13, 0x15, 0x17, 0x19, 0x1a, 0x1b, 0x4a]);
+const IF_OPS = new Set([0x13, 0x15, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x4a]);
 const pauseStubs = [], pauseFrames = [];
 
 // loop heads = labels that are targets of a backward jump; one frame tick per pass
@@ -395,6 +428,9 @@ mPulHi   = $c0b0
 scorePtrLo = $c0b4
 scorePtrHi = $c0b5
 scoreColByte = $c0b6
+sParent  = $c0b8        ; multi-quad: parent slot of a sub-quad ($ff = independent)
+sQXoff   = $c0c0        ; sub-quad gmX offset from parent
+sQYoff   = $c0c8        ; sub-quad gmY offset from parent
 
         * = $0801
         !byte $0c,$08, $0a,$00, $9e, $32,$30,$36,$31, $00, $00,$00
@@ -417,6 +453,7 @@ entry:
         ldx #$00
 islot:  lda #$ff
         sta sBase,x
+        sta sParent,x
         lda #$00
         sta sSpeed,x
         sta sAnimSpd,x
@@ -467,7 +504,11 @@ fsl:    lda sBase,x
         cmp #$ff
         bne fp0
         jmp fnext
-fp0:    ; --- movement (speed>0) ---
+fp0:    lda sParent,x           ; sub-quad? -> relative positioning (skip move/anim)
+        cmp #$ff
+        beq fpind
+        jmp fsub
+fpind:  ; --- movement (speed>0) ---
         ldy sSpeed,x
         bne fp1
         jmp fnomove
@@ -562,6 +603,42 @@ fnext:  inx
         cpx #8
         beq fret
         jmp fsl
+fsub:   ; --- sub-quad: position = parent pos + offset, frame = parent frame ---
+        ldy sParent,x
+        lda sPosXhi,y
+        clc
+        adc sQXoff,x
+        sta sval                ; sub gmX
+        sta sPosXhi,x           ; keep sub position current (for collision bbox)
+        lda sPosYhi,y
+        clc
+        adc sQYoff,x
+        sta sval1               ; sub gmY
+        sta sPosYhi,x
+        lda sFrame,y
+        sta tmp                 ; parent frame index
+        txa
+        asl
+        tay                     ; y = 2*subslot
+        lda sval
+        asl                     ; 2*gmX, C = 9th bit
+        sta $d000,y
+        bcc fsl2
+        lda $d010
+        ora bit8,x
+        sta $d010
+        jmp fsd
+fsl2:   lda $d010
+        and bit8i,x
+        sta $d010
+fsd:    lda sval1
+        sta $d001,y
+        lda #16
+        clc
+        adc sBase,x
+        adc tmp
+        sta $43f8,x
+        jmp fnext
 fret:
         ; --- advance the 3 SID sound voices (sweep + repeat) ---
         ldx #0
@@ -837,6 +914,8 @@ sd_row: lda (fptr),y            ; each font bit -> a 2-bit mc pixel (fg/bg per s
         rts
 
 ${pauseSubs}
+
+gmstop: jmp gmstop              ; "stop program" halts here
 
 ; ---- data ----
 bit8:   !byte 1,2,4,8,16,32,64,128
