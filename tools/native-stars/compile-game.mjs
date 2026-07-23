@@ -31,6 +31,9 @@ const spriteMeta = {};   // mediaIndex -> {base, num, mc, c1, c2, c3}
 const frameBytes = [];   // concatenated 64-byte frames
 const soundMeta = {};    // mediaIndex -> {base, num, rep} into the SID frame tables
 const sndFL = [], sndFH = [], sndPL = [], sndPH = [], sndCT = [], sndAD = [], sndSR = [], sndDU = [], sndSL = [], sndSH = [];
+const songMeta = {};     // mediaIndex -> {ch:[{base,num,ctl,ad,sr,pulLo,pulHi} x3]}
+const mFreqLo = [], mFreqHi = [], mDur = [], mFlag = [];   // note tables (all channels concatenated)
+const WAVEBIT = { triangle: 0x10, sawtooth: 0x20, square: 0x40, noise: 0x80 };
 const pad64 = a => { const r = Array.from(a).slice(0, 64); while (r.length < 64) r.push(0); return r; };
 for (const [i, m] of pd.mediaStore.entries()) {
   if (!m) continue;
@@ -56,6 +59,30 @@ for (const [i, m] of pd.mediaStore.entries()) {
   }
 }
 if (sndFL.length === 0) { sndFL.push(0); sndFH.push(0); sndPL.push(0); sndPH.push(0); sndCT.push(0); sndAD.push(0); sndSR.push(0); sndDU.push(1); sndSL.push(0); sndSH.push(0); }
+
+// bundle songs: GKGM instrument index -> SID (waveform+ADSR+pulse+transpose),
+// notes -> per-channel (freq, duration in frames, rest/tie flags)
+for (const [i, m] of pd.mediaStore.entries()) {
+  if (!m || m.type !== 'song' || !m.songFileData) continue;
+  const sg = new globalThis.gmMusic(m.songFileData);
+  const bpm = sg.bpm, ch = [];
+  for (let c = 0; c < 3; c++) {
+    const inst = globalThis.gmMusic.INSTRUMENTS[sg.instruments[c]] || globalThis.gmMusic.INSTRUMENTS[0];
+    const base = mFreqLo.length;
+    for (const n of sg.channels[c]) {
+      let freq = 0;
+      if (!n.isRest) { const hz = 440 * Math.pow(2, (n.pitch + inst.transpose - 38) / 12); freq = Math.min(65535, Math.max(0, Math.round(hz / 0.06097))); }
+      mFreqLo.push(freq & 0xff); mFreqHi.push((freq >> 8) & 0xff);
+      mDur.push(Math.max(1, Math.min(255, Math.round(n.duration * 60 / bpm * 59.94))));
+      mFlag.push((n.isRest ? 1 : 0) | (n.isTied ? 2 : 0));
+    }
+    ch.push({ base, num: sg.channels[c].length, ctl: WAVEBIT[inst.wave] || 0x10,
+      ad: ((inst.att << 4) | inst.dec) & 0xff, sr: ((inst.sus << 4) | inst.rel) & 0xff,
+      pulLo: inst.pulseWidth & 0xff, pulHi: (inst.pulseWidth >> 8) & 0x0f });
+  }
+  songMeta[i] = { ch };
+}
+if (mFreqLo.length === 0) { mFreqLo.push(0); mFreqHi.push(0); mDur.push(1); mFlag.push(1); }
 const bitmap = scene.rawImageData;
 const screenByte = (((scene.color1 & 0xf) << 4) | (scene.color2 & 0xf));
 
@@ -134,7 +161,24 @@ function emitIfHead(op) {
 function emitOp(op) {
   const a1 = op.arg1, a2 = op.arg2;
   switch (op.opcode) {
-    case 0x2b: case 0x28: case 0x60: break;                          // comment / scene(init) / song: no-op
+    case 0x2b: case 0x28: break;                                     // comment / scene(init): no-op
+    case 0x60: {                                                     // song is <media>
+      const meta = songMeta[a2];
+      if (!meta) break;
+      for (let k = 0; k < 3; k++) {
+        const cm = meta.ch[k];
+        c(`  lda #${cm.base}`); c(`  sta mBase+${k}`);
+        c(`  lda #${cm.num}`); c(`  sta mNum+${k}`);
+        c(`  lda #${cm.ctl}`); c(`  sta mCtl+${k}`);
+        c(`  lda #${cm.ad}`); c(`  sta mAD+${k}`);
+        c(`  lda #${cm.sr}`); c(`  sta mSR+${k}`);
+        c(`  lda #${cm.pulLo}`); c(`  sta mPulLo+${k}`);
+        c(`  lda #${cm.pulHi}`); c(`  sta mPulHi+${k}`);
+        c(`  lda #$ff`); c(`  sta mPtr+${k}`);        // -1 so first tick loads note 0
+        c(`  lda #1`); c(`  sta mTmr+${k}`); c(`  sta mAct+${k}`);
+      }
+      break;
+    }
     case 0x40: {                                                      // sound channel(arg1) = sound(arg2)
       const v = a1, meta = soundMeta[a2];
       if (!meta) break;
@@ -264,6 +308,7 @@ fptr   = $f6
 curv   = $f7
 animtog = $f8
 ptr2   = $f9
+nidx   = $fa
 ; --- slot state arrays (8 slots) in RAM ---
 sBase    = $c000
 sNum     = $c008
@@ -288,6 +333,16 @@ vFreqLo  = $c07c
 vFreqHi  = $c080
 vSwLo    = $c084
 vSwHi    = $c088
+mAct     = $c08c
+mBase    = $c090
+mNum     = $c094
+mPtr     = $c098
+mTmr     = $c09c
+mCtl     = $c0a0
+mAD      = $c0a4
+mSR      = $c0a8
+mPulLo   = $c0ac
+mPulHi   = $c0b0
 
         * = $0801
         !byte $0c,$08, $0a,$00, $9e, $32,$30,$36,$31, $00, $00,$00
@@ -346,6 +401,9 @@ islot:  lda #$ff
         sta vAct+0
         sta vAct+1
         sta vAct+2
+        sta mAct+0
+        sta mAct+1
+        sta mAct+2
         lda #$0f
         sta $d418               ; SID master volume
 
@@ -503,6 +561,76 @@ svn:    ldx curv
         inx
         cpx #3
         bne svl
+        ; --- music: step 3 channels (voices stolen while an SFX is active) ---
+        ldx #0
+mvl:    stx curv
+        lda mAct,x
+        beq mvn
+        dec mTmr,x
+        bne mvn
+        inc mPtr,x
+        lda mPtr,x
+        cmp mNum,x
+        bcc mld
+        lda #0
+        sta mPtr,x
+mld:    lda mBase,x
+        clc
+        adc mPtr,x
+        sta nidx
+        tay
+        lda mDur,y
+        sta mTmr,x
+        lda vAct,x              ; SFX owns this voice? keep music in sync, skip SID
+        bne mvn
+        jsr mplaynote
+mvn:    ldx curv
+        inx
+        cpx #3
+        bne mvl
+        rts
+
+mplaynote:                      ; curv = channel/voice, nidx = note index
+        ldy curv
+        lda v7,y
+        tay                     ; Y = voice*7
+        ldx nidx
+        lda mFlag,x
+        and #$01
+        beq mpnote
+        ldx curv                ; rest -> gate off
+        lda mCtl,x
+        sta $d404,y
+        rts
+mpnote: lda mFlag,x
+        and #$02
+        bne mptied
+        ldx curv                ; non-tied -> retrigger the envelope
+        lda mCtl,x
+        sta $d404,y
+        lda mAD,x
+        sta $d405,y
+        lda mSR,x
+        sta $d406,y
+        lda mPulLo,x
+        sta $d402,y
+        lda mPulHi,x
+        sta $d403,y
+        ldx nidx
+        lda mFreqLo,x
+        sta $d400,y
+        lda mFreqHi,x
+        sta $d401,y
+        ldx curv
+        lda mCtl,x
+        ora #$01
+        sta $d404,y
+        rts
+mptied: ldx nidx                ; tied -> change frequency only (legato)
+        lda mFreqLo,x
+        sta $d400,y
+        lda mFreqHi,x
+        sta $d401,y
         rts
 
 loadframe:                      ; X = sound frame index, curv = voice
@@ -635,6 +763,10 @@ sndSR:  !byte ${sndSR.join(',')}
 sndDU:  !byte ${sndDU.join(',')}
 sndSL:  !byte ${sndSL.join(',')}
 sndSH:  !byte ${sndSH.join(',')}
+mFreqLo: !byte ${mFreqLo.join(',')}
+mFreqHi: !byte ${mFreqHi.join(',')}
+mDur:   !byte ${mDur.join(',')}
+mFlag:  !byte ${mFlag.join(',')}
 powlo:  !byte <10000,<1000,<100,<10,<1
 powhi:  !byte >10000,>1000,>100,>10,>1
 digfont:
