@@ -102,6 +102,15 @@ for (let s = 0; s < 256; s++) {
   ymagLo.push(yv & 0xff); ymagHi.push((yv >> 8) & 0xff);
 }
 
+// score color-expansion table: expandTab[(fg*4+bg)*16 + nibble] -> a bitmap byte
+// where each of the nibble's 4 bits becomes a 2-bit mc pixel (fg if set, bg if clear)
+const expandTab = [];
+for (let fg = 0; fg < 4; fg++) for (let bg = 0; bg < 4; bg++) for (let n = 0; n < 16; n++) {
+  let b = 0;
+  for (let sb = 0; sb < 4; sb++) { const val = ((n >> sb) & 1) ? fg : bg; b |= val << (sb * 2); }
+  expandTab.push(b);
+}
+
 // ---- codegen ----
 const L = [];
 const c = s => L.push(s);
@@ -161,7 +170,8 @@ function emitIfHead(op) {
 function emitOp(op) {
   const a1 = op.arg1, a2 = op.arg2;
   switch (op.opcode) {
-    case 0x2b: case 0x28: break;                                     // comment / scene(init): no-op
+    case 0x2b: break;                                                // comment: discarded
+    case 0x28: c(`  jsr scene_show`); break;                         // scene N is X -> display it
     case 0x60: {                                                     // song is <media>
       const meta = songMeta[a2];
       if (!meta) break;
@@ -226,7 +236,12 @@ function emitOp(op) {
       c(`  clc`); c(`  lda scoreLo`); c(`  adc #<${N}`); c(`  sta scoreLo`);
       c(`  lda scoreHi`); c(`  adc #>${N}`); c(`  sta scoreHi`); c(`  jsr score_show`); break; }
     case 0x48: c(`  lda #0`); c(`  sta scoreLo`); c(`  sta scoreHi`); c(`  jsr score_show`); break;  // clear score
-    case 0x46: case 0x42: break;                                          // score pos/color: fixed at compile time
+    case 0x46: {                                                          // score at row(arg1) column(arg2)
+      const addr = 0x6000 + a1 * 320 + a2 * 16;
+      c(`  lda #<${addr}`); c(`  sta scorePtrLo`); c(`  lda #>${addr}`); c(`  sta scorePtrHi`);
+      break;
+    }
+    case 0x42: c(`  lda #${(a1 & 3) * 4 + (a2 & 3)}`); c(`  sta scoreColByte`); break;  // score color = fg(arg1) on bg(arg2)
     case 0x57: c(`  jsr pause_${++uid}`); pauseStubs.push(uid);           // pause for arg2/10 seconds
       pauseFrames.push(Math.max(1, Math.round(a2 / 10 * 59.94)));
       break;
@@ -343,6 +358,9 @@ mAD      = $c0a4
 mSR      = $c0a8
 mPulLo   = $c0ac
 mPulHi   = $c0b0
+scorePtrLo = $c0b4
+scorePtrHi = $c0b5
+scoreColByte = $c0b6
 
         * = $0801
         !byte $0c,$08, $0a,$00, $9e, $32,$30,$36,$31, $00, $00,$00
@@ -360,25 +378,7 @@ entry:
         sta $d016
         lda #$08
         sta $d018               ; screen $4000, bitmap $6000
-        lda #${scene.bgColor}
-        sta $d021
-        sta $d020
-        lda #$${screenByte.toString(16).padStart(2,'0')}
-        ldx #$00
-sfill:  sta SCREEN,x
-        sta SCREEN+$100,x
-        sta SCREEN+$200,x
-        sta SCREEN+$300,x
-        inx
-        bne sfill
-        lda #${scene.color3}
-        ldx #$00
-cfill:  sta $d800,x
-        sta $d900,x
-        sta $da00,x
-        sta $db00,x
-        inx
-        bne cfill
+        ; (scene colors/matrix are set by the "scene is" opcode -> scene_show)
         ; init slots: base=$ff (unassigned)
         ldx #$00
 islot:  lda #$ff
@@ -406,6 +406,12 @@ islot:  lda #$ff
         sta mAct+2
         lda #$0f
         sta $d418               ; SID master volume
+        lda #<SCOREHOME         ; default score position/color (opcodes override)
+        sta scorePtrLo
+        lda #>SCOREHOME
+        sta scorePtrHi
+        lda #4
+        sta scoreColByte        ; fg color 1 on bg 0
 
 ${codeBody}
 
@@ -664,8 +670,31 @@ loadframe:                      ; X = sound frame index, curv = voice
         sta vTmr,y
         rts
 
-; score_show: print scoreLo/Hi as 5 decimal digits at bitmap cell (col 7, row 1)
-SCOREBASE = BITMAP + ${scoreOff}   ; row ${scoreRow}, column ${scoreCol} (col*16: 8 mc-px cells)
+; scene_show: configure the multicolor bitmap display for the scene
+scene_show:
+        lda #${scene.bgColor}
+        sta $d021
+        sta $d020
+        lda #$${screenByte.toString(16).padStart(2,'0')}
+        ldx #$00
+sfill:  sta SCREEN,x
+        sta SCREEN+$100,x
+        sta SCREEN+$200,x
+        sta SCREEN+$300,x
+        inx
+        bne sfill
+        lda #${scene.color3}
+        ldx #$00
+cfill:  sta $d800,x
+        sta $d900,x
+        sta $da00,x
+        sta $db00,x
+        inx
+        bne cfill
+        rts
+
+SCOREHOME = BITMAP + ${scoreOff}   ; default score position (row ${scoreRow}, col ${scoreCol})
+; score_show: print scoreLo/Hi as 5 decimal digits at scorePtr, in scoreColByte
 score_show:
         lda scoreLo
         sta sval
@@ -700,9 +729,9 @@ ss_done:
         asl
         asl
         clc
-        adc #<SCOREBASE
+        adc scorePtrLo
         sta ptr
-        lda #>SCOREBASE
+        lda scorePtrHi
         adc #0
         sta ptr+1
         clc                     ; ptr2 = ptr + 8 (right cell)
@@ -723,28 +752,44 @@ ss_done:
         adc #>digfont
         sta fptr+1
         ldy #0
-sd_row: lda (fptr),y            ; each font bit -> a 2-bit (color 1) mc pixel
+sd_row: lda (fptr),y            ; each font bit -> a 2-bit mc pixel (fg/bg per scoreColByte)
         pha
         lsr
         lsr
         lsr
         lsr
+        sta tmp
+        lda scoreColByte
+        asl
+        asl
+        asl
+        asl
+        ora tmp
         tax
-        lda expand01,x
+        lda expandTab,x
         sta (ptr),y
         pla
         and #$0f
+        sta tmp
+        lda scoreColByte
+        asl
+        asl
+        asl
+        asl
+        ora tmp
         tax
-        lda expand01,x
+        lda expandTab,x
         sta (ptr2),y
         iny
         cpy #8
-        bne sd_row
-        inc dcol
+        beq sd_out
+        jmp sd_row
+sd_out: inc dcol
         lda dcol
         cmp #5
-        bne ss_lp
-        rts
+        beq ss_ret
+        jmp ss_lp
+ss_ret: rts
 
 ${pauseSubs}
 
@@ -752,7 +797,7 @@ ${pauseSubs}
 bit8:   !byte 1,2,4,8,16,32,64,128
 bit8i:  !byte 254,253,251,247,239,223,191,127
 v7:     !byte 0,7,14
-expand01: !byte 0,1,4,5,16,17,20,21,64,65,68,69,80,81,84,85
+expandTab: !byte ${expandTab.join(',')}
 sndFL:  !byte ${sndFL.join(',')}
 sndFH:  !byte ${sndFH.join(',')}
 sndPL:  !byte ${sndPL.join(',')}
