@@ -150,11 +150,22 @@ function emitIfHead(op) {
       break;
     }
     case 0x1b: {                                                                          // if sprite A hit sprite B
+      // $d01e (VIC hardware sprite-sprite collision) is pixel-accurate but only
+      // reports the *set* of colliding sprites, not pairs. So: both bits lit is
+      // required; if they're the ONLY bits lit it's an unambiguous A-B pixel hit;
+      // if other sprites are colliding too, a bounding-box test on just A and B
+      // disambiguates (rare, and "overlapping pile all reacts" is acceptable).
       const A = a1, Bx = a2;
-      c(`  lda sPosXhi+${A}`); c(`  sec`); c(`  sbc sPosXhi+${Bx}`); c(`  bpl xp_${n}`);
+      const both = ((1 << A) | (1 << Bx)) & 0xff;
+      const others = (~both) & 0xff;
+      const hit = `hit_${n}`;
+      c(`  lda collFlags`); c(`  and #${both}`); c(`  cmp #${both}`); fbr('bne', elseL);  // both must be colliding
+      c(`  lda collFlags`); c(`  and #${others}`); c(`  beq ${hit}`);                     // only A,B lit -> certain hit
+      c(`  lda sPosXhi+${A}`); c(`  sec`); c(`  sbc sPosXhi+${Bx}`); c(`  bpl xp_${n}`);   // ambiguous -> bbox A vs B
       c(`  eor #$ff`); c(`  clc`); c(`  adc #1`); c(`xp_${n}:`); c(`  cmp #12`); fbr('bcs', elseL);
       c(`  lda sPosYhi+${A}`); c(`  sec`); c(`  sbc sPosYhi+${Bx}`); c(`  bpl yp_${n}`);
       c(`  eor #$ff`); c(`  clc`); c(`  adc #1`); c(`yp_${n}:`); c(`  cmp #21`); fbr('bcs', elseL);
+      c(`${hit}:`);
       break;
     }
     case 0x4a: {                                                                          // if score1 > N
@@ -324,6 +335,7 @@ curv   = $f7
 animtog = $f8
 ptr2   = $f9
 nidx   = $fa
+collFlags = $fd
 ; --- slot state arrays (8 slots) in RAM ---
 sBase    = $c000
 sNum     = $c008
@@ -396,6 +408,7 @@ islot:  lda #$ff
         sta $d017
         sta $d01d
         sta $d01b               ; all sprites in front of the bitmap
+        sta collFlags
         sta scoreLo
         sta scoreHi
         sta vAct+0
@@ -421,6 +434,8 @@ frame:
 fw:     lda $d012
         cmp #250
         bne fw
+        lda $d01e               ; latch sprite-sprite collisions once/frame (reading clears)
+        sta collFlags
         inc animtog             ; animation ticks at 30fps (every other frame)
         ldx #$00
 fsl:    lda sBase,x
