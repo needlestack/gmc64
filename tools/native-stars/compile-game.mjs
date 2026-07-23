@@ -227,8 +227,8 @@ function emitOp(op) {
       c(`  lda scoreHi`); c(`  adc #>${N}`); c(`  sta scoreHi`); c(`  jsr score_show`); break; }
     case 0x48: c(`  lda #0`); c(`  sta scoreLo`); c(`  sta scoreHi`); c(`  jsr score_show`); break;  // clear score
     case 0x46: case 0x42: break;                                          // score pos/color: fixed at compile time
-    case 0x57: c(`  jsr pause_${++uid}`); pauseStubs.push(uid); {         // pause (frames) — approximate seconds
-      const secs = Math.max(1, Math.round(numFrom(op.instructionName + '000') / 10) || 1); pauseSecs.push(secs); }
+    case 0x57: c(`  jsr pause_${++uid}`); pauseStubs.push(uid);           // pause for arg2/10 seconds
+      pauseFrames.push(Math.max(1, Math.round(a2 / 10 * 59.94)));
       break;
     // if-family handled by the driver loop
     default: throw new Error(`emitOp: unhandled opcode 0x${op.opcode.toString(16)} (${op.instructionName})`);
@@ -236,7 +236,7 @@ function emitOp(op) {
 }
 
 const IF_OPS = new Set([0x13, 0x15, 0x17, 0x19, 0x1a, 0x1b, 0x4a]);
-const pauseStubs = [], pauseSecs = [];
+const pauseStubs = [], pauseFrames = [];
 
 // loop heads = labels that are targets of a backward jump; one frame tick per pass
 const labelIndex = {};
@@ -260,7 +260,7 @@ const codeBody = L.join('\n');
 
 // pause subroutines (each waits secs*~50 frames, running the frame update)
 const pauseSubs = pauseStubs.map((id, k) => {
-  const frames = pauseSecs[k] * 50;
+  const frames = pauseFrames[k];
   return `pause_${id}:
         lda #<${frames}
         sta pcl
