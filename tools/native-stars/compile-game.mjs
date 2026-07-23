@@ -59,6 +59,14 @@ if (sndFL.length === 0) { sndFL.push(0); sndFH.push(0); sndPL.push(0); sndPH.pus
 const bitmap = scene.rawImageData;
 const screenByte = (((scene.color1 & 0xf) << 4) | (scene.color2 & 0xf));
 
+// score display position: GKGM "row (0-24) column (0-19)". Columns are 0-19 =
+// 20 across a 160-mc-px screen => each column is 8 mc px = 16 hires px = 2 cells
+// (double-wide, since the scene is multicolor). Byte offset = row*320 + col*16.
+const sc46 = ins.find(op => op.opcode === 0x46);
+const scoreRow = sc46 ? sc46.arg1 : 1;
+const scoreCol = sc46 ? sc46.arg2 : 7;
+const scoreOff = scoreRow * 320 + scoreCol * 16;
+
 // ---- movement magnitude tables (8.8 fixed): speed/46 (X), speed/31.5 (Y) ----
 const xmagLo = [], xmagHi = [], ymagLo = [], ymagHi = [];
 for (let s = 0; s < 256; s++) {
@@ -529,7 +537,7 @@ loadframe:                      ; X = sound frame index, curv = voice
         rts
 
 ; score_show: print scoreLo/Hi as 5 decimal digits at bitmap cell (col 7, row 1)
-SCOREBASE = BITMAP + 376        ; $6000 + 1*320 + 7*8
+SCOREBASE = BITMAP + ${scoreOff}   ; row ${scoreRow}, column ${scoreCol} (col*16: 8 mc-px cells)
 score_show:
         lda scoreLo
         sta sval
