@@ -308,13 +308,19 @@ function emitOp(op) {
       if (!meta) break;   // multi-quad marker (e.g. "sprite 2 is -ctitl") -> already set up by the main
       const quads = meta.quads || [{ base: meta.base, xoff: 0, yoff: 0 }];
       for (let q = 0; q < quads.length; q++) {           // multi-quad -> occupy adjacent slots
-        const sl = a1 + q;
+        const sl = a1 + q, u = ++uid;
+        // GKGM isNewSprite: only reset the frame + force a re-copy when assigning a
+        // DIFFERENT sprite. Re-issuing the same sprite (games do this per-frame for
+        // facing) must preserve the animation frame AND the position (incl. the 8.8
+        // fractional accumulator) — else animation restarts and sub-pixel speeds never
+        // accumulate ("can't move" + erratic anim).
+        c(`  lda #${quads[q].base}`); c(`  cmp sBase+${sl}`); c(`  beq sk_${u}`);
+        c(`  lda #0`); c(`  sta sFrame+${sl}`);
+        c(`  lda #$ff`); c(`  sta sLoad+${sl}`);
+        c(`sk_${u}:`);
         c(`  lda #${quads[q].base}`); c(`  sta sBase+${sl}`);
         c(`  lda #${meta.num}`); c(`  sta sNum+${sl}`);
-        c(`  lda #$00`); c(`  sta sFrame+${sl}`);     // reset frame only; GKGM keeps speed/dir/animSpeed across swaps
-        c(`  lda #$ff`); c(`  sta sLoad+${sl}`);      // new sprite -> force frame (re)copy into the slot
-        if (q === 0) { c(`  lda #$ff`); c(`  sta sParent+${sl}`);      // main = independent
-                       c(`  lda #0`); c(`  sta sPosXlo+${sl}`); c(`  sta sPosYlo+${sl}`); }
+        if (q === 0) { c(`  lda #$ff`); c(`  sta sParent+${sl}`); }    // main = independent (position preserved)
         else { c(`  lda #${a1}`); c(`  sta sParent+${sl}`);           // sub-quad -> tracks parent
                c(`  lda #${quads[q].xoff}`); c(`  sta sQXoff+${sl}`);
                c(`  lda #${quads[q].yoff}`); c(`  sta sQYoff+${sl}`); }
@@ -536,6 +542,8 @@ islot:  lda #$ff
         sta sAnimSpd,x
         sta sDir,x              ; init once; 0x27 preserves these across sprite swaps
         sta sAnimTmr,x
+        sta sPosXlo,x           ; 8.8 fractional position (0x27 preserves it; games set hi via position ops)
+        sta sPosYlo,x
         inx
         cpx #8
         bne islot
