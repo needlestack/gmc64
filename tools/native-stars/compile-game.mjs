@@ -306,8 +306,7 @@ function emitOp(op) {
         const sl = a1 + q;
         c(`  lda #${quads[q].base}`); c(`  sta sBase+${sl}`);
         c(`  lda #${meta.num}`); c(`  sta sNum+${sl}`);
-        c(`  lda #$00`); c(`  sta sFrame+${sl}`); c(`  sta sSpeed+${sl}`); c(`  sta sDir+${sl}`);
-        c(`  sta sAnimSpd+${sl}`); c(`  sta sAnimTmr+${sl}`);
+        c(`  lda #$00`); c(`  sta sFrame+${sl}`);     // reset frame only; GKGM keeps speed/dir/animSpeed across swaps
         c(`  lda #$ff`); c(`  sta sLoad+${sl}`);      // new sprite -> force frame (re)copy into the slot
         if (q === 0) { c(`  lda #$ff`); c(`  sta sParent+${sl}`);      // main = independent
                        c(`  lda #0`); c(`  sta sPosXlo+${sl}`); c(`  sta sPosYlo+${sl}`); }
@@ -526,6 +525,8 @@ islot:  lda #$ff
         lda #$00
         sta sSpeed,x
         sta sAnimSpd,x
+        sta sDir,x              ; init once; 0x27 preserves these across sprite swaps
+        sta sAnimTmr,x
         inx
         cpx #8
         bne islot
@@ -879,8 +880,14 @@ loadframe:                      ; X = sound frame index, curv = voice
         sta $d405,y
         lda sndSR,x
         sta $d406,y
-        lda sndCT,x
-        sta $d404,y
+        lda sndSL,x             ; melody frame (no sweep) -> retrigger the envelope,
+        ora sndSH,x             ; so each note re-attacks from 0 (a rest sets sustain=0;
+        bne lf_on               ; without a retrigger the next note would stay stuck at 0).
+        lda sndCT,x             ; sweep sounds keep a continuous gate (skip the off).
+        and #$fe
+        sta $d404,y             ; gate off ...
+lf_on:  lda sndCT,x
+        sta $d404,y             ; ... then gate on -> rising edge retriggers ADSR
         ldy curv
         lda sndFL,x
         sta vFreqLo,y
