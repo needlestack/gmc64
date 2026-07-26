@@ -129,6 +129,24 @@ for (let fg = 0; fg < 4; fg++) for (let bg = 0; bg < 4; bg++) for (let n = 0; n 
   expandTab.push(b);
 }
 
+// ---- PRINT subsystem tables ----
+// GMC64 font: 64 glyphs x 8 bytes. gmCharset stores LSB=leftmost; our blitter is
+// MSB=leftmost (like digfont), so bit-reverse each byte.
+const bitrev = b => { let r = 0; for (let i = 0; i < 8; i++) r |= ((b >> i) & 1) << (7 - i); return r; };
+const printFont = [];
+for (const hex of globalThis.gmCharset.CHAR_DATA)
+  for (const b of hex.match(/../g).map(h => parseInt(h, 16))) printFont.push(bitrev(b));
+// bitmap byte offset = row*320 + col*16  (row 0-24 char rows, col 0-19 = 2 cells each)
+const prowLo = [], prowHi = [], pcolLo = [], pcolHi = [];
+for (let r = 0; r < 25; r++) { const v = r * 320; prowLo.push(v & 0xff); prowHi.push((v >> 8) & 0xff); }
+for (let c2 = 0; c2 < 20; c2++) { const v = c2 * 16; pcolLo.push(v & 0xff); pcolHi.push((v >> 8) & 0xff); }
+// bundle each print string's GM indices into prnStr; tag the op with its base/len
+const prnStr = [];
+for (const op of ins) if (op.opcode === 0x3b && op.printBytes) {
+  op._strBase = prnStr.length; op._strLen = op.printBytes.length; prnStr.push(...op.printBytes);
+}
+if (prnStr.length === 0) prnStr.push(0);
+
 // ---- codegen ----
 const L = [];
 const c = s => L.push(s);
@@ -232,6 +250,17 @@ function emitOp(op) {
     }
     case 0x2e: c(`  lda #${a1}`); c(`  sta activeScene`); c(`  jsr display_scene`); break;                 // display scene N
     case 0x56: c(`  lda activeScene`); c(`  eor #1`); c(`  sta activeScene`); c(`  jsr display_scene`); break; // display other scene
+    case 0x39: c(`  lda #${a1}`); c(`  sta printRow`); c(`  lda #${a2}`); c(`  sta printCol`); break;   // print at row/col
+    case 0x3e: c(`  lda #${(a1 & 3) * 4 + (a2 & 3)}`); c(`  sta printColByte`); break;                  // print color fg on bg
+    case 0x5c: c(`  lda #${a2}`); c(`  sta printTarget`); break;                                        // print on scene(s)
+    case 0x5b: break;   // scoreN on scene(s): score currently renders to scene1 only (target TODO)
+    case 0x3d: c(`  lda ${V(a2)}`); c(`  jsr print_value`); break;                                      // print value of [var]
+    case 0x3c: c(`  lda ${V(a2)}`); c(`  jsr print_char`); c(`  inc printCol`); break;                  // print char of [var]
+    case 0x3b: {                                                                                        // print literal string
+      const b = op._strBase ?? 0, l = op._strLen ?? 0;
+      c(`  lda #<prnStr+${b}`); c(`  sta pcl`); c(`  lda #>prnStr+${b}`); c(`  sta pch`);
+      c(`  lda #${l}`); c(`  jsr print_string`); break;
+    }
     case 0x60: {                                                     // song is <media>
       const meta = songMeta[a2];
       if (!meta) break;
@@ -271,6 +300,7 @@ function emitOp(op) {
     case 0x01: c(`  jmp LBL_${a2}`); break;
     case 0x27: {                                                       // sprite N is <media>
       const meta = spriteMeta[a2];
+      if (!meta) break;   // multi-quad marker (e.g. "sprite 2 is -ctitl") -> already set up by the main
       const quads = meta.quads || [{ base: meta.base, xoff: 0, yoff: 0 }];
       for (let q = 0; q < quads.length; q++) {           // multi-quad -> occupy adjacent slots
         const sl = a1 + q;
@@ -461,6 +491,14 @@ sQXoff   = $c0c0        ; sub-quad gmX offset from parent
 sQYoff   = $c0c8        ; sub-quad gmY offset from parent
 sLoad    = $c0d0        ; master frame index currently copied into this slot ($ff=none)
 activeScene = $c0d8     ; 0 or 1 (which scene/bank is displayed)
+printRow = $c0d9        ; print cursor row (0-24)
+printCol = $c0da        ; print cursor column (0-19)
+printColByte = $c0db    ; print color: fg*4 + bg
+printTarget = $c0dc     ; 0=scene1 bitmap, 1=scene2, 2=both
+gcol     = $c0de        ; putglyph color-byte parameter
+strlen   = $c0e0        ; print_string length / index / value scratch
+stridx   = $c0e1
+pvtmp    = $c0e2
 
         * = $0801
         !byte $0c,$08, $0a,$00, $9e, $32,$30,$36,$31, $00, $00,$00
@@ -882,6 +920,150 @@ dsL:    lda #$ff
         bpl dsL
         rts
 
+; ---- PRINT subsystem (text onto the multicolor bitmap) ----
+; putglyph: blit an 8x8 font glyph -> 2 cells. fptr=font src, ptr=left cell,
+; ptr2=right cell, gcol=color byte (fg*4+bg). Each font bit -> a 2-bit mc pixel.
+putglyph:
+        ldy #0
+pg_lp:  lda (fptr),y
+        pha
+        lsr
+        lsr
+        lsr
+        lsr
+        sta tmp
+        lda gcol
+        asl
+        asl
+        asl
+        asl
+        ora tmp
+        tax
+        lda expandTab,x
+        sta (ptr),y
+        pla
+        and #$0f
+        sta tmp
+        lda gcol
+        asl
+        asl
+        asl
+        asl
+        ora tmp
+        tax
+        lda expandTab,x
+        sta (ptr2),y
+        iny
+        cpy #8
+        bne pg_lp
+        rts
+
+; print_char: A = gm char index. Render at (printRow,printCol) to target bitmap(s).
+print_char:
+        and #$3f
+        tay
+        lda fontLo,y
+        sta fptr
+        lda fontHi,y
+        sta fptr+1              ; fptr = printFont + index*8
+        ldx printRow            ; sval/sval1 = row*320 + col*16
+        lda prowLo,x
+        sta sval
+        lda prowHi,x
+        sta sval1
+        ldx printCol
+        clc
+        lda sval
+        adc pcolLo,x
+        sta sval
+        lda sval1
+        adc pcolHi,x
+        sta sval1
+        lda printColByte
+        sta gcol
+        lda printTarget
+        cmp #1
+        beq pc_s2               ; target 1 -> scene 2 only
+        lda #$60
+        jsr pc_render           ; scene 1 ($6000 + offset)
+        lda printTarget
+        cmp #2
+        bne pc_ret              ; target 0 -> done
+pc_s2:  lda #$a0
+        jsr pc_render           ; scene 2 ($a000 + offset)
+pc_ret: rts
+pc_render:                      ; A = bitmap base high byte
+        sta tmp
+        clc
+        lda sval
+        sta ptr                 ; base low = 0
+        lda sval1
+        adc tmp
+        sta ptr+1               ; ptr = base + offset (left cell)
+        clc
+        lda ptr
+        adc #8
+        sta ptr2
+        lda ptr+1
+        adc #0
+        sta ptr2+1              ; ptr2 = ptr + 8 (right cell)
+        jsr putglyph
+        rts
+
+; print_string: pcl/pch = string addr (GM indices), A = length. Advances printCol
+; per char, then printRow++ (GM prints a whole row then drops down).
+print_string:
+        sta strlen
+        lda #0
+        sta stridx
+ps_lp:  lda stridx
+        cmp strlen
+        bcs ps_done
+        ldy stridx
+        lda (pcl),y
+        jsr print_char
+        inc printCol
+        inc stridx
+        jmp ps_lp
+ps_done: inc printRow
+        rts
+
+; print_value: A = value (0-255) -> 3 zero-padded decimal digits at printCol.
+print_value:
+        ldx #0                  ; hundreds
+pv_h:   cmp #100
+        bcc pv_hd
+        sec
+        sbc #100
+        inx
+        jmp pv_h
+pv_hd:  sta pvtmp
+        txa
+        clc
+        adc #48
+        jsr print_char
+        inc printCol
+        lda pvtmp
+        ldx #0                  ; tens
+pv_t:   cmp #10
+        bcc pv_td
+        sec
+        sbc #10
+        inx
+        jmp pv_t
+pv_td:  sta pvtmp
+        txa
+        clc
+        adc #48
+        jsr print_char
+        inc printCol
+        lda pvtmp               ; ones
+        clc
+        adc #48
+        jsr print_char
+        inc printCol
+        rts
+
 SCOREHOME = BITMAP + ${scoreOff}   ; default score position (row ${scoreRow}, col ${scoreCol})
 ; score_show: print scoreLo/Hi as 5 decimal digits at scorePtr, in scoreColByte
 score_show:
@@ -987,6 +1169,14 @@ bit8:   !byte 1,2,4,8,16,32,64,128
 bit8i:  !byte 254,253,251,247,239,223,191,127
 v7:     !byte 0,7,14
 expandTab: !byte ${expandTab.join(',')}
+printFont: !byte ${printFont.join(',')}
+fontLo: !byte ${Array.from({length: 64}, (_, i) => `<printFont+${i * 8}`).join(',')}
+fontHi: !byte ${Array.from({length: 64}, (_, i) => `>printFont+${i * 8}`).join(',')}
+prowLo: !byte ${prowLo.join(',')}
+prowHi: !byte ${prowHi.join(',')}
+pcolLo: !byte ${pcolLo.join(',')}
+pcolHi: !byte ${pcolHi.join(',')}
+prnStr: !byte ${prnStr.join(',')}
 sndFL:  !byte ${sndFL.join(',')}
 sndFH:  !byte ${sndFH.join(',')}
 sndPL:  !byte ${sndPL.join(',')}
