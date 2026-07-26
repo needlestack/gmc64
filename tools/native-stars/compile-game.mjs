@@ -27,6 +27,7 @@ const ins = pd.instructions;
 
 // ---- bundle media ----
 let scene = null;
+const sceneMedia = {};   // mediaIndex -> gmScene (resolved to slots below)
 const spriteMeta = {};   // mediaIndex -> {base, num, mc, c1, c2, c3}
 const frameBytes = [];   // concatenated 64-byte frames
 const soundMeta = {};    // mediaIndex -> {base, num, rep} into the SID frame tables
@@ -37,7 +38,7 @@ const WAVEBIT = { triangle: 0x10, sawtooth: 0x20, square: 0x40, noise: 0x80 };
 const pad64 = a => { const r = Array.from(a).slice(0, 64); while (r.length < 64) r.push(0); return r; };
 for (const [i, m] of pd.mediaStore.entries()) {
   if (!m) continue;
-  if (m.type === 'scene') scene = m.scene;
+  if (m.type === 'scene') { sceneMedia[i] = m.scene; scene = m.scene; }
   else if (m.type === 'sprite' && m.sprite) {   // m.sprite===null are multi-quad markers -> skip
     const s = m.sprite, h = s.sprite[0], F = h.totalFrames, Q = s.sprite.length;
     // bundle every quad's frames back-to-back; each quad gets its own frame base.
@@ -89,8 +90,19 @@ for (const [i, m] of pd.mediaStore.entries()) {
   songMeta[i] = { ch };
 }
 if (mFreqLo.length === 0) { mFreqLo.push(0); mFreqHi.push(0); mDur.push(1); mFlag.push(1); }
-const bitmap = scene.rawImageData;
-const screenByte = (((scene.color1 & 0xf) << 4) | (scene.color2 & 0xf));
+
+// resolve scene SLOTS: "scene N is X" (0x28: arg1 = slot 0/1, arg2 = media index).
+// slot 0 -> VIC bank 1 ($6000 bitmap), slot 1 -> VIC bank 2 ($A000 bitmap).
+const sceneSlotMedia = {};
+for (const op of ins) if (op.opcode === 0x28) sceneSlotMedia[op.arg1] = op.arg2;
+const sceneByBank = [sceneMedia[sceneSlotMedia[0]] || scene, sceneMedia[sceneSlotMedia[1]]];
+const numScenes = sceneByBank.filter(Boolean).length;
+scene = sceneByBank[0];                                  // primary scene (score pos, name, etc.)
+const sbyte = sc => ((((sc.color1 & 0xf) << 4) | (sc.color2 & 0xf)) & 0xff);
+const bitmap = scene.rawImageData;                        // bank1 bitmap ($6000)
+const screenByte = sbyte(scene);
+const bitmap2 = sceneByBank[1] ? sceneByBank[1].rawImageData : null;   // bank2 bitmap ($A000)
+const screenByte2 = sceneByBank[1] ? sbyte(sceneByBank[1]) : 0;
 
 // score display position: GKGM "row (0-24) column (0-19)". Columns are 0-19 =
 // 20 across a 160-mc-px screen => each column is 8 mc px = 16 hires px = 2 cells
@@ -205,7 +217,21 @@ function emitOp(op) {
   const a1 = op.arg1, a2 = op.arg2;
   switch (op.opcode) {
     case 0x2b: break;                                                // comment: discarded
-    case 0x28: c(`  jsr scene_show`); break;                         // scene N is X -> display it
+    case 0x28: {                                                     // scene N is X -> set up slot N's bank matrix
+      const slot = a1, sc = sceneByBank[slot];
+      if (!sc) break;
+      const mx = slot === 0 ? 0x4000 : 0x8000, h = a => '$' + a.toString(16), u = ++uid;
+      c(`  lda #${sbyte(sc)}`); c(`  ldx #0`); c(`ssm_${u}:`);                     // fill screen matrix (colors 1/2)
+      c(`  sta ${h(mx)},x`); c(`  sta ${h(mx + 0x100)},x`); c(`  sta ${h(mx + 0x200)},x`); c(`  sta ${h(mx + 0x300)},x`);
+      c(`  inx`); c(`  bne ssm_${u}`);
+      c(`  lda #${sc.color3}`); c(`  ldx #0`); c(`scr_${u}:`);                     // fill color RAM (color 3, shared)
+      c(`  sta $d800,x`); c(`  sta $d900,x`); c(`  sta $da00,x`); c(`  sta $db00,x`);
+      c(`  inx`); c(`  bne scr_${u}`);
+      c(`  lda #${sc.bgColor}`); c(`  sta $d021`); c(`  sta $d020`);               // background/border
+      break;
+    }
+    case 0x2e: c(`  lda #${a1}`); c(`  sta activeScene`); c(`  jsr display_scene`); break;                 // display scene N
+    case 0x56: c(`  lda activeScene`); c(`  eor #1`); c(`  sta activeScene`); c(`  jsr display_scene`); break; // display other scene
     case 0x60: {                                                     // song is <media>
       const meta = songMeta[a2];
       if (!meta) break;
@@ -392,6 +418,7 @@ ptr2   = $f9
 nidx   = $fa
 collFlags = $fd
 bgFlags = $fe
+bankEor = $ff           ; 0=bank1 active, $c0=bank2 (XOR onto slot/matrix high bytes)
 ; --- slot state arrays (8 slots) in RAM ---
 sBase    = $c000
 sNum     = $c008
@@ -433,6 +460,7 @@ sParent  = $c0b8        ; multi-quad: parent slot of a sub-quad ($ff = independe
 sQXoff   = $c0c0        ; sub-quad gmX offset from parent
 sQYoff   = $c0c8        ; sub-quad gmY offset from parent
 sLoad    = $c0d0        ; master frame index currently copied into this slot ($ff=none)
+activeScene = $c0d8     ; 0 or 1 (which scene/bank is displayed)
 
         * = $0801
         !byte $0c,$08, $0a,$00, $9e, $32,$30,$36,$31, $00, $00,$00
@@ -472,6 +500,8 @@ islot:  lda #$ff
         sta $d01b               ; all sprites in front of the bitmap
         sta collFlags
         sta bgFlags
+        sta bankEor             ; start on bank 1 (scene 1)
+        sta activeScene
         sta scoreLo
         sta scoreHi
         sta vAct+0
@@ -597,10 +627,11 @@ fxl:    lda $d010
         sta $d010
 fxd:    lda sPosYhi,x
         sta $d001,y
-        txa                     ; fixed sprite pointer = 16+slot (always points at this slot)
+        txa                     ; fixed sprite pointer = 16+slot (mirror to both banks)
         clc
         adc #16
         sta $43f8,x
+        sta $83f8,x
         lda sBase,x             ; current master frame index = base + frame
         clc
         adc sFrame,x
@@ -639,10 +670,11 @@ fsl2:   lda $d010
         sta $d010
 fsd:    lda sval1
         sta $d001,y
-        txa                     ; fixed pointer = 16+slot
+        txa                     ; fixed pointer = 16+slot (mirror to both banks)
         clc
         adc #16
         sta $43f8,x
+        sta $83f8,x
         lda sBase,x             ; sub-quad master frame = sub base + parent frame
         clc
         adc tmp
@@ -741,7 +773,8 @@ loadslot:                       ; X=slot, A=master frame index -> copy into this
         lda slotLo,x
         sta ptr
         lda slotHi,x
-        sta ptr+1               ; ptr = bank1 slot (+$400 + slot*64)  (dest)
+        eor bankEor             ; bank1 ^$00 -> $44/$45, bank2 ^$c0 -> $84/$85
+        sta ptr+1               ; ptr = active-bank slot (+$400 + slot*64)  (dest)
         ldy #63
 lscp:   lda (ptr2),y
         sta (ptr),y
@@ -823,27 +856,30 @@ loadframe:                      ; X = sound frame index, curv = voice
         sta vTmr,y
         rts
 
-; scene_show: configure the multicolor bitmap display for the scene
-scene_show:
-        lda #${scene.bgColor}
-        sta $d021
-        sta $d020
-        lda #$${screenByte.toString(16).padStart(2,'0')}
-        ldx #$00
-sfill:  sta SCREEN,x
-        sta SCREEN+$100,x
-        sta SCREEN+$200,x
-        sta SCREEN+$300,x
-        inx
-        bne sfill
-        lda #${scene.color3}
-        ldx #$00
-cfill:  sta $d800,x
-        sta $d900,x
-        sta $da00,x
-        sta $db00,x
-        inx
-        bne cfill
+; display_scene: point the VIC at activeScene's bank (bank1/$4000 or bank2/$8000),
+; set bankEor for the sprite copies, and force all sprite slots to re-copy into the
+; now-active bank (its slots hold stale frames from when it was last shown).
+display_scene:
+        lda activeScene
+        bne dsB
+        lda #$00
+        sta bankEor
+        lda $dd00
+        and #$fc
+        ora #$02                ; VIC bank 1 ($4000): scene 1 bitmap $6000
+        sta $dd00
+        jmp dsC
+dsB:    lda #$c0
+        sta bankEor
+        lda $dd00
+        and #$fc
+        ora #$01                ; VIC bank 2 ($8000): scene 2 bitmap $a000
+        sta $dd00
+dsC:    ldx #7
+dsL:    lda #$ff
+        sta sLoad,x
+        dex
+        bpl dsL
         rts
 
 SCOREHOME = BITMAP + ${scoreOff}   ; default score position (row ${scoreRow}, col ${scoreCol})
@@ -987,7 +1023,7 @@ slotHi:  !byte $44,$44,$44,$44,$45,$45,$45,$45 ; bank1 (bank2 = ^ $c0 -> $84/$85
         !fill $400
         * = BITMAP
 ${byteRows(bitmap)}
-`;
+${bitmap2 ? `        * = $a000\n${byteRows(bitmap2)}\n` : ''}`;
 
 writeFileSync(outPath.replace(/\.prg$/, '.asm'), asm);
 const r = assemble(asm);
