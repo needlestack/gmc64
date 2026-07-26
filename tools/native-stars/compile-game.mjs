@@ -25,6 +25,11 @@ globalThis.loadFileByName = (name) => disk.readFile(name);
 const pd = globalThis.parseProgramData(disk.readFile(prgName));
 const ins = pd.instructions;
 
+// bytecode execution throttle: ~ops per frame (approximates GKGM's interpreter rate).
+// GKGM free-runs at ~50-65 ops/frame; native would run ~13x faster unthrottled, so we
+// pace the compiled bytecode to this budget. Tunable now, per-game / GMC64+ later.
+const OPS_PER_FRAME = 50;
+
 // ---- bundle media ----
 let scene = null;
 const sceneMedia = {};   // mediaIndex -> gmScene (resolved to slots below)
@@ -381,7 +386,9 @@ const loopHeads = new Set();
 ins.forEach((op, i) => { if (op.opcode === 0x01 && labelIndex[op.arg2] !== undefined && labelIndex[op.arg2] <= i) loopHeads.add(op.arg2); });
 
 for (const op of ins) {
-  if (op.label) { c(`LBL_${op.label}:`); if (loopHeads.has(op.label)) c(`  jsr frame`); }
+  if (op.label) { c(`LBL_${op.label}:`); }
+  c(`  jsr optick`);   // op-budget checkpoint: ~OPS_PER_FRAME bytecode ops per frame,
+                       // and drives the 60Hz housekeeping (sprites/sound) at each frame sync
   if (IF_OPS.has(op.opcode)) { emitIfHead(op); continue; }
   if (op.opcode === 0x54) {                                    // otherwise
     const f = ifStack[ifStack.length - 1]; f.hasElse = true;
@@ -448,6 +455,8 @@ nidx   = $fa
 collFlags = $fd
 bgFlags = $fe
 bankEor = $ff           ; 0=bank1 active, $c0=bank2 (XOR onto slot/matrix high bytes)
+opbudget = $ee          ; bytecode ops left this frame (throttle)
+OPS_PER_FRAME = ${OPS_PER_FRAME}
 ; --- slot state arrays (8 slots) in RAM ---
 sBase    = $c000
 sNum     = $c008
@@ -541,6 +550,9 @@ islot:  lda #$ff
         sta bgFlags
         sta bankEor             ; start on bank 1 (scene 1)
         sta activeScene
+        lda #OPS_PER_FRAME
+        sta opbudget            ; prime the op throttle
+        lda #0
         sta scoreLo
         sta scoreHi
         sta vAct+0
@@ -561,6 +573,17 @@ islot:  lda #$ff
 ${codeBody}
 
 ; ===================== runtime =====================
+; optick: called before each bytecode op. Runs OPS_PER_FRAME ops, then syncs to the
+; next frame (raster wait + sprite/sound housekeeping) and refills the budget. This
+; decouples 60Hz housekeeping from the bytecode's loop structure and paces the logic.
+optick:
+        dec opbudget
+        bne otr
+        jsr frame
+        lda #OPS_PER_FRAME
+        sta opbudget
+otr:    rts
+
 ; frame: wait for raster, then move+animate+draw every assigned sprite
 frame:
 fw:     lda $d012
@@ -1206,11 +1229,6 @@ xmagLo: !byte ${xmagLo.join(',')}
 xmagHi: !byte ${xmagHi.join(',')}
 ymagLo: !byte ${ymagLo.join(',')}
 ymagHi: !byte ${ymagHi.join(',')}
-; --- sprite frame MASTER: all frames, kept below $4000 (VIC-invisible in banks 1/2).
-; the frame tick copies the current frame of each active sprite into that slot's
-; 64-byte area in the ACTIVE bank (copy-on-change), like the GKGM runtime does.
-master:
-${byteRows(frameBytes)}
 frameLo: !byte ${Array.from({length: frameBytes.length / 64}, (_, i) => `<master+${i * 64}`).join(',')}
 frameHi: !byte ${Array.from({length: frameBytes.length / 64}, (_, i) => `>master+${i * 64}`).join(',')}
 slotLo:  !byte 0,64,128,192,0,64,128,192       ; slot s within a bank: +$400 + s*64
@@ -1220,7 +1238,14 @@ slotHi:  !byte $44,$44,$44,$44,$45,$45,$45,$45 ; bank1 (bank2 = ^ $c0 -> $84/$85
         !fill $400
         * = BITMAP
 ${byteRows(bitmap)}
-${bitmap2 ? `        * = $a000\n${byteRows(bitmap2)}\n` : ''}`;
+${bitmap2 ? `        * = $a000\n${byteRows(bitmap2)}\n` : ''}
+; sprite frame MASTER at $c100 (RAM, VIC-invisible in banks 1/2; ABOVE the state
+; arrays at $c000-$c0e2). loadslot copies the current frame of each active sprite
+; from here into the active bank's slot.
+        * = $c100
+master:
+${byteRows(frameBytes)}
+`;
 
 writeFileSync(outPath.replace(/\.prg$/, '.asm'), asm);
 const r = assemble(asm);
