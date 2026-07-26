@@ -252,6 +252,7 @@ function emitOp(op) {
         c(`  lda #${meta.num}`); c(`  sta sNum+${sl}`);
         c(`  lda #$00`); c(`  sta sFrame+${sl}`); c(`  sta sSpeed+${sl}`); c(`  sta sDir+${sl}`);
         c(`  sta sAnimSpd+${sl}`); c(`  sta sAnimTmr+${sl}`);
+        c(`  lda #$ff`); c(`  sta sLoad+${sl}`);      // new sprite -> force frame (re)copy into the slot
         if (q === 0) { c(`  lda #$ff`); c(`  sta sParent+${sl}`);      // main = independent
                        c(`  lda #0`); c(`  sta sPosXlo+${sl}`); c(`  sta sPosYlo+${sl}`); }
         else { c(`  lda #${a1}`); c(`  sta sParent+${sl}`);           // sub-quad -> tracks parent
@@ -431,6 +432,7 @@ scoreColByte = $c0b6
 sParent  = $c0b8        ; multi-quad: parent slot of a sub-quad ($ff = independent)
 sQXoff   = $c0c0        ; sub-quad gmX offset from parent
 sQYoff   = $c0c8        ; sub-quad gmY offset from parent
+sLoad    = $c0d0        ; master frame index currently copied into this slot ($ff=none)
 
         * = $0801
         !byte $0c,$08, $0a,$00, $9e, $32,$30,$36,$31, $00, $00,$00
@@ -454,6 +456,7 @@ entry:
 islot:  lda #$ff
         sta sBase,x
         sta sParent,x
+        sta sLoad,x
         lda #$00
         sta sSpeed,x
         sta sAnimSpd,x
@@ -594,11 +597,14 @@ fxl:    lda $d010
         sta $d010
 fxd:    lda sPosYhi,x
         sta $d001,y
-        lda #16
+        txa                     ; fixed sprite pointer = 16+slot (always points at this slot)
         clc
-        adc sBase,x
-        adc sFrame,x
+        adc #16
         sta $43f8,x
+        lda sBase,x             ; current master frame index = base + frame
+        clc
+        adc sFrame,x
+        jsr loadslot            ; copy it into the slot's 64 bytes (only if changed)
 fnext:  inx
         cpx #8
         beq fret
@@ -633,11 +639,14 @@ fsl2:   lda $d010
         sta $d010
 fsd:    lda sval1
         sta $d001,y
-        lda #16
+        txa                     ; fixed pointer = 16+slot
         clc
-        adc sBase,x
-        adc tmp
+        adc #16
         sta $43f8,x
+        lda sBase,x             ; sub-quad master frame = sub base + parent frame
+        clc
+        adc tmp
+        jsr loadslot
         jmp fnext
 fret:
         ; --- advance the 3 SID sound voices (sweep + repeat) ---
@@ -719,6 +728,26 @@ mvn:    ldx curv
         cpx #3
         bne mvl
         rts
+
+loadslot:                       ; X=slot, A=master frame index -> copy into this slot (on change)
+        cmp sLoad,x
+        beq lsret               ; same frame already resident -> skip the copy
+        sta sLoad,x
+        tay
+        lda frameLo,y
+        sta ptr2
+        lda frameHi,y
+        sta ptr2+1              ; ptr2 = master + idx*64  (source)
+        lda slotLo,x
+        sta ptr
+        lda slotHi,x
+        sta ptr+1               ; ptr = bank1 slot (+$400 + slot*64)  (dest)
+        ldy #63
+lscp:   lda (ptr2),y
+        sta (ptr),y
+        dey
+        bpl lscp
+lsret:  rts
 
 mplaynote:                      ; curv = channel/voice, nidx = note index
         ldy curv
@@ -944,11 +973,18 @@ xmagLo: !byte ${xmagLo.join(',')}
 xmagHi: !byte ${xmagHi.join(',')}
 ymagLo: !byte ${ymagLo.join(',')}
 ymagHi: !byte ${ymagHi.join(',')}
+; --- sprite frame MASTER: all frames, kept below $4000 (VIC-invisible in banks 1/2).
+; the frame tick copies the current frame of each active sprite into that slot's
+; 64-byte area in the ACTIVE bank (copy-on-change), like the GKGM runtime does.
+master:
+${byteRows(frameBytes)}
+frameLo: !byte ${Array.from({length: frameBytes.length / 64}, (_, i) => `<master+${i * 64}`).join(',')}
+frameHi: !byte ${Array.from({length: frameBytes.length / 64}, (_, i) => `>master+${i * 64}`).join(',')}
+slotLo:  !byte 0,64,128,192,0,64,128,192       ; slot s within a bank: +$400 + s*64
+slotHi:  !byte $44,$44,$44,$44,$45,$45,$45,$45 ; bank1 (bank2 = ^ $c0 -> $84/$85)
 
         * = SCREEN
         !fill $400
-        * = $4400
-${byteRows(frameBytes)}
         * = BITMAP
 ${byteRows(bitmap)}
 `;
