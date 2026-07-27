@@ -152,6 +152,16 @@ for (const op of ins) if (op.opcode === 0x3b && op.printBytes) {
 }
 if (prnStr.length === 0) prnStr.push(0);
 
+// data tables: 0x1d "data values" -> flat DATA array; a labeled 0x1d marks a table
+// start, so 0x1c "data table at lN" can point at it. (arg1,arg2) = two bytes each.
+const DATA = [];
+const dataLabelOffset = {};   // GKGM label number -> byte offset in DATA
+for (const op of ins) if (op.opcode === 0x1d) {
+  if (op.label) dataLabelOffset[op.label] = DATA.length;
+  DATA.push(op.arg1 & 0xff, op.arg2 & 0xff);
+}
+if (DATA.length === 0) DATA.push(0);
+
 // ---- codegen ----
 const L = [];
 const c = s => L.push(s);
@@ -407,6 +417,20 @@ function emitOp(op) {
       }
       break;
     }
+    case 0x1d: break;   // data value: collected into DATA (label handled by the driver)
+    case 0x5d: c(`  ldx ${V(a2)}`); c(`  lda RAM,x`); c(`  sta ${V(a1)}`); break;    // var = ram[var]
+    case 0x5e: c(`  ldx ${V(a1)}`); c(`  lda ${V(a2)}`); c(`  sta RAM,x`); break;    // ram[var] = var
+    case 0x5f: c(`  ldx ${V(a1)}`); c(`  lda #${a2}`); c(`  sta RAM,x`); break;      // ram[var] = const
+    case 0x1c: {                                                                    // select data table (by label)
+      const off = dataLabelOffset[a2] ?? 0;
+      c(`  lda #<DATA+${off}`); c(`  sta dtabLo`); c(`  lda #>DATA+${off}`); c(`  sta dtabHi`); break;
+    }
+    case 0x0a: c(`  ldy ${V(a2)}`); c(`  lda (dtabLo),y`); c(`  sta ${V(a1)}`); break;  // var = current-data[var]
+    case 0x02: c(`  ldx ${V(a2)}`); c(`  lda jmptabLo,x`); c(`  sta jv`);            // jump to label [var]
+               c(`  lda jmptabHi,x`); c(`  sta jv+1`); c(`  jmp (jv)`); break;
+    case 0x04: c(`  ldx ${V(a2)}`); c(`  lda jmptabLo,x`); c(`  sta jv`);            // jsr to label [var]
+               c(`  lda jmptabHi,x`); c(`  sta jv+1`); c(`  jsr jindir`); break;
+    case 0x4d: case 0x4f: case 0x50: break;   // scene pixel plotting -- STUB (real plot is the next subsystem)
     // if-family handled by the driver loop
     default: throw new Error(`emitOp: unhandled opcode 0x${op.opcode.toString(16)} (${op.instructionName})`);
   }
@@ -421,19 +445,31 @@ ins.forEach((op, i) => { if (op.label) labelIndex[op.label] = i; });
 const loopHeads = new Set();
 ins.forEach((op, i) => { if (op.opcode === 0x01 && labelIndex[op.arg2] !== undefined && labelIndex[op.arg2] <= i) loopHeads.add(op.arg2); });
 
+let pendingSkip = null;   // skip-next (0x62/63/64): label to emit AFTER the next op
 for (const op of ins) {
+  if (op.opcode === 0x1d) { if (op.label) c(`LBL_${op.label}:`); continue; }  // data value: label only, no code
   if (op.label) { c(`LBL_${op.label}:`); }
   c(`  jsr optick`);   // op-budget checkpoint: ~OPS_PER_FRAME bytecode ops per frame,
                        // and drives the 60Hz housekeeping (sprites/sound) at each frame sync
-  if (IF_OPS.has(op.opcode)) { emitIfHead(op); continue; }
-  if (op.opcode === 0x54) {                                    // otherwise
+  // skip-next: emit the test (branch OVER the next op when the condition holds)
+  if (op.opcode === 0x62 || op.opcode === 0x63 || op.opcode === 0x64) {
+    const n = ++uid, sk = `SKIP_${n}`;
+    c(`  lda ${V(op.arg1)}`);
+    if (op.opcode === 0x62) { c(`  cmp #${op.arg2}`); c(`  beq ${sk}`); }          // skip if var = const
+    else if (op.opcode === 0x63) { c(`  cmp #${(op.arg2 + 1) & 0xff}`); c(`  bcs ${sk}`); } // skip if var > const
+    else { c(`  cmp #${op.arg2}`); c(`  bcc ${sk}`); }                             // skip if var < const
+    pendingSkip = sk; continue;
+  }
+  if (IF_OPS.has(op.opcode)) emitIfHead(op);
+  else if (op.opcode === 0x54) {                              // otherwise
     const f = ifStack[ifStack.length - 1]; f.hasElse = true;
-    c(`  jmp ${f.endL}`); c(`${f.elseL}:`); continue;
+    c(`  jmp ${f.endL}`); c(`${f.elseL}:`);
   }
-  if (op.opcode === 0x55) {                                    // endif
-    const f = ifStack.pop(); c(`${f.hasElse ? f.endL : f.elseL}:`); continue;
+  else if (op.opcode === 0x55) {                              // endif
+    const f = ifStack.pop(); c(`${f.hasElse ? f.endL : f.elseL}:`);
   }
-  emitOp(op);
+  else emitOp(op);
+  if (pendingSkip) { c(`${pendingSkip}:`); pendingSkip = null; }  // close a pending skip-next
 }
 const codeBody = L.join('\n');
 
@@ -493,6 +529,9 @@ bgFlags = $fe
 bankEor = $ff           ; 0=bank1 active, $c0=bank2 (XOR onto slot/matrix high bytes)
 opbudget = $ee          ; bytecode ops left this frame (throttle)
 OPS_PER_FRAME = ${OPS_PER_FRAME}
+dtabLo   = $e0          ; current data-table pointer (0x1c/0x0a)
+dtabHi   = $e1
+jv       = $e2          ; indirect jump target (0x02/0x04)
 ; --- slot state arrays (8 slots) in RAM ---
 sBase    = $c000
 sNum     = $c008
@@ -1231,6 +1270,7 @@ sd_row: lda (fptr),y            ; each font bit -> a 2-bit mc pixel (fg/bg per s
 ${pauseSubs}
 
 gmstop: jmp gmstop              ; "stop program" halts here
+jindir: jmp (jv)                ; computed jsr (0x04): jsr jindir -> jmp (jv); callee rts returns here
 
 ; ---- data ----
 bit8:   !byte 1,2,4,8,16,32,64,128
@@ -1245,6 +1285,10 @@ prowHi: !byte ${prowHi.join(',')}
 pcolLo: !byte ${pcolLo.join(',')}
 pcolHi: !byte ${pcolHi.join(',')}
 prnStr: !byte ${prnStr.join(',')}
+DATA:   !byte ${DATA.join(',')}
+RAM:    !fill 256
+jmptabLo: !byte ${Array.from({length: 256}, (_, n) => labelIndex[n] !== undefined ? `<LBL_${n}` : `<gmstop`).join(',')}
+jmptabHi: !byte ${Array.from({length: 256}, (_, n) => labelIndex[n] !== undefined ? `>LBL_${n}` : `>gmstop`).join(',')}
 sndFL:  !byte ${sndFL.join(',')}
 sndFH:  !byte ${sndFH.join(',')}
 sndPL:  !byte ${sndPL.join(',')}
