@@ -225,6 +225,8 @@ function emitIfHead(op) {
       c(`ycm_${n}:`); c(`  sta sval`); c(`  lda tmp`); c(`  cmp sval`); fbr('bcs', elseL);
       break;
     }
+    case 0x14: c(`  lda ${V(a1)}`); c(`  cmp ${V(a2)}`); fbr('bne', elseL); break;        // if var = var
+    case 0x16: c(`  lda ${V(a2)}`); c(`  cmp ${V(a1)}`); fbr('bcs', elseL); break;        // if var > var (a1>a2 <=> a2<a1)
     case 0x18: c(`  lda ${V(a1)}`); c(`  cmp ${V(a2)}`); fbr('bcs', elseL); break;        // if var < var
     case 0x4a: {                                                                          // if score1 > N
       const N = numFrom(op.instructionName);
@@ -377,12 +379,40 @@ function emitOp(op) {
     case 0x2f: c(`  lda #${a2}`); c(`  sta $d027+${a1}`); break;     // sprite color1 = const
     case 0x33: c(`  lda #${a2}`); c(`  sta $d021`); c(`  sta $d020`); break;    // scene background = const
     case 0x34: c(`  lda ${V(a2)}`); c(`  sta $d021`); c(`  sta $d020`); break;  // scene background = var
+    case 0x0f: {                                                                // var *= const (power of 2)
+      let sh = 0, t = a2; while (t > 1) { if (t & 1) throw new Error(`0x0f mul by non-power-of-2: ${a2}`); t >>= 1; sh++; }
+      c(`  lda ${V(a1)}`); for (let k = 0; k < sh; k++) c(`  asl`); c(`  sta ${V(a1)}`); break;
+    }
+    case 0x67: c(`  lda $d015`); c(`  and #${(~(1 << a2)) & 0xff}`); c(`  sta $d015`);   // clear sprite (disable + unassign)
+               c(`  lda #$ff`); c(`  sta sBase+${a2}`); break;
+    case 0x66: break;   // screen update on/off: no-op for now (pairs with plotting, next pass)
+    case 0x3a: {                                                                // print at row[var] col[var] (clamp 0-24/0-19)
+      const u = ++uid;
+      c(`  lda ${V(a1)}`); c(`  cmp #25`); c(`  bcc pr_${u}`); c(`  lda #24`); c(`pr_${u}:`); c(`  sta printRow`);
+      c(`  lda ${V(a2)}`); c(`  cmp #20`); c(`  bcc pcc_${u}`); c(`  lda #19`); c(`pcc_${u}:`); c(`  sta printCol`);
+      break;
+    }
+    case 0x37: {                                                                // scene 1 colorN = const (a1: 0=col1,1=col2,2=col3)
+      const sc = sceneByBank[0]; if (!sc) break;
+      const u = ++uid;
+      if (a1 === 2) {                                                           // color3 -> color RAM
+        c(`  lda #${a2}`); c(`  ldx #0`); c(`c37_${u}:`);
+        c(`  sta $d800,x`); c(`  sta $d900,x`); c(`  sta $da00,x`); c(`  sta $db00,x`);
+        c(`  inx`); c(`  bne c37_${u}`);
+      } else {                                                                  // color1/2 -> matrix nibble (other from compile-time scene)
+        const sb = a1 === 0 ? (((a2 & 0xf) << 4) | (sc.color2 & 0xf)) : (((sc.color1 & 0xf) << 4) | (a2 & 0xf));
+        c(`  lda #${sb}`); c(`  ldx #0`); c(`c37_${u}:`);
+        c(`  sta $4000,x`); c(`  sta $4100,x`); c(`  sta $4200,x`); c(`  sta $4300,x`);
+        c(`  inx`); c(`  bne c37_${u}`);
+      }
+      break;
+    }
     // if-family handled by the driver loop
     default: throw new Error(`emitOp: unhandled opcode 0x${op.opcode.toString(16)} (${op.instructionName})`);
   }
 }
 
-const IF_OPS = new Set([0x13, 0x15, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x4a]);
+const IF_OPS = new Set([0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x4a]);
 const pauseStubs = [], pauseFrames = [];
 
 // loop heads = labels that are targets of a backward jump; one frame tick per pass
