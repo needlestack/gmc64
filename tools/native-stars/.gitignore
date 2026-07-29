@@ -10,3 +10,10 @@ archer_dbg.asm
 archer_snd_test.asm
 ytest.asm
 snd_test.asm
+# compiled-game artifacts (compile-game.mjs output) + capture files
+*_std.asm
+*_roomy.asm
+*_native.asm
+*_snd2.asm
+*.vsf
+*.wav

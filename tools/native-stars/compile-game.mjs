@@ -1,14 +1,24 @@
 // compile-game.mjs — GKGM program -> native C64 6502 (the real thing).
 //
-// Compiles a full GKGM game (ARCHER) to a standalone .prg: scene background,
-// hardware sprites with GKGM speed/direction movement + animation, joystick,
-// button, sprite-sprite collision, and score. Sound opcodes are no-ops for now.
+// Compiles a full GKGM game (ARCHER/CHOPER/PITFAL) to a standalone .prg: scene
+// backgrounds, hardware sprites with GKGM 256-direction movement + animation,
+// joystick/button, sprite-sprite + background collision, score, SID sound + music,
+// text printing, and scene pixel plotting.
 //
-// Uses VIC bank 1 ($4000-$7FFF): screen $4000, sprite frames $4400+, bitmap
-// $6000 — no char-ROM shadow to dodge, plenty of room. Coordinates: VIC_X =
-// 2*gmX (9th bit when gmX>=128), VIC_Y = gmY (verified from gmRuntime).
+// TWO LAYOUT MODES (5th arg, default 'twobank'):
+//   twobank — two resident VIC banks (scene 1 bitmap $6000, scene 2 $a000); scene
+//             switch = instant $DD00 bank flip. Sprites: master frame library +
+//             copy-into-slot. Adaptive layout: code+data $0801.., and for big games
+//             (PITFAL) an auto code-splitter across the bank gaps + data relocated to
+//             VIC-invisible RAM. Faithful to GKGM's persistent-scene semantics.
+//   roomy   — single VIC bank; scenes RLE-compressed in the recovered space,
+//             decompressed into $6000 on switch (~few-frame cost, not instant).
+//             Sprites: whole frame library resident in-bank, pointer-swap (no copy).
+//             Non-persistent scenes (fresh scene each flip) — for NEW GMC64+ games,
+//             not old-game compatibility. Frees bank 2 + master for code + more scenes.
 //
-// Usage: node compile-game.mjs <disk.d64> <NAME/PRG> <out.prg>
+// Both modes bank BASIC ROM out at init (twobank) so $a000-$bfff is CPU-readable RAM.
+// Usage: node compile-game.mjs <disk.d64> <NAME/PRG> <out.prg> [twobank|roomy]
 
 import { readFileSync, writeFileSync } from 'fs';
 import { assemble } from '../asm6502.mjs';
@@ -24,6 +34,9 @@ const disk = new globalThis.D64(new Uint8Array(readFileSync(diskPath)));
 globalThis.loadFileByName = (name) => disk.readFile(name);
 const pd = globalThis.parseProgramData(disk.readFile(prgName));
 const ins = pd.instructions;
+const MODE = process.argv[5] || 'twobank';
+const roomy = MODE === 'roomy';
+const usesPlot = ins.some(op => op.opcode === 0x4d || op.opcode === 0x4e || op.opcode === 0x4f || op.opcode === 0x50);
 
 // bytecode execution throttle: ~ops per frame (approximates GKGM's interpreter rate).
 // GKGM free-runs at ~50-65 ops/frame; native would run ~13x faster unthrottled, so we
@@ -109,6 +122,52 @@ const screenByte = sbyte(scene);
 const bitmap2 = sceneByBank[1] ? sceneByBank[1].rawImageData : null;   // bank2 bitmap ($A000)
 const screenByte2 = sceneByBank[1] ? sbyte(sceneByBank[1]) : 0;
 
+// ---- roomy mode: RLE-compress each scene bitmap (decompress-on-switch) ----
+// Byte-oriented variable-offset LZ packer for roomy scenes (optimal parse; fast byte-copy decode,
+// no bit-stream). Byte tokens: 0x00 end (decoder actually stops at known outlen); 0x01-0x7f =
+// literal run of that many bytes (bytes follow); 0x80-0xff = match — bit6 = offset size (0:1-byte
+// 1..255, 1:2-byte LE), bits5-0 = len field: len = field+3, or if field==63 read 255-chained
+// extension bytes added to 66. Then the offset; copy len bytes from (dest-offset). ~2.4-2.6x on
+// dense scenes, 9-11x on flat, 30x on trivial — a hair below the bit-stream but ~3-5x faster decode.
+let rmScene0, rmScene1, rle0, rle1;
+if (roomy) {
+  const lzEncode = (data) => {
+    const n = data.length, head = new Int32Array(65536).fill(-1), prev = new Int32Array(n).fill(-1);
+    const ml = new Int32Array(n), mo = new Int32Array(n);
+    const h3 = p => ((data[p] << 8) ^ (data[p + 1] << 4) ^ data[p + 2]) & 0xffff;
+    for (let i = 0; i < n; i++) { let bl = 0, bo = 0;
+      if (i + 2 < n) { let j = head[h3(i)], ch = 0;
+        while (j >= 0 && ch < 2048) { if (data[j + bl] === data[i + bl]) { let l = 0; while (l < 65535 && i + l < n && data[j + l] === data[i + l]) l++; if (l > bl) { bl = l; bo = i - j; } } j = prev[j]; ch++; }
+        const hh = h3(i); prev[i] = head[hh]; head[hh] = i; }
+      ml[i] = bl; mo[i] = bo; }
+    // optimal parse in BYTES. mcost = token(1) + offset(1|2) + length-extension bytes.
+    const mcost = (l, o) => 1 + (o < 256 ? 1 : 2) + (l < 66 ? 0 : Math.floor((l - 66) / 255) + 1);
+    const cost = new Float64Array(n + 1).fill(1e18), act = new Int32Array(n + 1); cost[n] = 0;  // act: +k literal run, -l match
+    for (let i = n - 1; i >= 0; i--) { let best = 1e18, ba = 0;
+      for (let k = 1; k <= 127 && i + k <= n; k++) { const c = 1 + k + cost[i + k]; if (c < best) { best = c; ba = k; } }   // literal run of k (token + k bytes)
+      const mx = Math.min(ml[i], n - i);
+      for (let l = 3; l <= mx; l++) { const c = mcost(l, mo[i]) + cost[i + l]; if (c < best) { best = c; ba = -l; } }
+      cost[i] = best; act[i] = ba; }
+    const out = []; let i = 0;
+    while (i < n) { const a = act[i];
+      if (a > 0) { out.push(a); for (let k = 0; k < a; k++) out.push(data[i + k]); i += a; }
+      else { const l = -a, o = mo[i], os = o < 256 ? 0 : 1, lf = Math.min(l - 3, 63);
+        out.push(0x80 | (os << 6) | lf);
+        if (l - 3 >= 63) { let e = l - 66; while (e >= 255) { out.push(255); e -= 255; } out.push(e); }
+        if (os === 0) out.push(o); else out.push(o & 0xff, (o >> 8) & 0xff);
+        i += l; } }
+    out.push(0);
+    return out;
+  };
+  rmScene0 = sceneByBank[0];
+  rmScene1 = sceneByBank[1] || sceneByBank[0];
+  rle0 = lzEncode(rmScene0.rawImageData);
+  rle1 = lzEncode(rmScene1.rawImageData);
+  const NFRAMES = frameBytes.length / 64;
+  if (NFRAMES > 112) throw new Error(`roomy: ${NFRAMES} sprite frames exceed the 112 that fit in a bank`);
+  console.log(`  roomy: scene0 LZ ${rmScene0.rawImageData.length}->${rle0.length}B (${(rmScene0.rawImageData.length/rle0.length).toFixed(1)}x), scene1 ${rle1.length}B (${(rmScene1.rawImageData.length/rle1.length).toFixed(1)}x); ${NFRAMES} frames resident`);
+}
+
 // score display position: GKGM "row (0-24) column (0-19)". Columns are 0-19 =
 // 20 across a 160-mc-px screen => each column is 8 mc px = 16 hires px = 2 cells
 // (double-wide, since the scene is multicolor). Byte offset = row*320 + col*16.
@@ -118,11 +177,16 @@ const scoreCol = sc46 ? sc46.arg2 : 7;
 const scoreOff = scoreRow * 320 + scoreCol * 16;
 
 // ---- movement magnitude tables (8.8 fixed): speed/46 (X), speed/31.5 (Y) ----
-const xmagLo = [], xmagHi = [], ymagLo = [], ymagHi = [];
-for (let s = 0; s < 256; s++) {
-  const xv = Math.round((s / 46) * 256), yv = Math.round((s / 31.5) * 256);
-  xmagLo.push(xv & 0xff); xmagHi.push((xv >> 8) & 0xff);
-  ymagLo.push(yv & 0xff); ymagHi.push((yv >> 8) & 0xff);
+// GKGM movement is full 256-direction, angle-based: velocity = cos/sin(dir) * speed, with
+// C64-aspect divisors X/46, Y/31.5 (gmRuntime.updateSpritePositions). We fold the divisor +
+// an 8x scale into signed per-direction component tables; runtime does component*speed>>3 =
+// velocity in 8.8 fixed. Replaces the old 4-cardinal xmag/ymag path (this is why PITFAL's
+// angled/arc jumps froze — non-cardinal directions produced zero movement).
+const cosk = [], sink = [];
+for (let d = 0; d < 256; d++) {
+  const rad = ((d / 256) * 360 - 90) * Math.PI / 180;
+  cosk.push(Math.round(Math.cos(rad) * (256 / 46) * 8) & 0xff);   // ~cos*44.5, signed byte
+  sink.push(Math.round(Math.sin(rad) * (256 / 31.5) * 8) & 0xff); // ~sin*65.0, signed byte
 }
 
 // score color-expansion table: expandTab[(fg*4+bg)*16 + nibble] -> a bitmap byte
@@ -253,6 +317,7 @@ function emitOp(op) {
   switch (op.opcode) {
     case 0x2b: break;                                                // comment: discarded
     case 0x28: {                                                     // scene N is X -> set up slot N's bank matrix
+      if (roomy) break;   // scene N is X: roomy sets matrix/colors inside display_scene (one shared matrix)
       const slot = a1, sc = sceneByBank[slot];
       if (!sc) break;
       const mx = slot === 0 ? 0x4000 : 0x8000, h = a => '$' + a.toString(16), u = ++uid;
@@ -328,7 +393,7 @@ function emitOp(op) {
         // accumulate ("can't move" + erratic anim).
         c(`  lda #${quads[q].base}`); c(`  cmp sBase+${sl}`); c(`  beq sk_${u}`);
         c(`  lda #0`); c(`  sta sFrame+${sl}`);
-        c(`  lda #$ff`); c(`  sta sLoad+${sl}`);
+        if (!roomy) { c(`  lda #$ff`); c(`  sta sLoad+${sl}`); }
         c(`sk_${u}:`);
         c(`  lda #${quads[q].base}`); c(`  sta sBase+${sl}`);
         c(`  lda #${meta.num}`); c(`  sta sNum+${sl}`);
@@ -430,7 +495,10 @@ function emitOp(op) {
                c(`  lda jmptabHi,x`); c(`  sta jv+1`); c(`  jmp (jv)`); break;
     case 0x04: c(`  ldx ${V(a2)}`); c(`  lda jmptabLo,x`); c(`  sta jv`);            // jsr to label [var]
                c(`  lda jmptabHi,x`); c(`  sta jv+1`); c(`  jsr jindir`); break;
-    case 0x4d: case 0x4f: case 0x50: break;   // scene pixel plotting -- STUB (real plot is the next subsystem)
+    case 0x4d: c(`  lda #${a1 & 3}`); c(`  sta pbits`); c(`  lda #${a2 & 1}`); c(`  sta pscene`); break;              // plot color=const to scene (pscene unused in roomy)
+    case 0x4e: c(`  lda ${V(a1)}`); c(`  and #3`); c(`  sta pbits`); c(`  lda #${a2 & 1}`); c(`  sta pscene`); break;  // plot color=var to scene
+    case 0x4f: c(`  lda #${a1}`); c(`  sta pgx`); c(`  lda #${a2}`); c(`  sta pgy`); c(`  jsr rt_plot`); break;         // plot dot at const x,y
+    case 0x50: c(`  lda ${V(a1)}`); c(`  sta pgx`); c(`  lda ${V(a2)}`); c(`  sta pgy`); c(`  jsr rt_plot`); break;     // plot dot at var x,y
     // if-family handled by the driver loop
     default: throw new Error(`emitOp: unhandled opcode 0x${op.opcode.toString(16)} (${op.instructionName})`);
   }
@@ -446,9 +514,11 @@ const loopHeads = new Set();
 ins.forEach((op, i) => { if (op.opcode === 0x01 && labelIndex[op.arg2] !== undefined && labelIndex[op.arg2] <= i) loopHeads.add(op.arg2); });
 
 let pendingSkip = null;   // skip-next (0x62/63/64): label to emit AFTER the next op
+let mk = 0;               // split-point markers: safe instruction boundaries for the big-game code splitter
 for (const op of ins) {
   if (op.opcode === 0x1d) { if (op.label) c(`LBL_${op.label}:`); continue; }  // data value: label only, no code
   if (op.label) { c(`LBL_${op.label}:`); }
+  c(`__M${mk++}:`);    // split-safe boundary (start of an op, before its optick checkpoint) — both modes
   c(`  jsr optick`);   // op-budget checkpoint: ~OPS_PER_FRAME bytecode ops per frame,
                        // and drives the 60Hz housekeeping (sprites/sound) at each frame sync
   // skip-next: emit the test (branch OVER the next op when the condition holds)
@@ -508,8 +578,73 @@ const digitfont = [
 
 console.log(`compiling ${prgName}: ${ins.length} instrs, ${Object.keys(spriteMeta).length} sprites (${frameBytes.length/64} frames), scene "${scene.name}"`);
 
-const asm = `; auto-generated from ${prgName} by compile-game.mjs
+// rt_plot: only emitted when the game plots (keeps non-plotting games off the split layout).
+const plotRt = !usesPlot ? '' : `
+; rt_plot: plot one mc dot at GKGM coords (pgx,pgy), color pbits, into scene pscene's
+; bitmap ($6000 or $a000). GM x 12..171 -> mc 0..159, GM y 50..249 -> mc 0..199;
+; out-of-range coords are skipped (no memory clobber). Read-modify-write one pixel-pair.
+rt_plot:
+        lda pgx
+        sec
+        sbc #12
+        bcc rp_out
+        cmp #160
+        bcs rp_out
+        sta px
+        lda pgy
+        sec
+        sbc #50
+        bcc rp_out
+        cmp #200
+        bcs rp_out
+        sta py
+        ldx py
+        lda plotYlo,x
+        sta ptr
+        lda plotYhi,x
+        sta ptr+1               ; ptr = row byte (base $6000)
+        ldx px
+        lda plotXlo,x
+        clc
+        adc ptr
+        sta ptr
+        lda plotXhi,x
+        adc ptr+1
+        sta ptr+1               ; ptr += column byte offset
+${roomy ? '' : `        lda pscene
+        beq rp_s0
+        lda ptr+1               ; scene 1 -> bitmap2 at $a000 (+$4000)
+        clc
+        adc #$40
+        sta ptr+1`}
+rp_s0:  lda px
+        and #$03
+        asl
+        asl
+        ora pbits
+        tax
+        lda valtab,x            ; color bits pre-shifted to this pixel-pair's position
+        sta pmval
+        lda px
+        and #$03
+        tax
+        lda maskt,x             ; mask clearing that pixel-pair
+        sta pmask
+        ldy #$00
+        lda (ptr),y             ; RMW reads RAM ($6000 in roomy; $a000 in twobank w/ BASIC banked out)
+        and pmask
+        ora pmval
+        sta (ptr),y
+rp_out: rts`;
+
+// ---- divergent runtime chunks (mode-specific verbatim reproductions) ----
+const zpBlock = roomy ? `; auto-generated from ${prgName} by compile-game-roomy.mjs (ROOMY / single-bank mode)
+; VIC stays on bank 1 ($4000-$7FFF): matrix $4000, sprite frames $4400 (pointer-swap,
+; whole library resident, up to 112 frames), bitmap $6000 (filled at runtime by RLE
+; decompress). Bank 2 ($8000+) is VIC-invisible RAM holding the compressed scenes.
+; Scene switch = decompress-into-$6000 (~few frames), not an instant bank flip.
 SCREEN = $4000
+SPR    = $4400          ; sprite frame library (pointer-swap): frame i at SPR+i*64, pointer=16+i
 BITMAP = $6000
 ; --- zero page ---
 ptr    = $fb
@@ -532,6 +667,365 @@ OPS_PER_FRAME = ${OPS_PER_FRAME}
 dtabLo   = $e0          ; current data-table pointer (0x1c/0x0a)
 dtabHi   = $e1
 jv       = $e2          ; indirect jump target (0x02/0x04)
+rlsrc    = $e4          ; LZ decompress: compressed source pointer (roomy scene switch)
+msrc     = $e6          ; LZ decompress: match source pointer (dest - offset)
+btmp     = $e8          ; LZ: saved command byte (reuses movement zp — lzdec runs only in display_scene)
+lzlo     = $e9          ; LZ: match/run length (16-bit, lzlo/lzhi)
+lzhi     = $ea
+mspeed   = $e8          ; movement: speed (multiplier)
+mfac     = $e9          ; movement: |direction component|
+msign    = $ea          ; movement: sign of the component (1=negative)
+pbits    = $eb          ; plot: color (0-3)  [dedicated: movement uses $e8-$ea, rledec $e4-$e7]
+pscene   = $ec          ; plot: scene (set but unused in roomy — one live bitmap at $6000)
+px       = $ed          ; plot: mc x
+py       = $ef          ; plot: mc y
+pgx      = $e4          ; plot: GM x input  (reuses rledec zp; rledec never runs during rt_plot)
+pgy      = $e5          ; plot: GM y input
+pmval    = $e6          ; plot: color bits pre-shifted
+pmask    = $e7          ; plot: pixel-pair clear mask` : `; auto-generated from ${prgName} by compile-game.mjs
+SCREEN = $4000
+BITMAP = $6000
+; --- zero page ---
+ptr    = $fb
+pcl    = $f0
+pch    = $f1
+sval   = $f2
+sval1  = $f3
+dcol   = $f4
+tmp    = $f5
+fptr   = $f6
+curv   = $f7
+animtog = $f8
+ptr2   = $f9
+nidx   = $fa
+collFlags = $fd
+bgFlags = $fe
+bankEor = $ff           ; 0=bank1 active, $c0=bank2 (XOR onto slot/matrix high bytes)
+opbudget = $ee          ; bytecode ops left this frame (throttle)
+OPS_PER_FRAME = ${OPS_PER_FRAME}
+dtabLo   = $e0          ; current data-table pointer (0x1c/0x0a)
+dtabHi   = $e1
+jv       = $e2          ; indirect jump target (0x02/0x04) -- OCCUPIES $e2 AND $e3
+pbits    = $e4          ; plot: current color (0-3)  [must dodge jv+1=$e3]
+pscene   = $e5          ; plot: target scene (0=$6000 bitmap, 1=$a000 bitmap)
+px       = $e6          ; plot: mc x (0-159)
+py       = $e7          ; plot: mc y (0-199)
+pmval    = $e8          ; plot: color bits pre-shifted
+pmask    = $e9          ; plot: pixel-pair clear mask
+pgx      = $ea          ; plot: GM x input
+pgy      = $eb          ; plot: GM y input
+mspeed   = $ec          ; movement: speed (multiplier)
+mfac     = $ed          ; movement: |direction component| (multiplicand/shift reg)
+msign    = $ef          ; movement: sign of the component (1=negative; $ee is opbudget)`;
+
+// fdraw sprite-pointer write: twobank fixed pointer (16+slot) mirrored to both banks + loadslot copy;
+// roomy pointer-swap (16+base+frame), no copy, no $83f8 mirror.
+const fdrawPtr = roomy ? `        lda sBase,x             ; pointer-swap: pointer = 16 + (base+frame), frame resident at SPR
+        clc
+        adc sFrame,x
+        adc #16
+        sta $43f8,x` : `        txa                     ; fixed sprite pointer = 16+slot (mirror to both banks)
+        clc
+        adc #16
+        sta $43f8,x
+        sta $83f8,x
+        lda sBase,x             ; current master frame index = base + frame
+        clc
+        adc sFrame,x
+        jsr loadslot            ; copy it into the slot's 64 bytes (only if changed)`;
+
+// fsub (sub-quad) sprite-pointer write: same divergence as fdraw.
+const fsubPtr = roomy ? `        lda sBase,x             ; pointer-swap: pointer = 16 + (sub base + parent frame)
+        clc
+        adc tmp
+        adc #16
+        sta $43f8,x
+        jmp fnext` : `        txa                     ; fixed pointer = 16+slot (mirror to both banks)
+        clc
+        adc #16
+        sta $43f8,x
+        sta $83f8,x
+        lda sBase,x             ; sub-quad master frame = sub base + parent frame
+        clc
+        adc tmp
+        jsr loadslot
+        jmp fnext`;
+
+// twobank: loadslot (copy master frame into the slot's 64 bytes on change).
+// roomy: rledec (decompress the pair-RLE scene stream into $6000).
+const loadslotOrRledec = roomy ? `; lzdec: decompress the byte-LZ stream at (rlsrc) into BITMAP ($6000). Byte-oriented -> fast (no bit
+; reader). token: $01-$7f = literal run (that many bytes follow); $80-$ff = match: bit6 = offset size
+; (0:1-byte 1..255, 1:2-byte LE), bits5-0 = len field (len = field+3, or field==63 -> +255-chained
+; extension bytes added to 66); then the offset; copy len bytes from (dest-offset). Stops at
+; BITMAP+8000 ($7f40). Forward copy so an offset-1 match propagates like an RLE run.
+lzdec:
+        lda #<BITMAP
+        sta ptr
+        lda #>BITMAP
+        sta ptr+1
+        ldy #0                  ; Y stays 0 for all (rlsrc)/(ptr)/(msrc) accesses
+lz_next:
+        lda ptr+1               ; done when ptr == BITMAP+8000 = $7f40
+        cmp #$7f
+        bne lz_go
+        lda ptr
+        cmp #$40
+        beq lz_done
+lz_go:  lda (rlsrc),y           ; command byte
+        jsr incsrc
+        cmp #$80
+        bcs lz_match
+        tax                     ; literal run: X = count (1-127)
+lz_lit: lda (rlsrc),y
+        jsr incsrc
+        sta (ptr),y
+        jsr incdst
+        dex
+        bne lz_lit
+        jmp lz_next
+lz_match:
+        sta btmp                ; command byte
+        and #$3f
+        cmp #$3f
+        beq lz_extlen
+        clc
+        adc #3                  ; len = field + 3  (3..65)
+        sta lzlo
+        lda #0
+        sta lzhi
+        jmp lz_getoff
+lz_extlen:
+        lda #66                 ; len = 66 + sum of 255-chained extension bytes
+        sta lzlo
+        lda #0
+        sta lzhi
+lz_el:  lda (rlsrc),y
+        jsr incsrc
+        pha
+        clc
+        adc lzlo
+        sta lzlo
+        bcc lz_el2
+        inc lzhi
+lz_el2: pla
+        cmp #255
+        beq lz_el
+lz_getoff:
+        lda btmp
+        and #$40                ; offset size bit
+        beq lz_1b
+        lda (rlsrc),y           ; 2-byte offset (LE)
+        jsr incsrc
+        sta msrc
+        lda (rlsrc),y
+        jsr incsrc
+        sta msrc+1
+        jmp lz_off
+lz_1b:  lda (rlsrc),y           ; 1-byte offset (1..255)
+        jsr incsrc
+        sta msrc
+        lda #0
+        sta msrc+1
+lz_off: sec                     ; msrc = ptr - offset
+        lda ptr
+        sbc msrc
+        sta msrc
+        lda ptr+1
+        sbc msrc+1
+        sta msrc+1
+lz_cp:  lda (msrc),y
+        sta (ptr),y
+        inc msrc
+        bne lz_c2
+        inc msrc+1
+lz_c2:  jsr incdst
+        lda lzlo                ; 16-bit length--
+        bne lz_c3
+        dec lzhi
+lz_c3:  dec lzlo
+        lda lzlo
+        ora lzhi
+        bne lz_cp
+        jmp lz_next
+lz_done:
+        rts
+incsrc: inc rlsrc
+        bne is_r
+        inc rlsrc+1
+is_r:   rts
+incdst: inc ptr
+        bne id_r
+        inc ptr+1
+id_r:   rts
+roomy_int: rti                  ; NMI(RESTORE)/IRQ handler for KERNAL-banked-out roomy: ignore + return` : `loadslot:                       ; X=slot, A=master frame index -> copy into this slot (on change)
+        cmp sLoad,x
+        beq lsret               ; same frame already resident -> skip the copy
+        sta sLoad,x
+        tay
+        lda frameLo,y
+        sta ptr2
+        lda frameHi,y
+        sta ptr2+1              ; ptr2 = master + idx*64  (source)
+        lda slotLo,x
+        sta ptr
+        lda slotHi,x
+        eor bankEor             ; bank1 ^$00 -> $44/$45, bank2 ^$c0 -> $84/$85
+        sta ptr+1               ; ptr = active-bank slot (+$400 + slot*64)  (dest)
+        ldy #63
+lscp:   lda (ptr2),y
+        sta (ptr),y
+        dey
+        bpl lscp
+lsret:  rts`;
+
+// display_scene diverges entirely: twobank flips the $dd00 VIC bank + marks slots stale;
+// roomy decompresses the active RLE scene into $6000, repaints matrix/color/bg, rebuilds pointers.
+const displaySceneChunk = roomy ? `; display_scene: roomy single-bank switch. activeScene (0/1) already set by the caller.
+; Decompress that scene's bitmap into $6000, repaint the shared matrix/colorRAM/bg, then
+; refresh the sprite pointers (the matrix fill overwrites $43F8-$43FF). This is where the
+; ~few-frame switch cost lives (vs the two-bank build's instant $DD00 flip).
+display_scene:
+        lda activeScene
+        bne dsB
+        lda #<rle0
+        sta rlsrc
+        lda #>rle0
+        sta rlsrc+1
+        jsr lzdec
+        lda #${sbyte(rmScene0)}
+        jsr ds_matrix
+        lda #${rmScene0.color3}
+        jsr ds_color
+        lda #${rmScene0.bgColor}
+        jmp dsC
+dsB:    lda #<rle1
+        sta rlsrc
+        lda #>rle1
+        sta rlsrc+1
+        jsr lzdec
+        lda #${sbyte(rmScene1)}
+        jsr ds_matrix
+        lda #${rmScene1.color3}
+        jsr ds_color
+        lda #${rmScene1.bgColor}
+dsC:    sta $d021
+        sta $d020
+        ldx #7                  ; matrix fill clobbered $43F8-$43FF -> rebuild sprite pointers
+dsp:    lda sBase,x
+        cmp #$ff
+        beq dsp2
+        clc
+        adc sFrame,x
+        adc #16
+        sta $43f8,x
+dsp2:   dex
+        bpl dsp
+        rts
+ds_matrix:                      ; A = matrix byte -> fill $4000-$43FF (colors 1/2)
+        ldx #0
+dsm:    sta $4000,x
+        sta $4100,x
+        sta $4200,x
+        sta $4300,x
+        inx
+        bne dsm
+        rts
+ds_color:                       ; A = color3 -> fill color RAM
+        ldx #0
+dscr:   sta $d800,x
+        sta $d900,x
+        sta $da00,x
+        sta $db00,x
+        inx
+        bne dscr
+        rts` : `; display_scene: point the VIC at activeScene's bank (bank1/$4000 or bank2/$8000),
+; set bankEor for the sprite copies, and force all sprite slots to re-copy into the
+; now-active bank (its slots hold stale frames from when it was last shown).
+display_scene:
+        lda activeScene
+        bne dsB
+        lda #$00
+        sta bankEor
+        lda $dd00
+        and #$fc
+        ora #$02                ; VIC bank 1 ($4000): scene 1 bitmap $6000
+        sta $dd00
+        jmp dsC
+dsB:    lda #$c0
+        sta bankEor
+        lda $dd00
+        and #$fc
+        ora #$01                ; VIC bank 2 ($8000): scene 2 bitmap $a000
+        sta $dd00
+dsC:    ldx #7
+dsL:    lda #$ff
+        sta sLoad,x
+        dex
+        bpl dsL
+        rts`;
+
+// print_char scene targeting: twobank renders to $6000 and/or $a000 per printTarget; roomy always $6000.
+const printCharChunk = roomy ? `; print_char: A = gm char index. Render at (printRow,printCol) to target bitmap(s).
+print_char:
+        and #$3f
+        tay
+        lda fontLo,y
+        sta fptr
+        lda fontHi,y
+        sta fptr+1              ; fptr = printFont + index*8
+        ldx printRow            ; sval/sval1 = row*320 + col*16
+        lda prowLo,x
+        sta sval
+        lda prowHi,x
+        sta sval1
+        ldx printCol
+        clc
+        lda sval
+        adc pcolLo,x
+        sta sval
+        lda sval1
+        adc pcolHi,x
+        sta sval1
+        lda printColByte
+        sta gcol
+        lda #$60
+        jsr pc_render           ; roomy: one live bitmap at $6000
+        rts` : `; print_char: A = gm char index. Render at (printRow,printCol) to target bitmap(s).
+print_char:
+        and #$3f
+        tay
+        lda fontLo,y
+        sta fptr
+        lda fontHi,y
+        sta fptr+1              ; fptr = printFont + index*8
+        ldx printRow            ; sval/sval1 = row*320 + col*16
+        lda prowLo,x
+        sta sval
+        lda prowHi,x
+        sta sval1
+        ldx printCol
+        clc
+        lda sval
+        adc pcolLo,x
+        sta sval
+        lda sval1
+        adc pcolHi,x
+        sta sval1
+        lda printColByte
+        sta gcol
+        lda printTarget
+        cmp #1
+        beq pc_s2               ; target 1 -> scene 2 only
+        lda #$60
+        jsr pc_render           ; scene 1 ($6000 + offset)
+        lda printTarget
+        cmp #2
+        bne pc_ret              ; target 0 -> done
+pc_s2:  lda #$a0
+        jsr pc_render           ; scene 2 ($a000 + offset)
+pc_ret: rts`;
+
+const execStream = `${zpBlock}
 ; --- slot state arrays (8 slots) in RAM ---
 sBase    = $c000
 sNum     = $c008
@@ -587,6 +1081,17 @@ pvtmp    = $c0e2
         !byte $0c,$08, $0a,$00, $9e, $32,$30,$36,$31, $00, $00,$00
 entry:
         sei
+${roomy ? `        lda #<roomy_int         ; roomy banks out KERNAL too, so first install our own NMI + IRQ
+        sta $fffa               ; vectors in the RAM under KERNAL (writes hit RAM even while KERNAL
+        sta $fffe               ; ROM is still mapped). NMI = RESTORE key -> our handler (just RTI),
+        lda #>roomy_int         ; so banking KERNAL out below can't crash on a RESTORE press. (IRQ is
+        sta $fffb               ; masked by SEI but we point it safe too. RESET re-maps KERNAL itself
+        sta $ffff               ; before reading $fffc, so it stays safe without our help.)
+        lda #$35                ; bank BASIC + KERNAL out: RAM at $a000-$bfff AND $e000-$ffff, keep
+        sta $01                 ; I/O ($d000). ~30KB of code/data/scene room in a pure-RAM program.` : `        lda #$36                ; bank BASIC ROM out for good: $a000-$bfff becomes plain RAM for the
+        sta $01                 ; CPU (we don't use BASIC). Keeps KERNAL ($e000, for the NMI/reset
+                                ; vectors) + I/O ($d000). Lets the scene-2 bitmap at $a000 be read
+                                ; (plot RMW) instead of hitting ROM.`}
         lda #$00
         sta $d01a
         lda $dd00
@@ -605,8 +1110,8 @@ entry:
 islot:  lda #$ff
         sta sBase,x
         sta sParent,x
-        sta sLoad,x
-        lda #$00
+${roomy ? '' : `        sta sLoad,x
+`}        lda #$00
         sta sSpeed,x
         sta sAnimSpd,x
         sta sDir,x              ; init once; 0x27 preserves these across sprite swaps
@@ -625,8 +1130,8 @@ islot:  lda #$ff
         sta $d01b               ; all sprites in front of the bitmap
         sta collFlags
         sta bgFlags
-        sta bankEor             ; start on bank 1 (scene 1)
-        sta activeScene
+${roomy ? '' : `        sta bankEor             ; start on bank 1 (scene 1)
+`}        sta activeScene
         lda #OPS_PER_FRAME
         sta opbudget            ; prime the op throttle
         lda #0
@@ -646,6 +1151,9 @@ islot:  lda #$ff
         sta scorePtrHi
         lda #4
         sta scoreColByte        ; fg color 1 on bg 0
+${roomy ? `        lda #0                  ; roomy: decompress + show scene 0 at startup, so games that
+        sta activeScene         ; set up the scene with 0x28 only (no explicit 0x2e, e.g. ARCHER)
+        jsr display_scene       ; still get a background (twobank shows the embedded bitmap for free)` : ''}
 
 ${codeBody}
 
@@ -680,51 +1188,51 @@ fp0:    lda sParent,x           ; sub-quad? -> relative positioning (skip move/a
         cmp #$ff
         beq fpind
         jmp fsub
-fpind:  ; --- movement (speed>0) ---
-        ldy sSpeed,x
-        bne fp1
+fpind:  ; --- movement: general 256-direction (velocity = cos/sin(dir)*speed, GKGM) ---
+        lda sSpeed,x
+        bne fmv
         jmp fnomove
-fp1:    lda sDir,x
-        cmp #64
-        beq fright
-        cmp #192
-        beq fleft
-        cmp #0
-        beq fup
-        cmp #128
-        beq fdown
-        jmp fnomove
-fup:    sec
-        lda sPosYlo,x
-        sbc ymagLo,y
-        sta sPosYlo,x
-        lda sPosYhi,x
-        sbc ymagHi,y
-        sta sPosYhi,x
-        jmp fnomove
-fdown:  clc
-        lda sPosYlo,x
-        adc ymagLo,y
-        sta sPosYlo,x
-        lda sPosYhi,x
-        adc ymagHi,y
-        sta sPosYhi,x
-        jmp fnomove
-fright: clc
+fmv:    sta mspeed
+        ldy sDir,x
+        lda cosk,y              ; X component (signed) -> delta in sval/sval1
+        jsr axisdelta
+        lda msign
+        bne fxsub
+        clc                     ; cos>=0 -> move right (+X)
         lda sPosXlo,x
-        adc xmagLo,y
+        adc sval
         sta sPosXlo,x
         lda sPosXhi,x
-        adc xmagHi,y
+        adc sval1
         sta sPosXhi,x
-        jmp fnomove
-fleft:  sec
+        jmp fyax
+fxsub:  sec                     ; cos<0 -> move left (-X)
         lda sPosXlo,x
-        sbc xmagLo,y
+        sbc sval
         sta sPosXlo,x
         lda sPosXhi,x
-        sbc xmagHi,y
+        sbc sval1
         sta sPosXhi,x
+fyax:   ldy sDir,x
+        lda sink,y              ; Y component (signed)
+        jsr axisdelta
+        lda msign
+        bne fysub
+        clc                     ; sin>=0 -> move down (+Y)
+        lda sPosYlo,x
+        adc sval
+        sta sPosYlo,x
+        lda sPosYhi,x
+        adc sval1
+        sta sPosYhi,x
+        jmp fnomove
+fysub:  sec                     ; sin<0 -> move up (-Y)
+        lda sPosYlo,x
+        sbc sval
+        sta sPosYlo,x
+        lda sPosYhi,x
+        sbc sval1
+        sta sPosYhi,x
 fnomove:
         ; --- animation (animspd>0, advanced only on 30fps ticks) ---
         lda animtog
@@ -766,15 +1274,7 @@ fxl:    lda $d010
         sta $d010
 fxd:    lda sPosYhi,x
         sta $d001,y
-        txa                     ; fixed sprite pointer = 16+slot (mirror to both banks)
-        clc
-        adc #16
-        sta $43f8,x
-        sta $83f8,x
-        lda sBase,x             ; current master frame index = base + frame
-        clc
-        adc sFrame,x
-        jsr loadslot            ; copy it into the slot's 64 bytes (only if changed)
+${fdrawPtr}
 fnext:  inx
         cpx #8
         beq fret
@@ -809,16 +1309,7 @@ fsl2:   lda $d010
         sta $d010
 fsd:    lda sval1
         sta $d001,y
-        txa                     ; fixed pointer = 16+slot (mirror to both banks)
-        clc
-        adc #16
-        sta $43f8,x
-        sta $83f8,x
-        lda sBase,x             ; sub-quad master frame = sub base + parent frame
-        clc
-        adc tmp
-        jsr loadslot
-        jmp fnext
+${fsubPtr}
 fret:
         ; --- advance the 3 SID sound voices (sweep + repeat) ---
         ldx #0
@@ -900,26 +1391,46 @@ mvn:    ldx curv
         bne mvl
         rts
 
-loadslot:                       ; X=slot, A=master frame index -> copy into this slot (on change)
-        cmp sLoad,x
-        beq lsret               ; same frame already resident -> skip the copy
-        sta sLoad,x
-        tay
-        lda frameLo,y
-        sta ptr2
-        lda frameHi,y
-        sta ptr2+1              ; ptr2 = master + idx*64  (source)
-        lda slotLo,x
-        sta ptr
-        lda slotHi,x
-        eor bankEor             ; bank1 ^$00 -> $44/$45, bank2 ^$c0 -> $84/$85
-        sta ptr+1               ; ptr = active-bank slot (+$400 + slot*64)  (dest)
-        ldy #63
-lscp:   lda (ptr2),y
-        sta (ptr),y
+; axisdelta: A = signed direction component (cosk/sink); mspeed = speed. Returns
+; sval/sval1 = (|A| * speed) >> 3 as an unsigned 8.8 delta, msign = 1 if A was negative.
+; Preserves X (the sprite slot). 8x8 shift-add multiply, then >>3.
+axisdelta:
+        cmp #$80
+        bcc ad_pos
+        eor #$ff
+        clc
+        adc #1                  ; A = -A (magnitude of a negative component)
+        ldy #1
+        sty msign
+        jmp ad_mul
+ad_pos: ldy #0
+        sty msign
+ad_mul: sta mfac
+        lda #0
+        sta sval
+        sta sval1
+        ldy #8
+ad_lp:  asl sval
+        rol sval1
+        asl mfac
+        bcc ad_no
+        clc
+        lda sval
+        adc mspeed
+        sta sval
+        lda sval1
+        adc #0
+        sta sval1
+ad_no:  dey
+        bne ad_lp
+        ldy #3                  ; >> 3 (undo the x8 baked into the tables)
+ad_sh:  lsr sval1
+        ror sval
         dey
-        bpl lscp
-lsret:  rts
+        bne ad_sh
+        rts
+
+${loadslotOrRledec}
 
 mplaynote:                      ; curv = channel/voice, nidx = note index
         ldy curv
@@ -1001,31 +1512,7 @@ lf_on:  lda sndCT,x
         sta vTmr,y
         rts
 
-; display_scene: point the VIC at activeScene's bank (bank1/$4000 or bank2/$8000),
-; set bankEor for the sprite copies, and force all sprite slots to re-copy into the
-; now-active bank (its slots hold stale frames from when it was last shown).
-display_scene:
-        lda activeScene
-        bne dsB
-        lda #$00
-        sta bankEor
-        lda $dd00
-        and #$fc
-        ora #$02                ; VIC bank 1 ($4000): scene 1 bitmap $6000
-        sta $dd00
-        jmp dsC
-dsB:    lda #$c0
-        sta bankEor
-        lda $dd00
-        and #$fc
-        ora #$01                ; VIC bank 2 ($8000): scene 2 bitmap $a000
-        sta $dd00
-dsC:    ldx #7
-dsL:    lda #$ff
-        sta sLoad,x
-        dex
-        bpl dsL
-        rts
+${displaySceneChunk}
 
 ; ---- PRINT subsystem (text onto the multicolor bitmap) ----
 ; putglyph: blit an 8x8 font glyph -> 2 cells. fptr=font src, ptr=left cell,
@@ -1065,40 +1552,7 @@ pg_lp:  lda (fptr),y
         bne pg_lp
         rts
 
-; print_char: A = gm char index. Render at (printRow,printCol) to target bitmap(s).
-print_char:
-        and #$3f
-        tay
-        lda fontLo,y
-        sta fptr
-        lda fontHi,y
-        sta fptr+1              ; fptr = printFont + index*8
-        ldx printRow            ; sval/sval1 = row*320 + col*16
-        lda prowLo,x
-        sta sval
-        lda prowHi,x
-        sta sval1
-        ldx printCol
-        clc
-        lda sval
-        adc pcolLo,x
-        sta sval
-        lda sval1
-        adc pcolHi,x
-        sta sval1
-        lda printColByte
-        sta gcol
-        lda printTarget
-        cmp #1
-        beq pc_s2               ; target 1 -> scene 2 only
-        lda #$60
-        jsr pc_render           ; scene 1 ($6000 + offset)
-        lda printTarget
-        cmp #2
-        bne pc_ret              ; target 0 -> done
-pc_s2:  lda #$a0
-        jsr pc_render           ; scene 2 ($a000 + offset)
-pc_ret: rts
+${printCharChunk}
 pc_render:                      ; A = bitmap base high byte
         sta tmp
         clc
@@ -1128,8 +1582,10 @@ ps_lp:  lda stridx
         bcs ps_done
         ldy stridx
         lda (pcl),y
+        cmp #59                 ; 0x3B = GKGM print-string padding -> transparent (skip, advance only)
+        beq ps_skip
         jsr print_char
-        inc printCol
+ps_skip: inc printCol
         inc stridx
         jmp ps_lp
 ps_done: inc printRow
@@ -1219,15 +1675,13 @@ ss_done:
         lda ptr+1
         adc #0
         sta ptr2+1
-        lda tmp                 ; font src = digfont + digit*8
-        asl
-        asl
-        asl
+        lda tmp                 ; digit -> charset glyph 48+digit (screen code '0'), matches print value
         clc
-        adc #<digfont
+        adc #48
+        tax
+        lda fontLo,x
         sta fptr
-        lda #0
-        adc #>digfont
+        lda fontHi,x
         sta fptr+1
         ldy #0
 sd_row: lda (fptr),y            ; each font bit -> a 2-bit mc pixel (fg/bg per scoreColByte)
@@ -1266,13 +1720,122 @@ sd_row: lda (fptr),y            ; each font bit -> a 2-bit mc pixel (fg/bg per s
         cmp #5
         bne ss_lp
         rts
-
+${plotRt}
 ${pauseSubs}
 
 gmstop: jmp gmstop              ; "stop program" halts here
 jindir: jmp (jv)                ; computed jsr (0x04): jsr jindir -> jmp (jv); callee rts returns here
+`;
 
-; ---- data ----
+// ---- data tables (pulled out of the exec stream; the big-game layout relocates them to
+// VIC-invisible RAM). Each is [label, body]; single-line !byte or a multi-line block. ----
+// plot lookup tables (computed): mc row byte-address (base $6000) + column byte-offset
+const plotYlo = [], plotYhi = [], plotXlo = [], plotXhi = [];
+for (let y = 0; y < 200; y++) { const a = 0x6000 + (y >> 3) * 320 + (y & 7); plotYlo.push(a & 0xff); plotYhi.push(a >> 8); }
+for (let x = 0; x < 160; x++) { const o = (x >> 2) * 8; plotXlo.push(o & 0xff); plotXhi.push(o >> 8); }
+
+const tableDefs = [
+  ['bit8',   '!byte 1,2,4,8,16,32,64,128'],
+  ...(usesPlot ? [
+    ['valtab', '!byte 0,64,128,192,0,16,32,48,0,4,8,12,0,1,2,3'],
+    ['maskt',  '!byte 63,207,243,252'],
+    ['plotYlo', `!byte ${plotYlo.join(',')}`],
+    ['plotYhi', `!byte ${plotYhi.join(',')}`],
+    ['plotXlo', `!byte ${plotXlo.join(',')}`],
+    ['plotXhi', `!byte ${plotXhi.join(',')}`],
+  ] : []),
+  ['bit8i',  '!byte 254,253,251,247,239,223,191,127'],
+  ['v7',     '!byte 0,7,14'],
+  ['expandTab', `!byte ${expandTab.join(',')}`],
+  ['printFont', `!byte ${printFont.join(',')}`],
+  ['fontLo', `!byte ${Array.from({length: 64}, (_, i) => `<printFont+${i * 8}`).join(',')}`],
+  ['fontHi', `!byte ${Array.from({length: 64}, (_, i) => `>printFont+${i * 8}`).join(',')}`],
+  ['prowLo', `!byte ${prowLo.join(',')}`],
+  ['prowHi', `!byte ${prowHi.join(',')}`],
+  ['pcolLo', `!byte ${pcolLo.join(',')}`],
+  ['pcolHi', `!byte ${pcolHi.join(',')}`],
+  ['prnStr', `!byte ${prnStr.join(',')}`],
+  ['DATA',   `!byte ${DATA.join(',')}`],
+  ['RAM',    '!fill 256'],
+  ['jmptabLo', `!byte ${Array.from({length: 256}, (_, n) => labelIndex[n] !== undefined ? `<LBL_${n}` : `<gmstop`).join(',')}`],
+  ['jmptabHi', `!byte ${Array.from({length: 256}, (_, n) => labelIndex[n] !== undefined ? `>LBL_${n}` : `>gmstop`).join(',')}`],
+  ['sndFL', `!byte ${sndFL.join(',')}`], ['sndFH', `!byte ${sndFH.join(',')}`],
+  ['sndPL', `!byte ${sndPL.join(',')}`], ['sndPH', `!byte ${sndPH.join(',')}`],
+  ['sndCT', `!byte ${sndCT.join(',')}`], ['sndAD', `!byte ${sndAD.join(',')}`],
+  ['sndSR', `!byte ${sndSR.join(',')}`], ['sndDU', `!byte ${sndDU.join(',')}`],
+  ['sndSL', `!byte ${sndSL.join(',')}`], ['sndSH', `!byte ${sndSH.join(',')}`],
+  ['mFreqLo', `!byte ${mFreqLo.join(',')}`], ['mFreqHi', `!byte ${mFreqHi.join(',')}`],
+  ['mDur', `!byte ${mDur.join(',')}`], ['mFlag', `!byte ${mFlag.join(',')}`],
+  ['powlo', '!byte <10000,<1000,<100,<10,<1'],
+  ['powhi', '!byte >10000,>1000,>100,>10,>1'],
+  ['digfont', byteRows(digitfont)],
+  ['cosk', `!byte ${cosk.join(',')}`],
+  ['sink', `!byte ${sink.join(',')}`],
+  ['frameLo', `!byte ${Array.from({length: frameBytes.length / 64}, (_, i) => `<master+${i * 64}`).join(',')}`],
+  ['frameHi', `!byte ${Array.from({length: frameBytes.length / 64}, (_, i) => `>master+${i * 64}`).join(',')}`],
+  ['slotLo', '!byte 0,64,128,192,0,64,128,192'],
+  ['slotHi', '!byte $44,$44,$44,$44,$45,$45,$45,$45'],
+];
+const tblText = t => t[1].startsWith('!byte') ? `${t[0]}: ${t[1]}` : `${t[0]}:\n${t[1]}`;
+const tablesText = tableDefs.map(tblText).join('\n');
+const masterText = `master:\n${byteRows(frameBytes)}`;
+const bitmap2Text = bitmap2 ? `        * = $a000\n${byteRows(bitmap2)}\n` : '';
+
+// ---- layout: try the simple contiguous layout; on $4000 overflow, split code across the two
+// VIC-bank gaps and relocate data/master to VIC-invisible RAM (the "reorg"). ----
+const graphicsSimple =
+`        * = SCREEN
+        !fill $400
+        * = BITMAP
+${byteRows(bitmap)}
+${bitmap2Text}        * = $c100
+${masterText}`;
+
+function bigLayout() {
+  // (a) size-probe: park data (master+tables) high so every symbol resolves, read addresses.
+  const probe = assemble(`${execStream}\n        * = BITMAP\n${byteRows(bitmap)}\n        * = $8600\n${masterText}\n${tablesText}`);
+  const P = probe.labels, codeEndFlat = P['jindir'] + 3;
+  // (b) code split: last op boundary under $3FF0 becomes the seam into island 2 ($4600-$5FFF).
+  const marks = Object.keys(P).filter(k => /^__M\d+$/.test(k)).sort((a, b) => P[a] - P[b]);
+  let split = null;
+  for (const m of marks) { if (P[m] < 0x3ff0) split = m; else break; }
+  if (!split) throw new Error('splitter: no code boundary under $4000');
+  const seg2 = codeEndFlat - P[split];
+  if (0x4600 + seg2 > 0x6000) throw new Error(`splitter: island-2 code ${seg2}B overflows $4600-$5FFF (2nd split not yet implemented)`);
+  const execSplit = execStream.replace(`${split}:`, `        jmp ${split}\n        * = $4600\n${split}:`);
+  // (c) data split: contiguous master + as many tables as fit $8600-$9FFF, rest to $C100-$CFFF.
+  const avail1 = 0xa000 - (0x8600 + frameBytes.length);
+  let used = 0, cut = tableDefs.length;
+  for (let i = 0; i < tableDefs.length; i++) {
+    const sz = (i + 1 < tableDefs.length ? P[tableDefs[i + 1][0]] : probe.end) - P[tableDefs[i][0]];
+    if (used + sz > avail1) { cut = i; break; }
+    used += sz;
+  }
+  const part1 = tableDefs.slice(0, cut).map(tblText).join('\n');
+  const part2 = tableDefs.slice(cut).map(tblText).join('\n');
+  const part2Size = probe.end - (cut < tableDefs.length ? P[tableDefs[cut][0]] : probe.end);
+  if (0xc100 + part2Size > 0xd000) throw new Error(`splitter: data ${part2Size}B overflows $C100-$CFFF`);
+  const graphicsSplit =
+`        * = BITMAP
+${byteRows(bitmap)}
+        * = $8600
+${masterText}
+${part1}
+${bitmap2Text}        * = $c100
+${part2}`;
+  const out = `${execSplit}\n${graphicsSplit}`, rr = assemble(out);
+  console.log(`  layout: SPLIT — seg1 $0801-$${P[split].toString(16)} / seg2 $4600-$${(0x4600 + seg2).toString(16)}; data $8600 (${cut} tbls) + $c100 (${tableDefs.length - cut} tbls), master $8600`);
+  return { asm: out, r: rr };
+}
+
+let asm, r;
+if (roomy) {
+  // roomy single-bank layout. Data tables + compressed scenes live in VIC-invisible RAM;
+  // sprite frames are resident in the VIC bank at SPR ($4400); the bitmap ($6000) is filled
+  // at runtime by RLE decompress. Small games fit code+data under $4000 (simple). Big games
+  // (PITFAL) get a code splitter that bridges over the VIC bank ($4000-$7FFF) into $8000, with
+  // data+scenes trailing through $a000-$cfff (BASIC banked out at init makes that CPU-readable).
+  const roomyData = `; ---- data ----
 bit8:   !byte 1,2,4,8,16,32,64,128
 bit8i:  !byte 254,253,251,247,239,223,191,127
 v7:     !byte 0,7,14
@@ -1307,30 +1870,63 @@ powlo:  !byte <10000,<1000,<100,<10,<1
 powhi:  !byte >10000,>1000,>100,>10,>1
 digfont:
 ${byteRows(digitfont)}
-xmagLo: !byte ${xmagLo.join(',')}
-xmagHi: !byte ${xmagHi.join(',')}
-ymagLo: !byte ${ymagLo.join(',')}
-ymagHi: !byte ${ymagHi.join(',')}
-frameLo: !byte ${Array.from({length: frameBytes.length / 64}, (_, i) => `<master+${i * 64}`).join(',')}
-frameHi: !byte ${Array.from({length: frameBytes.length / 64}, (_, i) => `>master+${i * 64}`).join(',')}
-slotLo:  !byte 0,64,128,192,0,64,128,192       ; slot s within a bank: +$400 + s*64
-slotHi:  !byte $44,$44,$44,$44,$45,$45,$45,$45 ; bank1 (bank2 = ^ $c0 -> $84/$85)
-
-        * = SCREEN
-        !fill $400
-        * = BITMAP
-${byteRows(bitmap)}
-${bitmap2 ? `        * = $a000\n${byteRows(bitmap2)}\n` : ''}
-; sprite frame MASTER at $c100 (RAM, VIC-invisible in banks 1/2; ABOVE the state
-; arrays at $c000-$c0e2). loadslot copies the current frame of each active sprite
-; from here into the active bank's slot.
-        * = $c100
-master:
-${byteRows(frameBytes)}
-`;
+cosk:   !byte ${cosk.join(',')}
+sink:   !byte ${sink.join(',')}
+${usesPlot ? `valtab: !byte 0,64,128,192,0,16,32,48,0,4,8,12,0,1,2,3
+maskt:  !byte 63,207,243,252
+plotYlo: !byte ${plotYlo.join(',')}
+plotYhi: !byte ${plotYhi.join(',')}
+plotXlo: !byte ${plotXlo.join(',')}
+plotXhi: !byte ${plotXhi.join(',')}` : ''}`;
+  const roomyMatrixFrames = `        * = SCREEN
+        !fill $400              ; video matrix (colors 1/2 + sprite pointers at +$3F8)
+        * = SPR                 ; sprite frame library, pointer-swapped (frame i -> pointer 16+i)
+sprdata:
+${byteRows(frameBytes)}`;
+  const roomyScenes = `; compressed scenes (VIC-invisible RAM); display_scene decompresses into $6000 at runtime.
+rle0:   !byte ${rle0.join(',')}
+rle1:   !byte ${rle1.join(',')}`;
+  try {
+    // simple: code+data under $4000, then matrix/frames ($4000/$4400), scenes at $8000
+    asm = `${execStream}\n${roomyData}\n${roomyMatrixFrames}\n        * = $8000\n${roomyScenes}`;
+    r = assemble(asm);
+    console.log(`  layout: roomy simple — $0801..$${r.end.toString(16)}`);
+  } catch (e) {
+    if (!/moves backward/.test(e.message)) throw e;
+    // roomy SPLIT: code seg A ($0801-$3FFF) bridges over the VIC bank to seg B ($8000); data
+    // tables + compressed scenes trail seg B through $a000-$cfff (below $d000 I/O).
+    const probe = assemble(`${execStream}\n        * = $8000\n${roomyData}\n${roomyScenes}`);
+    const P = probe.labels, codeEndFlat = P['jindir'] + 3;
+    const marks = Object.keys(P).filter(k => /^__M\d+$/.test(k)).sort((a, b) => P[a] - P[b]);
+    let split = null;
+    for (const m of marks) { if (P[m] < 0x3ff0) split = m; else break; }
+    if (!split) throw new Error('roomy splitter: no code boundary under $4000');
+    const seg2 = codeEndFlat - P[split];
+    const tailSize = probe.end - 0x8000;   // data+scenes size (parked at $8000 in the probe)
+    if (0x8000 + seg2 + tailSize > 0xd000) throw new Error(`roomy splitter: seg2 ${seg2}B + data/scenes ${tailSize}B overflow $8000-$cfff`);
+    const idx = execStream.indexOf(`${split}:`);
+    const segA = execStream.slice(0, idx), segB = execStream.slice(idx);
+    asm = `${segA}        jmp ${split}
+${roomyMatrixFrames}
+        * = $8000
+${segB}
+${roomyData}
+${roomyScenes}`;
+    r = assemble(asm);
+    console.log(`  layout: roomy SPLIT — seg1 $0801-$${P[split].toString(16)} / seg2 $8000-$${(0x8000 + seg2).toString(16)}, data+scenes to $${r.end.toString(16)}`);
+  }
+} else {
+  try {
+    asm = `${execStream}\n${tablesText}\n${graphicsSimple}`;
+    r = assemble(asm);
+    console.log(`  layout: simple — $0801..$${r.end.toString(16)} (code+data fit under $4000)`);
+  } catch (e) {
+    if (!/moves backward/.test(e.message)) throw e;
+    ({ asm, r } = bigLayout());
+  }
+}
 
 writeFileSync(outPath.replace(/\.prg$/, '.asm'), asm);
-const r = assemble(asm);
 writeFileSync(outPath, Buffer.from(r.prg));
 console.log(`  -> ${outPath}  (${r.bytes.length} bytes, org=$${r.org.toString(16)} end=$${r.end.toString(16)})`);
 
