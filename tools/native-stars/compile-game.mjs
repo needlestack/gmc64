@@ -1891,29 +1891,41 @@ sceneBg:  !byte ${rmScenes.map(sc => sc.bgColor).join(',')}`;
         * = SPR                 ; sprite frame library, pointer-swapped (frame i -> pointer 16+i)
 sprdata:
 ${byteRows(frameBytes)}`;
-  // compressed scenes (VIC-invisible RAM); display_scene decompresses one into $6000 at runtime.
-  // splitK: if >=0, insert `* = $e000` before blob splitK so scenes spill past the $d000 I/O hole
-  // (only reachable via self-extraction — a direct load can't cross $d000).
-  const roomyScenes = (splitK = -1) => `; compressed scenes\n` +
-    rles.map((r, i) => (i === splitK ? `        * = $e000\n` : '') + `rle${i}:   !byte ${r.join(',')}`).join('\n');
-  // $cf00 = below-hole ceiling: scenes past here spill to $e000 (self-extract only). $f900 = seg2
-  // ceiling, leaving $f900-$fff9 for the self-extractor's C2 staging + $fffa-$ffff vectors.
-  const HOLE_CEIL = 0xcf00, E_CEIL = 0xfc00;
-  // pick the first blob that would cross HOLE_CEIL given a starting address; -1 if all fit.
-  const pickSplit = sceneStart => { let pc = sceneStart, k = -1;
-    for (let i = 0; i < rles.length; i++) { if (pc + rles[i].length > HOLE_CEIL) { k = i; break; } pc += rles[i].length; }
-    return k; };
-  const eEnd = (sceneStart, splitK) => { let pc = splitK < 0 ? sceneStart : 0xe000;   // end addr of the $e000 span
-    for (let i = Math.max(0, splitK); i < rles.length; i++) pc += rles[i].length; return pc; };
+  // Compressed scenes live in VIC-invisible RAM; display_scene decompresses one into $6000 at
+  // runtime. They are placed across three usable regions, skipping two reserved holes:
+  //   A [start .. $c000)   below the runtime state block
+  //   -- $c000-$c0ff RESERVED: sprite/runtime state RAM (sBase..) is written here at runtime;
+  //      a scene blob overlapping it would be clobbered -> lzdec reads garbage -> hard crash --
+  //   B [$c100 .. $cf00)   between the state block and the I/O hole
+  //   -- $d000-$dfff RESERVED: I/O --
+  //   C [$e000 .. $fc00)   above the hole ($fc00 leaves room for the self-extractor's C2 staging
+  //      + the $fffa vectors). Any blob in B or C makes the image cross a hole -> self-extract only.
+  const REGIONS = [[null, 0xc000], [0xc100, 0xcf00], [0xe000, 0xfc00]];
+  // greedily place blobs; return {jumps: {blobIdx -> newOrigin}, end}
+  const placeScenes = start => {
+    let pc = start, reg = 0; const jumps = {};
+    for (let i = 0; i < rles.length; i++) {
+      while (pc + rles[i].length > REGIONS[reg][1]) {
+        if (++reg >= REGIONS.length) throw new Error(`roomy: compressed scenes (${rles.reduce((n, r) => n + r.length, 0)}B) don't fit the RAM map — use fewer/smaller scenes`);
+        pc = REGIONS[reg][0]; jumps[i] = pc;
+      }
+      pc += rles[i].length;
+    }
+    return { jumps, end: pc };
+  };
+  const roomyScenes = (jumps = {}) => `; compressed scenes\n` +
+    rles.map((r, i) => (jumps[i] !== undefined ? `        * = $${jumps[i].toString(16)}\n` : '') + `rle${i}:   !byte ${r.join(',')}`).join('\n');
+  const spillNote = jumps => Object.keys(jumps).length ? ` (scenes spill ${Object.entries(jumps).map(([i, a]) => `#${i}@$${(+a).toString(16)}`).join(' ')} — crosses a hole, self-extract only)` : '';
   try {
-    // simple: code+data under $4000, then matrix/frames ($4000/$4400), scenes at $8000
-    asm = `${execStream}\n${roomyData}\n${roomyMatrixFrames}\n        * = $8000\n${roomyScenes()}`;
+    // simple: code+data under $4000, then matrix/frames ($4000/$4400), scenes from $8000
+    const { jumps } = placeScenes(0x8000);
+    asm = `${execStream}\n${roomyData}\n${roomyMatrixFrames}\n        * = $8000\n${roomyScenes(jumps)}`;
     r = assemble(asm);
-    console.log(`  layout: roomy simple — $0801..$${r.end.toString(16)}`);
+    console.log(`  layout: roomy simple — $0801..$${r.end.toString(16)}${spillNote(jumps)}`);
   } catch (e) {
     if (!/moves backward/.test(e.message)) throw e;
     // roomy SPLIT: code seg A ($0801-$3FFF) bridges over the VIC bank to seg B ($8000); data
-    // tables + compressed scenes trail seg B through $a000-$cfff, spilling to $e000 past the hole.
+    // tables + compressed scenes trail seg B, filling the three regions above.
     const probe = assemble(`${execStream}\n        * = $8000\n${roomyData}\n${roomyScenes()}`);
     const P = probe.labels, codeEndFlat = P['jindir'] + 3;
     const marks = Object.keys(P).filter(k => /^__M\d+$/.test(k)).sort((a, b) => P[a] - P[b]);
@@ -1923,9 +1935,7 @@ ${byteRows(frameBytes)}`;
     const seg2 = codeEndFlat - P[split];
     // real address where the compressed scenes begin = $8000 + segB + (roomyData size)
     const sceneStart = 0x8000 + seg2 + (P['rle0'] - 0x8000);   // P['rle0'] is flat (data at $8000, no segB)
-    const splitK = pickSplit(sceneStart);
-    if (splitK >= 0 && eEnd(sceneStart, splitK) > E_CEIL) throw new Error(`roomy: $e000 scene span overruns $${E_CEIL.toString(16)} (need a 2nd hole or fewer scenes)`);
-    if (splitK < 0 && sceneStart + rles.reduce((n, r) => n + r.length, 0) > HOLE_CEIL) throw new Error(`roomy splitter: scenes overflow $8000-$cf00`);
+    const { jumps } = placeScenes(sceneStart);
     const idx = execStream.indexOf(`${split}:`);
     const segA = execStream.slice(0, idx), segB = execStream.slice(idx);
     asm = `${segA}        jmp ${split}
@@ -1933,10 +1943,9 @@ ${roomyMatrixFrames}
         * = $8000
 ${segB}
 ${roomyData}
-${roomyScenes(splitK)}`;
+${roomyScenes(jumps)}`;
     r = assemble(asm);
-    const spill = splitK >= 0 ? ` (scenes ${splitK}+ at $e000, spans I/O hole -> self-extract only)` : '';
-    console.log(`  layout: roomy SPLIT — seg1 $0801-$${P[split].toString(16)} / seg2 $8000-$${(0x8000 + seg2).toString(16)}, data+scenes to $${r.end.toString(16)}${spill}`);
+    console.log(`  layout: roomy SPLIT — seg1 $0801-$${P[split].toString(16)} / seg2 $8000-$${(0x8000 + seg2).toString(16)}, data+scenes to $${r.end.toString(16)}${spillNote(jumps)}`);
   }
 } else {
   try {
