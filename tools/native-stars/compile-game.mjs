@@ -1898,7 +1898,7 @@ ${byteRows(frameBytes)}`;
     rles.map((r, i) => (i === splitK ? `        * = $e000\n` : '') + `rle${i}:   !byte ${r.join(',')}`).join('\n');
   // $cf00 = below-hole ceiling: scenes past here spill to $e000 (self-extract only). $f900 = seg2
   // ceiling, leaving $f900-$fff9 for the self-extractor's C2 staging + $fffa-$ffff vectors.
-  const HOLE_CEIL = 0xcf00, E_CEIL = 0xf900;
+  const HOLE_CEIL = 0xcf00, E_CEIL = 0xfc00;
   // pick the first blob that would cross HOLE_CEIL given a starting address; -1 if all fit.
   const pickSplit = sceneStart => { let pc = sceneStart, k = -1;
     for (let i = 0; i < rles.length; i++) { if (pc + rles[i].length > HOLE_CEIL) { k = i; break; } pc += rles[i].length; }
