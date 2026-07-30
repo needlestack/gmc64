@@ -113,7 +113,11 @@ if (mFreqLo.length === 0) { mFreqLo.push(0); mFreqHi.push(0); mDur.push(1); mFla
 // slot 0 -> VIC bank 1 ($6000 bitmap), slot 1 -> VIC bank 2 ($A000 bitmap).
 const sceneSlotMedia = {};
 for (const op of ins) if (op.opcode === 0x28) sceneSlotMedia[op.arg1] = op.arg2;
-const sceneByBank = [sceneMedia[sceneSlotMedia[0]] || scene, sceneMedia[sceneSlotMedia[1]]];
+// twobank uses slots 0/1 (VIC banks 1/2); roomy supports N slots (all decompressed on demand).
+const maxSceneSlot = Object.keys(sceneSlotMedia).length ? Math.max(...Object.keys(sceneSlotMedia).map(Number)) : 1;
+const sceneByBank = [];
+for (let s = 0; s <= Math.max(1, maxSceneSlot); s++) sceneByBank[s] = sceneMedia[sceneSlotMedia[s]];
+if (!sceneByBank[0]) sceneByBank[0] = scene;
 const numScenes = sceneByBank.filter(Boolean).length;
 scene = sceneByBank[0];                                  // primary scene (score pos, name, etc.)
 const sbyte = sc => ((((sc.color1 & 0xf) << 4) | (sc.color2 & 0xf)) & 0xff);
@@ -129,7 +133,7 @@ const screenByte2 = sceneByBank[1] ? sbyte(sceneByBank[1]) : 0;
 // 1..255, 1:2-byte LE), bits5-0 = len field: len = field+3, or if field==63 read 255-chained
 // extension bytes added to 66. Then the offset; copy len bytes from (dest-offset). ~2.4-2.6x on
 // dense scenes, 9-11x on flat, 30x on trivial — a hair below the bit-stream but ~3-5x faster decode.
-let rmScene0, rmScene1, rle0, rle1;
+let rmScenes = [], rles = [];
 if (roomy) {
   const lzEncode = (data) => {
     const n = data.length, head = new Int32Array(65536).fill(-1), prev = new Int32Array(n).fill(-1);
@@ -159,13 +163,12 @@ if (roomy) {
     out.push(0);
     return out;
   };
-  rmScene0 = sceneByBank[0];
-  rmScene1 = sceneByBank[1] || sceneByBank[0];
-  rle0 = lzEncode(rmScene0.rawImageData);
-  rle1 = lzEncode(rmScene1.rawImageData);
+  rmScenes = sceneByBank.map(sc => sc || sceneByBank[0]);   // one entry per slot (gaps -> scene 0)
+  rles = rmScenes.map(sc => lzEncode(sc.rawImageData));
   const NFRAMES = frameBytes.length / 64;
   if (NFRAMES > 112) throw new Error(`roomy: ${NFRAMES} sprite frames exceed the 112 that fit in a bank`);
-  console.log(`  roomy: scene0 LZ ${rmScene0.rawImageData.length}->${rle0.length}B (${(rmScene0.rawImageData.length/rle0.length).toFixed(1)}x), scene1 ${rle1.length}B (${(rmScene1.rawImageData.length/rle1.length).toFixed(1)}x); ${NFRAMES} frames resident`);
+  const totC = rles.reduce((n, r) => n + r.length, 0);
+  console.log(`  roomy: ${rmScenes.length} scenes, ` + rles.map((r, i) => `s${i} ${rmScenes[i].rawImageData.length}->${r.length}`).join(' ') + `B (tot ${totC}B); ${NFRAMES} frames resident`);
 }
 
 // score display position: GKGM "row (0-24) column (0-19)". Columns are 0-19 =
@@ -331,7 +334,14 @@ function emitOp(op) {
       break;
     }
     case 0x2e: c(`  lda #${a1}`); c(`  sta activeScene`); c(`  jsr display_scene`); break;                 // display scene N
-    case 0x56: c(`  lda activeScene`); c(`  eor #1`); c(`  sta activeScene`); c(`  jsr display_scene`); break; // display other scene
+    case 0x56:                                                       // display other scene
+      if (roomy && rmScenes.length > 2) {                            // cycle: activeScene = (activeScene+1) mod N
+        const u = ++uid;
+        c(`  lda activeScene`); c(`  clc`); c(`  adc #1`); c(`  cmp #${rmScenes.length}`); c(`  bcc scyc_${u}`); c(`  lda #0`); c(`scyc_${u}:`); c(`  sta activeScene`); c(`  jsr display_scene`);
+      } else {
+        c(`  lda activeScene`); c(`  eor #1`); c(`  sta activeScene`); c(`  jsr display_scene`);
+      }
+      break;
     case 0x39: c(`  lda #${a1}`); c(`  sta printRow`); c(`  lda #${a2}`); c(`  sta printCol`); break;   // print at row/col
     case 0x3e: c(`  lda #${(a1 & 3) * 4 + (a2 & 3)}`); c(`  sta printColByte`); break;                  // print color fg on bg
     case 0x5c: c(`  lda #${a2}`); c(`  sta printTarget`); break;                                        // print on scene(s)
@@ -880,35 +890,27 @@ lsret:  rts`;
 
 // display_scene diverges entirely: twobank flips the $dd00 VIC bank + marks slots stale;
 // roomy decompresses the active RLE scene into $6000, repaints matrix/color/bg, rebuilds pointers.
-const displaySceneChunk = roomy ? `; display_scene: roomy single-bank switch. activeScene (0/1) already set by the caller.
-; Decompress that scene's bitmap into $6000, repaint the shared matrix/colorRAM/bg, then
-; refresh the sprite pointers (the matrix fill overwrites $43F8-$43FF). This is where the
-; ~few-frame switch cost lives (vs the two-bank build's instant $DD00 flip).
+const displaySceneChunk = roomy ? `; display_scene: roomy single-bank switch. activeScene (0..N-1) already set by the caller.
+; Index the per-scene tables (sceneLo/Hi = compressed-stream ptr; sceneMat/Col/Bg = colors),
+; decompress that scene's bitmap into $6000, repaint the shared matrix/colorRAM/bg, then refresh
+; the sprite pointers (the matrix fill overwrites $43F8-$43FF). This is where the ~few-frame
+; switch cost lives (vs the two-bank build's instant $DD00 flip).
 display_scene:
-        lda activeScene
-        bne dsB
-        lda #<rle0
+        ldx activeScene
+        lda sceneLo,x
         sta rlsrc
-        lda #>rle0
+        lda sceneHi,x
         sta rlsrc+1
         jsr lzdec
-        lda #${sbyte(rmScene0)}
+        ldx activeScene
+        lda sceneMat,x
         jsr ds_matrix
-        lda #${rmScene0.color3}
+        ldx activeScene
+        lda sceneCol,x
         jsr ds_color
-        lda #${rmScene0.bgColor}
-        jmp dsC
-dsB:    lda #<rle1
-        sta rlsrc
-        lda #>rle1
-        sta rlsrc+1
-        jsr lzdec
-        lda #${sbyte(rmScene1)}
-        jsr ds_matrix
-        lda #${rmScene1.color3}
-        jsr ds_color
-        lda #${rmScene1.bgColor}
-dsC:    sta $d021
+        ldx activeScene
+        lda sceneBg,x
+        sta $d021
         sta $d020
         ldx #7                  ; matrix fill clobbered $43F8-$43FF -> rebuild sprite pointers
 dsp:    lda sBase,x
@@ -1877,33 +1879,53 @@ maskt:  !byte 63,207,243,252
 plotYlo: !byte ${plotYlo.join(',')}
 plotYhi: !byte ${plotYhi.join(',')}
 plotXlo: !byte ${plotXlo.join(',')}
-plotXhi: !byte ${plotXhi.join(',')}` : ''}`;
+plotXhi: !byte ${plotXhi.join(',')}` : ''}
+; per-scene tables (indexed by activeScene in display_scene)
+sceneLo:  !byte ${rmScenes.map((_, i) => `<rle${i}`).join(',')}
+sceneHi:  !byte ${rmScenes.map((_, i) => `>rle${i}`).join(',')}
+sceneMat: !byte ${rmScenes.map(sc => sbyte(sc)).join(',')}
+sceneCol: !byte ${rmScenes.map(sc => sc.color3).join(',')}
+sceneBg:  !byte ${rmScenes.map(sc => sc.bgColor).join(',')}`;
   const roomyMatrixFrames = `        * = SCREEN
         !fill $400              ; video matrix (colors 1/2 + sprite pointers at +$3F8)
         * = SPR                 ; sprite frame library, pointer-swapped (frame i -> pointer 16+i)
 sprdata:
 ${byteRows(frameBytes)}`;
-  const roomyScenes = `; compressed scenes (VIC-invisible RAM); display_scene decompresses into $6000 at runtime.
-rle0:   !byte ${rle0.join(',')}
-rle1:   !byte ${rle1.join(',')}`;
+  // compressed scenes (VIC-invisible RAM); display_scene decompresses one into $6000 at runtime.
+  // splitK: if >=0, insert `* = $e000` before blob splitK so scenes spill past the $d000 I/O hole
+  // (only reachable via self-extraction — a direct load can't cross $d000).
+  const roomyScenes = (splitK = -1) => `; compressed scenes\n` +
+    rles.map((r, i) => (i === splitK ? `        * = $e000\n` : '') + `rle${i}:   !byte ${r.join(',')}`).join('\n');
+  // $cf00 = below-hole ceiling: scenes past here spill to $e000 (self-extract only). $f900 = seg2
+  // ceiling, leaving $f900-$fff9 for the self-extractor's C2 staging + $fffa-$ffff vectors.
+  const HOLE_CEIL = 0xcf00, E_CEIL = 0xf900;
+  // pick the first blob that would cross HOLE_CEIL given a starting address; -1 if all fit.
+  const pickSplit = sceneStart => { let pc = sceneStart, k = -1;
+    for (let i = 0; i < rles.length; i++) { if (pc + rles[i].length > HOLE_CEIL) { k = i; break; } pc += rles[i].length; }
+    return k; };
+  const eEnd = (sceneStart, splitK) => { let pc = splitK < 0 ? sceneStart : 0xe000;   // end addr of the $e000 span
+    for (let i = Math.max(0, splitK); i < rles.length; i++) pc += rles[i].length; return pc; };
   try {
     // simple: code+data under $4000, then matrix/frames ($4000/$4400), scenes at $8000
-    asm = `${execStream}\n${roomyData}\n${roomyMatrixFrames}\n        * = $8000\n${roomyScenes}`;
+    asm = `${execStream}\n${roomyData}\n${roomyMatrixFrames}\n        * = $8000\n${roomyScenes()}`;
     r = assemble(asm);
     console.log(`  layout: roomy simple — $0801..$${r.end.toString(16)}`);
   } catch (e) {
     if (!/moves backward/.test(e.message)) throw e;
     // roomy SPLIT: code seg A ($0801-$3FFF) bridges over the VIC bank to seg B ($8000); data
-    // tables + compressed scenes trail seg B through $a000-$cfff (below $d000 I/O).
-    const probe = assemble(`${execStream}\n        * = $8000\n${roomyData}\n${roomyScenes}`);
+    // tables + compressed scenes trail seg B through $a000-$cfff, spilling to $e000 past the hole.
+    const probe = assemble(`${execStream}\n        * = $8000\n${roomyData}\n${roomyScenes()}`);
     const P = probe.labels, codeEndFlat = P['jindir'] + 3;
     const marks = Object.keys(P).filter(k => /^__M\d+$/.test(k)).sort((a, b) => P[a] - P[b]);
     let split = null;
     for (const m of marks) { if (P[m] < 0x3ff0) split = m; else break; }
     if (!split) throw new Error('roomy splitter: no code boundary under $4000');
     const seg2 = codeEndFlat - P[split];
-    const tailSize = probe.end - 0x8000;   // data+scenes size (parked at $8000 in the probe)
-    if (0x8000 + seg2 + tailSize > 0xd000) throw new Error(`roomy splitter: seg2 ${seg2}B + data/scenes ${tailSize}B overflow $8000-$cfff`);
+    // real address where the compressed scenes begin = $8000 + segB + (roomyData size)
+    const sceneStart = 0x8000 + seg2 + (P['rle0'] - 0x8000);   // P['rle0'] is flat (data at $8000, no segB)
+    const splitK = pickSplit(sceneStart);
+    if (splitK >= 0 && eEnd(sceneStart, splitK) > E_CEIL) throw new Error(`roomy: $e000 scene span overruns $${E_CEIL.toString(16)} (need a 2nd hole or fewer scenes)`);
+    if (splitK < 0 && sceneStart + rles.reduce((n, r) => n + r.length, 0) > HOLE_CEIL) throw new Error(`roomy splitter: scenes overflow $8000-$cf00`);
     const idx = execStream.indexOf(`${split}:`);
     const segA = execStream.slice(0, idx), segB = execStream.slice(idx);
     asm = `${segA}        jmp ${split}
@@ -1911,9 +1933,10 @@ ${roomyMatrixFrames}
         * = $8000
 ${segB}
 ${roomyData}
-${roomyScenes}`;
+${roomyScenes(splitK)}`;
     r = assemble(asm);
-    console.log(`  layout: roomy SPLIT — seg1 $0801-$${P[split].toString(16)} / seg2 $8000-$${(0x8000 + seg2).toString(16)}, data+scenes to $${r.end.toString(16)}`);
+    const spill = splitK >= 0 ? ` (scenes ${splitK}+ at $e000, spans I/O hole -> self-extract only)` : '';
+    console.log(`  layout: roomy SPLIT — seg1 $0801-$${P[split].toString(16)} / seg2 $8000-$${(0x8000 + seg2).toString(16)}, data+scenes to $${r.end.toString(16)}${spill}`);
   }
 } else {
   try {
