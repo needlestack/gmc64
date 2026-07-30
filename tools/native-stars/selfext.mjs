@@ -6,24 +6,25 @@
 // ship the program COMPRESSED (small file, loads low & clear of $d000), then
 // expand it in place at boot.
 //
-// Method — FORWARD in-place decompression (the textbook Exomizer/ZX0 trick):
-//   * compress the whole image D ($0801..OUTTOP) with the same byte-LZ packer
-//     compile-game uses for scenes.
-//   * stage the compressed stream C HIGH, ending at OUTTOP+gap, so it overlaps
-//     the TOP of the output region. Decode forward: read ptr src ascends from
-//     the bottom of C, write ptr dst ascends from $0801. dst only reaches C's
-//     region after producing ~all of D, by which point src has long since read
-//     those bytes — so the read pointer always stays ahead. (A backward decode
-//     from the top clobbers: dst outruns src on the first long match. Verified.)
-//   * the required `gap` is found by exact simulation (usually 1 byte).
+// Method — FORWARD in-place decompression (the Exomizer/ZX0 trick): compress a
+// region with the same byte-LZ packer compile-game uses for scenes; stage the
+// compressed stream HIGH, ending just above the region's top so it overlaps the
+// top of the output. Decode forward: read ptr ascends from the bottom of C,
+// write ptr ascends from the region start. dst only reaches C's staged region
+// after producing ~all of the output, by which point src has read those bytes —
+// so the read pointer stays ahead. (A backward decode from the top clobbers:
+// dst outruns src on the first long match.) The safe `gap` is found by exact
+// simulation (1 byte in practice).
 //
-// Boot layout of the emitted file (loads contiguously at $0801):
-//   $0801  BASIC stub (SYS 2061)
-//   $080d  relocator: sei; $01=$36; copy decoder -> $0400; copy C -> Csrc0; jmp $0400
-//   ...    decoder bytes (assembled for $0400)
-//   ...    compressed C
-// The decoder lives at $0400 (screen RAM, below the $0801 image, never written
-// by dst) and ends with `jmp $080d` into the freshly-expanded game.
+// The I/O hole ($d000-$dfff): if the decompressed image extends past $d000, it
+// is split into TWO segments — seg1 ($0801..<$d000) and seg2 ($e000..top) — each
+// compressed and decoded as an INDEPENDENT stream. Separate streams mean no LZ
+// match ever straddles the hole, so the decoder needs no per-byte hole test: it
+// just runs twice, writing seg1 below the hole and seg2 above it, and never
+// touches $d000-$dfff. KERNAL is banked out ($01=$35) so $e000+ reads/writes RAM.
+//
+// Boot layout ($0801 contiguous): BASIC stub -> relocator (set $01; copy decoder
+// to $0400; copy each staged stream up) -> forward decoder at $0400 -> jmp $080d.
 //
 // Usage: node selfext.mjs <game.prg> <out.prg>
 
@@ -32,6 +33,9 @@ import { assemble } from '../asm6502.mjs';
 
 const B = '/Users/jfield/GMC64/code/js/';
 for (const m of ['d64lib']) await import(B + m + '.js');
+
+const IO_LO = 0xd000, IO_HI = 0xe000;    // the $d000-$dfff I/O hole
+const ORG = 0x0801, GAME = 0x080d, DEC = 0x0400;
 
 // ---- the byte-LZ encoder (identical token format to compile-game's lzdec) ----
 // token: $00 end; $01-$7f literal run of N bytes (bytes follow);
@@ -65,15 +69,15 @@ const lzEncode = (data) => {
   return Uint8Array.from(out);
 };
 
-// ---- exact forward in-place simulation: does gap G decode cleanly with no
-//      write-before-read into the staged compressed region? returns {clob,ok} ----
-function simulate(D, C, org, gap) {
-  const U = D.length, OUTTOP = org + U - 1;
+// ---- exact forward in-place simulation for one segment ----
+// data decoded to [dstStart..dstStart+len-1]; C staged ending at (top+gap).
+function simulate(data, C, dstStart, gap) {
+  const U = data.length, OUTTOP = dstStart + U - 1;
   const Ctop = OUTTOP + gap, Csrc0 = Ctop - (C.length - 1);
   const mem = new Uint8Array(65536);
   for (let k = 0; k < C.length; k++) mem[Csrc0 + k] = C[k];
   const readT = new Int32Array(65536).fill(-1);
-  let src = Csrc0, dst = org, t = 0, produced = 0, clob = false;
+  let src = Csrc0, dst = dstStart, t = 0, produced = 0, clob = false;
   const rd = () => { if (readT[src] < 0) readT[src] = t; return mem[src++]; };
   const wr = (v) => { if (dst >= Csrc0 && dst <= Ctop && readT[dst] < 0) clob = true; mem[dst++] = v; produced++; };
   while (produced < U) {
@@ -83,12 +87,19 @@ function simulate(D, C, org, gap) {
       let off; if (tok & 0x40) { const lo = rd(), hi = rd(); off = lo | (hi << 8); } else off = rd();
       for (let k = 0; k < len; k++) { const v = mem[dst - off]; wr(v); } }
   }
-  let ok = produced === U; if (ok) for (let j = 0; j < U; j++) if (mem[org + j] !== D[j]) { ok = false; break; }
+  let ok = produced === U; if (ok) for (let j = 0; j < U; j++) if (mem[dstStart + j] !== data[j]) { ok = false; break; }
   return { clob, ok, Csrc0, Ctop };
 }
-function findGap(D, C, org) {
-  for (let g = 1; g <= 4096; g++) { const r = simulate(D, C, org, g); if (!r.clob && r.ok) return g; }
-  throw new Error('no safe gap found <=4096 (unexpected)');
+function packSeg(data, dstStart, barrier) {
+  const C = lzEncode(data);
+  for (let gap = 1; gap <= 4096; gap++) {
+    const r = simulate(data, C, dstStart, gap);
+    if (!r.clob && r.ok) {
+      if (r.Ctop >= barrier) throw new Error(`segment staged top $${r.Ctop.toString(16)} hits barrier $${barrier.toString(16)}`);
+      return { C, gap, dstStart, len: data.length, Csrc0: r.Csrc0, Ctop: r.Ctop };
+    }
+  }
+  throw new Error('no safe gap <=4096');
 }
 
 // ==================== build ====================
@@ -97,21 +108,34 @@ if (!inPath || !outPath) { console.error('usage: node selfext.mjs <game.prg> <ou
 
 const file = readFileSync(inPath);
 const org = file[0] | (file[1] << 8);
-const D = file.slice(2);                 // the raw image bytes ($0801..OUTTOP)
-const U = D.length, OUTTOP = org + U - 1;
-if (org !== 0x0801) throw new Error(`expected game org $0801, got $${org.toString(16)}`);
+if (org !== ORG) throw new Error(`expected game org $0801, got $${org.toString(16)}`);
+const D = file.slice(2);
+const OUTTOP = org + D.length - 1;
 
-const C = lzEncode(D);
-const gap = findGap(D, C, org);
-const Ctop = OUTTOP + gap;
-const Csrc0 = Ctop - (C.length - 1);
-if (Ctop >= 0xd000) throw new Error(`compressed top $${Ctop.toString(16)} collides with I/O ($d000)`);
-
-const DEC = 0x0400;                      // decoder runs from screen RAM (below the image)
-const GAME = 0x080d;                     // game entry (SYS 2061 target)
+// split at the I/O hole if the image reaches past it
+let segs;
+if (OUTTOP < IO_LO) {
+  segs = [packSeg(D, ORG, IO_LO)];
+} else {
+  if (OUTTOP >= 0xfffa) throw new Error(`image top $${OUTTOP.toString(16)} leaves no room for vectors/staging`);
+  let s1 = D.slice(0, IO_LO - ORG);                 // $0801..$cfff
+  let e1 = s1.length; while (e1 > 0 && s1[e1 - 1] === 0) e1--;   // trim hole zero-pad for C1 headroom
+  s1 = s1.slice(0, e1);
+  const s2 = D.slice(IO_HI - ORG);                  // $e000..OUTTOP
+  segs = [packSeg(s1, ORG, IO_LO), packSeg(s2, IO_HI, 0xfffa)];
+}
+const twoSeg = segs.length > 1;
+const bankByte = twoSeg ? 0x35 : 0x36;             // $35 = BASIC+KERNAL out (RAM at $e000); $36 = BASIC out only
 
 // ---- decoder, assembled for $0400 ----
-// zp: rsrc/rdst = src/dst ptrs; len 16-bit; off 16-bit; mptr match-src; tok/tmp scratch
+// zp: rsrc/rdst = src/dst ptrs; len 16-bit; off 16-bit; mptr match-src; tok/tmp scratch.
+// Top-level: init each segment's src/dst, jsr decode_seg (stops on its $00 token), then jmp game.
+let decInit = '';
+segs.forEach((s, i) => {
+  decInit += `        lda #<$${s.Csrc0.toString(16)}\n        sta rsrc\n        lda #>$${s.Csrc0.toString(16)}\n        sta rsrc+1\n`;
+  decInit += `        lda #<$${s.dstStart.toString(16)}\n        sta rdst\n        lda #>$${s.dstStart.toString(16)}\n        sta rdst+1\n`;
+  decInit += `        jsr decode_seg\n`;
+});
 const decSrc = `
 rsrc = $f0
 rdst = $f2
@@ -121,14 +145,8 @@ mptr = $f8
 tok  = $fa
 tmp  = $fb
         * = $${DEC.toString(16)}
-        lda #<$${Csrc0.toString(16)}
-        sta rsrc
-        lda #>$${Csrc0.toString(16)}
-        sta rsrc+1
-        lda #<$${org.toString(16)}
-        sta rdst
-        lda #>$${org.toString(16)}
-        sta rdst+1
+${decInit}        jmp $${GAME.toString(16)}
+decode_seg:
 d_next:
         jsr d_get
         cmp #0
@@ -142,7 +160,7 @@ d_lit:
         bne d_lit
         jmp d_next
 d_end:
-        jmp $${GAME.toString(16)}
+        rts
 d_match:
         sta tok
         and #$3f
@@ -233,16 +251,20 @@ d_put:
 d_p1:
         rts
 `;
-const decR = assemble(decSrc);
-const DECB = decR.bytes;
+const DECB = assemble(decSrc).bytes;
 const DECLEN = DECB.length;
-if (DEC + DECLEN > 0x0800) throw new Error(`decoder ($${DEC.toString(16)}..$${(DEC+DECLEN-1).toString(16)}) overruns $0800`);
+if (DEC + DECLEN > 0x0800) throw new Error(`decoder overruns $0800`);
 
-// ---- relocator + BASIC stub, assembled at $0801 (two JS passes to place data) ----
-// P_dec/P_c are the load addresses (== file positions) of the decoder bytes and
-// compressed stream, which follow the loader in the file. Loader size is address-
-// independent, so assemble once with placeholders to size it, then for real.
-function buildLoader(P_dec, P_c) {
+// ---- relocator + BASIC stub at $0801 (two JS passes to place the trailing data) ----
+// Trailing file bytes: [decoder][C1][C2...]. P_dec/P_c* are their load addresses.
+function copyBlock(P, dst, len) {
+  return `        lda #<$${P.toString(16)}\n        sta rsrc\n        lda #>$${P.toString(16)}\n        sta rsrc+1\n` +
+         `        lda #<$${dst.toString(16)}\n        sta rdst\n        lda #>$${dst.toString(16)}\n        sta rdst+1\n` +
+         `        lda #<$${len.toString(16)}\n        sta cnt\n        lda #>$${len.toString(16)}\n        sta cnt+1\n        jsr mcpy\n`;
+}
+function buildLoader(P_dec, P_cs) {
+  let copies = copyBlock(P_dec, DEC, DECLEN);
+  segs.forEach((s, i) => { copies += copyBlock(P_cs[i], s.Csrc0, s.C.length); });
   return `
 rsrc = $f0
 rdst = $f2
@@ -250,35 +272,9 @@ cnt  = $f4
         * = $0801
         !byte $0c,$08, $0a,$00, $9e, $32,$30,$36,$31, $00, $00,$00   ; SYS 2061
         sei
-        lda #$36                ; BASIC out so reads of $a000-$bfff hit RAM (staged C)
+        lda #$${bankByte.toString(16)}   ; bank config for decode (RAM under BASIC${twoSeg ? '+KERNAL' : ''})
         sta $01
-        lda #<$${P_dec.toString(16)}   ; copy decoder -> $0400
-        sta rsrc
-        lda #>$${P_dec.toString(16)}
-        sta rsrc+1
-        lda #<$${DEC.toString(16)}
-        sta rdst
-        lda #>$${DEC.toString(16)}
-        sta rdst+1
-        lda #<$${DECLEN.toString(16)}
-        sta cnt
-        lda #>$${DECLEN.toString(16)}
-        sta cnt+1
-        jsr mcpy
-        lda #<$${P_c.toString(16)}     ; copy compressed C -> Csrc0
-        sta rsrc
-        lda #>$${P_c.toString(16)}
-        sta rsrc+1
-        lda #<$${Csrc0.toString(16)}
-        sta rdst
-        lda #>$${Csrc0.toString(16)}
-        sta rdst+1
-        lda #<$${C.length.toString(16)}
-        sta cnt
-        lda #>$${C.length.toString(16)}
-        sta cnt+1
-        jsr mcpy
-        jmp $${DEC.toString(16)}
+${copies}        jmp $${DEC.toString(16)}
 mcpy:                           ; copy cnt bytes (rsrc)->(rdst), ascending, non-overlapping
         lda cnt
         ora cnt+1
@@ -306,33 +302,35 @@ mcpy_done:
         rts
 `;
 }
-let loaderBytes = assemble(buildLoader(0x1000, 0x2000)).bytes;   // size probe
-const P_dec = 0x0801 + loaderBytes.length;
-const P_c = P_dec + DECLEN;
-loaderBytes = assemble(buildLoader(P_dec, P_c)).bytes;           // real
-if (0x0801 + loaderBytes.length !== P_dec) throw new Error('loader size shifted between passes');
+let loaderBytes = assemble(buildLoader(0x1000, segs.map(() => 0x2000))).bytes;   // size probe
+const P_dec = ORG + loaderBytes.length;
+const P_cs = []; let p = P_dec + DECLEN;
+for (const s of segs) { P_cs.push(p); p += s.C.length; }
+loaderBytes = assemble(buildLoader(P_dec, P_cs)).bytes;                          // real
+if (ORG + loaderBytes.length !== P_dec) throw new Error('loader size shifted between passes');
 
-// ---- assemble the file image: [loader][decoder][C], load address $0801 ----
-const payload = new Uint8Array(loaderBytes.length + DECLEN + C.length);
-payload.set(loaderBytes, 0);
-payload.set(DECB, loaderBytes.length);
-payload.set(C, loaderBytes.length + DECLEN);
+// ---- assemble the file image: [loader][decoder][C1][C2...] at $0801 ----
+const chunks = [loaderBytes, DECB, ...segs.map(s => s.C)];
+const payload = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+{ let o = 0; for (const c of chunks) { payload.set(c, o); o += c.length; } }
 const prg = new Uint8Array(2 + payload.length);
-prg[0] = 0x01; prg[1] = 0x08;
-prg.set(payload, 2);
+prg[0] = ORG & 0xff; prg[1] = ORG >> 8; prg.set(payload, 2);
 
-// sanity: the loaded file must not reach up into the staged-C destination
-const fileTop = 0x0801 + payload.length - 1;
-if (fileTop >= Csrc0) throw new Error(`loaded file top $${fileTop.toString(16)} overlaps staged C dest $${Csrc0.toString(16)} — relocation would self-corrupt`);
+// sanity: the loaded file must not reach the lowest staged-C destination
+const fileTop = ORG + payload.length - 1;
+const lowestCsrc0 = Math.min(...segs.map(s => s.Csrc0));
+if (fileTop >= lowestCsrc0) throw new Error(`loaded file top $${fileTop.toString(16)} overlaps staged C dest $${lowestCsrc0.toString(16)}`);
 
 writeFileSync(outPath, Buffer.from(prg));
-const name = (outPath.split('/').pop().replace(/\.prg$/i, '').toUpperCase() + '      ').slice(0, 6).trim();
-const d64 = globalThis.D64.createEmpty(name || 'GAME', '01');
-d64.writeFile(name || 'GAME', prg, globalThis.D64.FILE_TYPE_PRG);
+const name = (outPath.split('/').pop().replace(/\.prg$/i, '').toUpperCase() + '      ').slice(0, 6).trim() || 'GAME';
+const d64 = globalThis.D64.createEmpty(name, '01');
+d64.writeFile(name, prg, globalThis.D64.FILE_TYPE_PRG);
 writeFileSync(outPath.replace(/\.prg$/i, '.d64'), Buffer.from(d64.getData()));
 
 console.log(`selfext ${inPath}:`);
-console.log(`  image   $${org.toString(16)}..$${OUTTOP.toString(16)}  (${U} bytes)`);
-console.log(`  packed  ${C.length} bytes (${(U / C.length).toFixed(2)}x), staged $${Csrc0.toString(16)}..$${Ctop.toString(16)} (gap ${gap})`);
-console.log(`  decoder $${DEC.toString(16)}..$${(DEC + DECLEN - 1).toString(16)} (${DECLEN} B)`);
-console.log(`  -> ${outPath}  (${prg.length} bytes total, ${(prg.length / file.length * 100).toFixed(1)}% of the ${file.length}-byte original)`);
+console.log(`  image   $${org.toString(16)}..$${OUTTOP.toString(16)}  (${D.length} bytes)${twoSeg ? '  [spans I/O hole -> 2 segments]' : ''}`);
+segs.forEach((s, i) => {
+  console.log(`  seg${i + 1}   $${s.dstStart.toString(16)}..$${(s.dstStart + s.len - 1).toString(16)} (${s.len}B) -> packed ${s.C.length}B (${(s.len / s.C.length).toFixed(2)}x), staged $${s.Csrc0.toString(16)}..$${s.Ctop.toString(16)} gap ${s.gap}`);
+});
+console.log(`  decoder $${DEC.toString(16)}..$${(DEC + DECLEN - 1).toString(16)} (${DECLEN}B), bank $${bankByte.toString(16)}`);
+console.log(`  -> ${outPath}  (${prg.length} bytes, ${(prg.length / file.length * 100).toFixed(1)}% of the ${file.length}-byte original)`);
