@@ -42,6 +42,14 @@ const usesPlot = ins.some(op => op.opcode === 0x4d || op.opcode === 0x4e || op.o
 // GKGM free-runs at ~50-65 ops/frame; native would run ~13x faster unthrottled, so we
 // pace the compiled bytecode to this budget. Tunable now, per-game / GMC64+ later.
 const OPS_PER_FRAME = 50;
+// Execution model. DEFAULT = free-run native: the bytecode runs as fast as the 6502 allows;
+// only the 60Hz housekeeping (sprite move, sound, music, pause, collision latch) is frame-locked
+// to the raster. THROTTLE (6th CLI arg, ~ops/frame) re-imposes a GKGM-style op cap for testing
+// games whose timing relies on interpreter speed (e.g. CHOPER's gas). 0 = free-run.
+const THROTTLE = process.argv[6] ? parseInt(process.argv[6], 10) : 0;
+const OPTICK_EVERY = 8;   // checkpoint at least every N ops (+ at every loop head) so the frame
+                          // boundary is always caught and loops stay live
+const THROTTLE_REFILL = THROTTLE ? Math.max(1, Math.round(THROTTLE / OPTICK_EVERY)) : 0;
 
 // ---- bundle media ----
 let scene = null;
@@ -525,12 +533,16 @@ ins.forEach((op, i) => { if (op.opcode === 0x01 && labelIndex[op.arg2] !== undef
 
 let pendingSkip = null;   // skip-next (0x62/63/64): label to emit AFTER the next op
 let mk = 0;               // split-point markers: safe instruction boundaries for the big-game code splitter
+let sinceOptick = OPTICK_EVERY;   // force a checkpoint on the first op
 for (const op of ins) {
   if (op.opcode === 0x1d) { if (op.label) c(`LBL_${op.label}:`); continue; }  // data value: label only, no code
   if (op.label) { c(`LBL_${op.label}:`); }
-  c(`__M${mk++}:`);    // split-safe boundary (start of an op, before its optick checkpoint) — both modes
-  c(`  jsr optick`);   // op-budget checkpoint: ~OPS_PER_FRAME bytecode ops per frame,
-                       // and drives the 60Hz housekeeping (sprites/sound) at each frame sync
+  c(`__M${mk++}:`);    // split-safe boundary (start of an op) — both modes
+  // Checkpoint (raster frame-poll in free-run, or op throttle) at every loop head and at least
+  // every OPTICK_EVERY ops — enough to always catch the frame boundary and keep loops ticking,
+  // without a `jsr optick` on every single op (that was ~4KB of calls).
+  if ((op.label && loopHeads.has(op.label)) || sinceOptick >= OPTICK_EVERY) { c(`  jsr optick`); sinceOptick = 0; }
+  sinceOptick++;
   // skip-next: emit the test (branch OVER the next op when the condition holds)
   if (op.opcode === 0x62 || op.opcode === 0x63 || op.opcode === 0x64) {
     const n = ++uid, sk = `SKIP_${n}`;
@@ -561,7 +573,7 @@ const pauseSubs = pauseStubs.map((id, k) => {
         sta pcl
         lda #>${frames}
         sta pch
-pl_${id}: jsr frame
+pl_${id}: jsr waitframe
         lda pcl
         bne pd_${id}
         lda pch
@@ -1141,8 +1153,8 @@ ${roomy ? '' : `        sta sLoad,x
         sta bgFlags
 ${roomy ? '' : `        sta bankEor             ; start on bank 1 (scene 1)
 `}        sta activeScene
-        lda #OPS_PER_FRAME
-        sta opbudget            ; prime the op throttle
+        lda #${THROTTLE ? THROTTLE_REFILL : 0}
+        sta opbudget            ; prime the checkpoint counter (budget in throttle; frame-flag in free-run)
         lda #0
         sta scoreLo
         sta scoreHi
@@ -1167,22 +1179,41 @@ ${roomy ? `        lda #0                  ; roomy: decompress + show scene 0 at
 ${codeBody}
 
 ; ===================== runtime =====================
-; optick: called before each bytecode op. Runs OPS_PER_FRAME ops, then syncs to the
-; next frame (raster wait + sprite/sound housekeeping) and refills the budget. This
-; decouples 60Hz housekeeping from the bytecode's loop structure and paces the logic.
+${THROTTLE ? `; optick (THROTTLE=${THROTTLE}): op cap for testing GKGM-timed games. Each checkpoint
+; decrements the budget; when spent, block for the next frame and refill (~${THROTTLE} ops/frame).
 optick:
         dec opbudget
         bne otr
-        jsr frame
-        lda #OPS_PER_FRAME
+        jsr waitframe
+        lda #${THROTTLE_REFILL}
         sta opbudget
-otr:    rts
+otr:    rts` : `; optick (free-run, DEFAULT): non-blocking frame poll. The bytecode runs at full native
+; speed; once per real frame (raster crossing line 250) we do the 60Hz housekeeping, then return
+; immediately. The opbudget byte is reused here as a 'ticked-this-frame' flag (bit7).
+optick:
+        lda $d012
+        cmp #250
+        bcc ot_lo
+        bit opbudget
+        bmi ot_ret
+        lda #$80
+        sta opbudget
+        jmp frame_work          ; do housekeeping; its rts returns to optick's caller
+ot_lo:  lda #0
+        sta opbudget
+ot_ret: rts`}
 
-; frame: wait for raster, then move+animate+draw every assigned sprite
-frame:
+; waitframe: BLOCK until the frame boundary (raster line 250), then do housekeeping. Used by
+; pause (real-time seconds) and, in throttle mode, by the op-cap checkpoint.
+waitframe:
 fw:     lda $d012
         cmp #250
         bne fw
+        lda #$80
+        sta opbudget            ; mark 'ticked' so a following free-run poll won't double-tick
+; frame_work: the 60Hz housekeeping — collision latch, sprite move/animate/draw, SID, music.
+; In free-run this runs once per real frame; it does NOT wait, so the bytecode keeps running.
+frame_work:
         lda $d01e               ; latch sprite-sprite collisions once/frame (reading clears)
         sta collFlags
         lda $d01f               ; latch sprite-background collisions likewise

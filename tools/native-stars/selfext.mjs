@@ -131,8 +131,11 @@ if (OUTTOP < IO_LO) {
   s1 = s1.slice(0, e1);
   const s2 = D.slice(IO_HI - ORG);                  // $e000..OUTTOP
   const C1 = lzEncode(s1), C2 = lzEncode(s2);
-  const fileFloor = ORG + LOADER_MAX + C1.length + C2.length;   // file top upper bound
-  segs = [packSeg(s1, C1, ORG, Math.max(ORG, fileFloor), IO_LO),
+  // The relocator copies the streams UP in reverse file order (C2 before C1), so C1's staging
+  // only has to clear its OWN file position (C2's file bytes are already saved). seg1 floor =
+  // end of C1's file chunk; seg2 stages at $e000 (its file chunk is far below).
+  const seg1Floor = ORG + LOADER_MAX + C1.length;
+  segs = [packSeg(s1, C1, ORG, Math.max(ORG, seg1Floor), IO_LO),
           packSeg(s2, C2, IO_HI, IO_HI, 0xfffa)];   // seg2 stays >= $e000 (never into I/O)
 }
 const twoSeg = segs.length > 1;
@@ -275,7 +278,11 @@ function copyBlock(P, dst, len) {
 }
 function buildLoader(P_dec, P_cs) {
   let copies = copyBlock(P_dec, DEC, DECLEN);
-  segs.forEach((s, i) => { copies += copyBlock(P_cs[i], s.Csrc0, s.C.length); });
+  // Copy the compressed streams UP in REVERSE file order. A later stream's high staging area can
+  // overlap an earlier stream's file position; copying the later one first saves it before the
+  // earlier copy overwrites those file bytes. (Each stream's staging clears its own file chunk,
+  // guaranteed by its floor.)
+  for (let i = segs.length - 1; i >= 0; i--) copies += copyBlock(P_cs[i], segs[i].Csrc0, segs[i].C.length);
   return `
 rsrc = $f0
 rdst = $f2
@@ -327,10 +334,12 @@ const payload = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
 const prg = new Uint8Array(2 + payload.length);
 prg[0] = ORG & 0xff; prg[1] = ORG >> 8; prg.set(payload, 2);
 
-// sanity: the loaded file must not reach the lowest staged-C destination
-const fileTop = ORG + payload.length - 1;
-const lowestCsrc0 = Math.min(...segs.map(s => s.Csrc0));
-if (fileTop >= lowestCsrc0) throw new Error(`loaded file top $${fileTop.toString(16)} overlaps staged C dest $${lowestCsrc0.toString(16)}`);
+// sanity: each stream's high staging must clear its OWN file chunk (so the copy is disjoint);
+// cross-stream overlap is handled by the reverse-order copy in buildLoader.
+segs.forEach((s, i) => {
+  const fileEnd = P_cs[i] + s.C.length - 1;
+  if (s.Csrc0 <= fileEnd) throw new Error(`seg${i + 1} staging $${s.Csrc0.toString(16)} overlaps its own file chunk (ends $${fileEnd.toString(16)}) — segment too large to self-extract`);
+});
 
 writeFileSync(outPath, Buffer.from(prg));
 const name = (outPath.split('/').pop().replace(/\.prg$/i, '').toUpperCase() + '      ').slice(0, 6).trim() || 'GAME';
