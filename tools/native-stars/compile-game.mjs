@@ -1041,66 +1041,67 @@ pc_s2:  lda #$a0
 pc_ret: rts`;
 
 const execStream = `${zpBlock}
-; --- slot state arrays (8 slots) in RAM at $c000 ---
-; NOTE: hot state was tried in zero page (bbd46d7) for a code-size win, but it collided with the
-; GKGM VARIABLE region: variables are hardcoded to ZP at $40+(n-1) (see V(), ~line 245), so vars
-; 1..26 occupy $40-$59 -- exactly on top of sPosXlo/Xhi/Ylo/Yhi ($3a-$59) in the ZP layout. Every
-; game variable write then stomped a live sprite position, giving a false collision (ARCHER's
-; targets flicker/vanish). Reverted to $c000 (== known-good v1). To relocate state into ZP safely,
-; the variable block ($40-$59) must move too (or state must dodge it).
-sBase    = $c000
-sNum     = $c008
-sFrame   = $c010
-sAnimTmr = $c018
-sAnimSpd = $c020
-sSpeed   = $c028
-sDir     = $c030
-sPosXlo  = $c038
-sPosXhi  = $c040
-sPosYlo  = $c048
-sPosYhi  = $c050
-; --- cold state (score/sound/music/print/multi-quad) in RAM at $c060 ---
-; ALL runtime state currently lives at $c000 (hot $c000-$c058, cold $c060-$c0e2) == the
-; known-good v1 layout. See MEMORY-MAP.md for the full allocation map and the planned ZP
-; relocation (hot -> $60-$b7, cold -> reclaimed $0400 region) that dodges the variable block. ---
-scoreLo  = $c060
-scoreHi  = $c061
-vAct     = $c064
-vBase    = $c068
-vNum     = $c06c
-vFrm     = $c070
-vTmr     = $c074
-vRep     = $c078
-vFreqLo  = $c07c
-vFreqHi  = $c080
-vSwLo    = $c084
-vSwHi    = $c088
-mAct     = $c08c
-mBase    = $c090
-mNum     = $c094
-mPtr     = $c098
-mTmr     = $c09c
-mCtl     = $c0a0
-mAD      = $c0a4
-mSR      = $c0a8
-mPulLo   = $c0ac
-mPulHi   = $c0b0
-scorePtrLo = $c0b4
-scorePtrHi = $c0b5
-scoreColByte = $c0b6
-sParent  = $c0b8        ; multi-quad: parent slot of a sub-quad ($ff = independent)
-sQXoff   = $c0c0        ; sub-quad gmX offset from parent
-sQYoff   = $c0c8        ; sub-quad gmY offset from parent
-sLoad    = $c0d0        ; master frame index currently copied into this slot ($ff=none)
-activeScene = $c0d8     ; which scene is displayed
-printRow = $c0d9        ; print cursor row (0-24)
-printCol = $c0da        ; print cursor column (0-19)
-printColByte = $c0db    ; print color: fg*4 + bg
-printTarget = $c0dc     ; 0=scene1 bitmap, 1=scene2, 2=both
-gcol     = $c0de        ; putglyph color-byte parameter
-strlen   = $c0e0        ; print_string length / index / value scratch
-stridx   = $c0e1
-pvtmp    = $c0e2
+; --- HOT slot state arrays (8 slots) in ZERO PAGE $60-$b7 (see MEMORY-MAP.md) ---
+; zp,x indexing is 2 bytes / 4 cycles vs abs,x; these are touched every frame x8 slots.
+; Placed at $60-$b7 to DODGE the GKGM variable block ($40-$59, V()=$40+n-1) -- putting them
+; on $3a-$59 (bbd46d7) let every variable write stomp a sprite position (ARCHER flicker). ZP is
+; DIRTY at boot, so init MUST clear $60-$b7 (islot only sets some arrays). Free: $02-$3f, $b8-$df.
+sBase    = $60
+sNum     = $68
+sFrame   = $70
+sAnimTmr = $78
+sAnimSpd = $80
+sSpeed   = $88
+sDir     = $90
+sPosXlo  = $98
+sPosXhi  = $a0
+sPosYlo  = $a8
+sPosYhi  = $b0
+; --- COLD state (score/sound/music/print/multi-quad) in RECLAIMED low RAM $0500-$0582 ---
+; $0200-$07ff is dead after boot (VIC bank is $4000; the self-extract decoder at $0400 is
+; transient), so cold state lives here instead of $c000 -- which CLOSES the $c000 hole in the
+; roomy scene RAM (see REGIONS). Below $0801 => NOT in the loaded image => starts as garbage RAM,
+; so init MUST clear $0500-$06ff. ram[] follows at $0600. See MEMORY-MAP.md.
+scoreLo  = $0500
+scoreHi  = $0501
+vAct     = $0504
+vBase    = $0508
+vNum     = $050c
+vFrm     = $0510
+vTmr     = $0514
+vRep     = $0518
+vFreqLo  = $051c
+vFreqHi  = $0520
+vSwLo    = $0524
+vSwHi    = $0528
+mAct     = $052c
+mBase    = $0530
+mNum     = $0534
+mPtr     = $0538
+mTmr     = $053c
+mCtl     = $0540
+mAD      = $0544
+mSR      = $0548
+mPulLo   = $054c
+mPulHi   = $0550
+scorePtrLo = $0554
+scorePtrHi = $0555
+scoreColByte = $0556
+sParent  = $0558        ; multi-quad: parent slot of a sub-quad ($ff = independent)
+sQXoff   = $0560        ; sub-quad gmX offset from parent
+sQYoff   = $0568        ; sub-quad gmY offset from parent
+sLoad    = $0570        ; master frame index currently copied into this slot ($ff=none)
+activeScene = $0578     ; which scene is displayed
+printRow = $0579        ; print cursor row (0-24)
+printCol = $057a        ; print cursor column (0-19)
+printColByte = $057b    ; print color: fg*4 + bg
+printTarget = $057c     ; 0=scene1 bitmap, 1=scene2, 2=both
+gcol     = $057e        ; putglyph color-byte parameter
+strlen   = $0580        ; print_string length / index / value scratch
+stridx   = $0581
+pvtmp    = $0582
+RAM      = $0600        ; GKGM ram[] (256 B, opcodes 0x5d/0x5e/0x5f) in reclaimed low RAM;
+                        ; uninitialized -> cleared by init. Was an in-image !fill 256 in the tables.
 
         * = $0801
         !byte $0c,$08, $0a,$00, $9e, $32,$30,$36,$31, $00, $00,$00
@@ -1129,6 +1130,20 @@ ${roomy ? `        lda #<roomy_int         ; roomy banks out KERNAL too, so firs
         sta $d016
         lda #$08
         sta $d018               ; screen $4000, bitmap $6000
+        ; clear relocated state: ZP is dirty at boot, and the cold block ($0500-$05ff) + ram[]
+        ; ($0600-$06ff) sit below $0801 (not in the loaded image) so also start as garbage.
+        ; The old $c000 block was zero from the image gap; islot only sets SOME arrays, so
+        ; sNum/sFrame/sPosXhi/sPosYhi (and all cold state) must be zeroed here.
+        lda #$00
+        ldx #88
+zhot:   sta $5f,x               ; hot ZP $60..$b7 (=$5f+1 .. $5f+88)
+        dex
+        bne zhot
+        ldx #$00
+zcold:  sta $0500,x             ; cold state $0500-$05ff + ram[] $0600-$06ff
+        sta $0600,x
+        inx
+        bne zcold
         ; (scene colors/matrix are set by the "scene is" opcode -> scene_show)
         ; init slots: base=$ff (unassigned)
         ldx #$00
@@ -1800,7 +1815,6 @@ const tableDefs = [
   ['pcolHi', `!byte ${pcolHi.join(',')}`],
   ['prnStr', `!byte ${prnStr.join(',')}`],
   ['DATA',   `!byte ${DATA.join(',')}`],
-  ['RAM',    '!fill 256'],
   ['jmptabLo', `!byte ${Array.from({length: 256}, (_, n) => labelIndex[n] !== undefined ? `<LBL_${n}` : `<gmstop`).join(',')}`],
   ['jmptabHi', `!byte ${Array.from({length: 256}, (_, n) => labelIndex[n] !== undefined ? `>LBL_${n}` : `>gmstop`).join(',')}`],
   ['sndFL', `!byte ${sndFL.join(',')}`], ['sndFH', `!byte ${sndFH.join(',')}`],
@@ -1893,7 +1907,6 @@ pcolLo: !byte ${pcolLo.join(',')}
 pcolHi: !byte ${pcolHi.join(',')}
 prnStr: !byte ${prnStr.join(',')}
 DATA:   !byte ${DATA.join(',')}
-RAM:    !fill 256
 jmptabLo: !byte ${Array.from({length: 256}, (_, n) => labelIndex[n] !== undefined ? `<LBL_${n}` : `<gmstop`).join(',')}
 jmptabHi: !byte ${Array.from({length: 256}, (_, n) => labelIndex[n] !== undefined ? `>LBL_${n}` : `>gmstop`).join(',')}
 sndFL:  !byte ${sndFL.join(',')}
@@ -1934,14 +1947,14 @@ sceneBg:  !byte ${rmScenes.map(sc => sc.bgColor).join(',')}`;
 sprdata:
 ${byteRows(frameBytes)}`;
   // Compressed scenes live in VIC-invisible RAM; display_scene decompresses one into $6000 at
-  // runtime. They fill three usable regions, skipping two reserved holes:
-  //   A [start .. $c000)   below the runtime state block
-  //   -- $c000-$c0ff RESERVED: cold runtime state RAM (score/sound/music/... lives here) --
-  //   B [$c100 .. $cf00)   between the state block and the I/O hole
+  // runtime. They fill two usable regions, skipping the I/O hole. (The old $c000-$c0ff state
+  // reservation is GONE -- state moved to ZP + $0500 -- so region A now runs contiguously to
+  // $d000 instead of stopping at $c000 and resuming at $c100.)
+  //   A [start .. $d000)   all RAM below the I/O hole
   //   -- $d000-$dfff RESERVED: I/O --
   //   C [$e000 .. $fc00)   above the hole ($fc00 leaves room for the self-extractor's C2 staging
-  //      + the $fffa vectors). Any blob in region B/C makes the image cross a hole -> self-extract.
-  const REGIONS = [[null, 0xc000], [0xc100, 0xcf00], [0xe000, 0xfc00]];
+  //      + the $fffa vectors). Any blob in region A past a hole / region C -> self-extract.
+  const REGIONS = [[null, 0xd000], [0xe000, 0xfc00]];
   // greedily place blobs; return {jumps: {blobIdx -> newOrigin}, end}
   const placeScenes = start => {
     let pc = start, reg = 0; const jumps = {};

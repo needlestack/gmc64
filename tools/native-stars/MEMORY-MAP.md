@@ -42,44 +42,44 @@ executes during play — **every write to RAM/ZP is ours**. (compile-game.mjs en
 ZP is the scarce, valuable resource: `zp,x` is 2 bytes/4 cycles vs `abs,x` 3 bytes/4–5.
 Everything indexed per-frame wants to live here.
 
-### Current allocation
+### Current allocation (IMPLEMENTED)
 
 | Range | Size | Owner | Defined at |
 |---|---|---|---|
 | `$00–$01` | 2 | CPU port | hardware |
 | `$02–$3f` | 62 | **FREE** | — |
 | `$40–$59` | 26 | **GKGM variables a–z** (`V(n)=$40+n-1`) | compile-game.mjs:245 |
-| `$5a–$df` | 134 | **FREE** | — |
+| `$60–$b7` | 88 | **HOT sprite state** (`sBase…sPosYhi`, ×8) — dodges vars | compile-game.mjs state block |
+| `$b8–$df` | 40 | **FREE** | — |
 | `$e0–$ff` | 32 | runtime scratch & pointers | compile-game.mjs:673–708 (roomy) / 712–742 (twobank) |
+
+Init **must clear `$60–$b7`** (ZP is dirty at boot; `islot` only sets some arrays).
 
 Scratch (`$e0–$ff`) is densely packed and **mode-specific** (roomy reuses `$e4–$ea` across
 LZ-decode / movement / plot since those never run concurrently; twobank spreads plot/movement
 across `$e4–$ef`). Key fixed ones both modes: `collFlags=$fd bgFlags=$fe bankEor=$ff
 opbudget=$ee ptr=$fb pcl/pch=$f0/$f1 sval/sval1=$f2/$f3 animtog=$f8`.
 
-**Runtime state currently is NOT in ZP** — it lives at `$c000` (see §3). An earlier attempt to
-move it into ZP collided with the variable block; reverted.
-
 ### Free ZP budget
 
-`$02–$3f` (62) + `$5a–$df` (134) = **196 free bytes**. Plenty for the full hot-state block
-(88 B) plus headroom — *if* placed so it dodges `$40–$59`.
+`$02–$3f` (62) + `$b8–$df` (40) = **102 free bytes** remaining after the hot-state block.
 
 ---
 
-## 3. Runtime state block — currently `$c000–$c0e2` (227 B)
+## 3. Runtime state block — split ZP + low RAM (IMPLEMENTED; `$c000` freed)
 
-All defined compile-game.mjs:1051–1103. Two tiers:
+All defined in the compile-game.mjs state block. Two tiers, now in two homes:
 
-**Hot** (touched every frame in `frame_work`, ×8 slots — the ZP candidates):
-`sBase $c000, sNum $c008, sFrame $c010, sAnimTmr $c018, sAnimSpd $c020, sSpeed $c028,
-sDir $c030, sPosXlo $c038, sPosXhi $c040, sPosYlo $c048, sPosYhi $c050` — 11 arrays × 8 = **88 B**.
+**Hot** (touched every frame in `frame_work`, ×8 slots) → **ZP `$60–$b7`** (§2):
+`sBase $60, sNum $68, sFrame $70, sAnimTmr $78, sAnimSpd $80, sSpeed $88, sDir $90,
+sPosXlo $98, sPosXhi $a0, sPosYlo $a8, sPosYhi $b0` — 11 arrays × 8 = **88 B**.
 
 **Cold** (score / sound `v*` / music `m*` / print / multi-quad `sParent/sQXoff/sQYoff/sLoad` /
-`activeScene`): `$c060–$c0e2` — ~**130 B**.
+`activeScene`) → **reclaimed low RAM `$0500–$0582`** (~130 B). Below `$0801` ⇒ not in the loaded
+image ⇒ starts as garbage; init clears `$0500–$06ff`.
 
-This block forces a **hole** in the roomy scene RAM (region A stops at `$c000`, region B
-resumes at `$c100`). Closing it is the biggest fragmentation win available (§6).
+`$c000–$c0ff` is now **free** — which closes the roomy scene hole (§5). Twobank still puts
+`master` at `$c100` (harmless).
 
 ---
 
@@ -129,22 +129,20 @@ resumes at `$c100`). Closing it is the biggest fragmentation win available (§6)
 | `$0801 …` | code seg A |
 | `$4000` | `SCREEN` matrix · `$4400` `SPR` frames (resident) · `$6000` `BITMAP` live scene |
 | `$8000 …` | code seg B (if split) + data tables (`roomyData`) + compressed scenes |
-| **region A** `… → $c000` | compressed scenes |
-| `$c000–$c0ff` | **RESERVED** runtime state (the hole) |
-| **region B** `$c100 → $cf00` | compressed scenes |
+| **region A** `… → $d000` | compressed scenes (contiguous; `$c000` hole CLOSED) |
 | `$d000–$dfff` | **RESERVED** I/O |
 | **region C** `$e000 → $fc00` | compressed scenes |
 | `$fc00–$fff9` | self-extract C2 staging + vectors |
 
-`REGIONS = [[null,0xc000],[0xc100,0xcf00],[0xe000,0xfc00]]` (compile-game.mjs:1945).
+`REGIONS = [[null,0xd000],[0xe000,0xfc00]]` (compile-game.mjs).
 
-### The two movable data tables everyone forgets
+### GKGM `ram[]` and `DATA` tables
 
-- `RAM: !fill 256` — GKGM `ram[]` (opcodes `0x5d/0x5e/0x5f`). Currently rides along in the
-  data-table region (under `$4000`, or `$8600`/`$c100` when split).
-- `DATA: !byte …` — GKGM data tables (opcodes `0x1c/0x0a/0x1d`). Same.
-
-Both are prime candidates to move into reclaimed `$0400–$07ff` (§6).
+- `RAM` — GKGM `ram[]` (opcodes `0x5d/0x5e/0x5f`, 256 B). Now an EQU at **`$0600`** (reclaimed
+  low RAM; init clears it). No longer an in-image `!fill 256` in the data region.
+- `DATA: !byte …` — GKGM data tables (opcodes `0x1c/0x0a/0x1d`). **Stays in the image** (≥ `$0801`):
+  it holds compile-time constants, which can't live below `$0801` (that RAM isn't loaded from the
+  file). Only *uninitialized* blocks (cold state, `ram[]`) can use the reclaimed low RAM.
 
 ---
 
@@ -152,7 +150,8 @@ Both are prime candidates to move into reclaimed `$0400–$07ff` (§6).
 
 Holes that break otherwise-contiguous RAM (worst for roomy scene capacity):
 
-1. **`$c000–$c0ff` state** — *closeable* (move state to ZP + reclaimed low RAM).
+1. ~~**`$c000–$c0ff` state**~~ — **CLOSED** (state moved to ZP `$60–$b7` + low RAM `$0500`).
+   Region A now runs contiguously to `$d000`.
 2. **`$d000–$dfff` I/O** — immovable.
 3. **VIC bank `$4000–$7fff`** — matrix/sprites/bitmap; forces the twobank/roomy code split.
    Movable only by choosing a different VIC bank (see §6, open question).
@@ -160,7 +159,11 @@ Holes that break otherwise-contiguous RAM (worst for roomy scene capacity):
 
 ---
 
-## 6. Target layout (proposal — the four directions you asked for)
+## 6. Canonical layout (IMPLEMENTED — the four directions, all shipped)
+
+> Status: implemented and validated. ARCHER (twobank) is flicker-free across a dense scan
+> (hot state in ZP `$60–$b7`); the roomy cycler self-extracts and cycles all scenes cleanly
+> with the `$c000` hole closed. VIC bank kept at `$4000`.
 
 ### (a) Hot state → ZP, dodging the variable block
 Keep variables at `$40–$59`. Place the 88-byte hot block at **`$60–$b7`** (no overlap with
