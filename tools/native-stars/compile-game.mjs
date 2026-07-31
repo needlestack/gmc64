@@ -49,7 +49,7 @@ const OPS_PER_FRAME = 50;
 const THROTTLE = process.argv[6] ? parseInt(process.argv[6], 10) : 0;
 const OPTICK_EVERY = 8;   // checkpoint at least every N ops (+ at every loop head) so the frame
                           // boundary is always caught and loops stay live
-const THROTTLE_REFILL = THROTTLE ? Math.max(1, Math.round(THROTTLE / OPTICK_EVERY)) : 0;
+const THROTTLE_REFILL = THROTTLE;   // per-op checkpoint in throttle mode: budget counts ops directly
 
 // ---- bundle media ----
 let scene = null;
@@ -538,10 +538,11 @@ for (const op of ins) {
   if (op.opcode === 0x1d) { if (op.label) c(`LBL_${op.label}:`); continue; }  // data value: label only, no code
   if (op.label) { c(`LBL_${op.label}:`); }
   c(`__M${mk++}:`);    // split-safe boundary (start of an op) — both modes
-  // Checkpoint (raster frame-poll in free-run, or op throttle) at every loop head and at least
-  // every OPTICK_EVERY ops — enough to always catch the frame boundary and keep loops ticking,
-  // without a `jsr optick` on every single op (that was ~4KB of calls).
-  if ((op.label && loopHeads.has(op.label)) || sinceOptick >= OPTICK_EVERY) { c(`  jsr optick`); sinceOptick = 0; }
+  // THROTTLE mode checkpoints EVERY op (faithfully reproduces GKGM's exact ~N-ops/frame pacing —
+  // some games' collision/timing depend on it). FREE-RUN checkpoints only at loop heads + every
+  // OPTICK_EVERY ops (a non-blocking raster poll; cheaper, and pacing doesn't matter there).
+  if (THROTTLE) { c(`  jsr optick`); }
+  else if ((op.label && loopHeads.has(op.label)) || sinceOptick >= OPTICK_EVERY) { c(`  jsr optick`); sinceOptick = 0; }
   sinceOptick++;
   // skip-next: emit the test (branch OVER the next op when the condition holds)
   if (op.opcode === 0x62 || op.opcode === 0x63 || op.opcode === 0x64) {
