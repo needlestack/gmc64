@@ -92,10 +92,12 @@ resumes at `$c100`). Closing it is the biggest fragmentation win available (§6)
   (`DEC=$0400`, selfext.mjs:38). Once the game starts (`jmp $080d`) it's dead. VIC bank is
   `$4000`, so the default screen at `$0400` is never used. **Verified: 0 runtime references to
   `$0200–$07ff` in the compiled game.** → fully reclaimable post-boot.
-  - Note: the decode writes across VIC-visible bank 0 (`$0801+`), so the relocator **blanks the
-    display** (`$d011` DEN off) before decoding and the game's init re-enables it — otherwise the
-    decode churn shows as on-screen garbage. Relocating the decoder wouldn't help (the *output*
-    is what's visible). Blanking also disables badline DMA, so decode runs a touch faster.
+  - Note: at boot the VIC is in default text mode (matrix `$0400`, char-gen `$1000`=char ROM), so
+    the **only** RAM it displays is the matrix `$0400–$07e7`. The decoder lives at `$0400`, so its
+    bytes show as garbage in the top ~6 rows during decode; the decode output (`$0801+`) is *not*
+    visible. Two ways to hide it: (a) the relocator **blanks the display** (`$d011` DEN off) before
+    decoding, game init re-enables — current fix, also hides leftover BASIC text and disables
+    badline DMA (faster decode); or (b) move the decoder below `$0400` (e.g. `$0200`). We do (a).
 
 ### Program image `$0801+`
 
