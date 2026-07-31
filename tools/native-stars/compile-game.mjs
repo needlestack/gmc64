@@ -1028,18 +1028,22 @@ pc_s2:  lda #$a0
 pc_ret: rts`;
 
 const execStream = `${zpBlock}
-; --- slot state arrays (8 slots) in RAM ---
-sBase    = $c000
-sNum     = $c008
-sFrame   = $c010
-sAnimTmr = $c018
-sAnimSpd = $c020
-sSpeed   = $c028
-sDir     = $c030
-sPosXlo  = $c038
-sPosXhi  = $c040
-sPosYlo  = $c048
-sPosYhi  = $c050
+; --- slot state arrays (8 slots) ---
+; The hot per-frame arrays live in ZERO PAGE ($02-$59): with BASIC+KERNAL banked
+; out, ZP $02-$8f is free, so the movement/animation/draw loop gets zp,x access
+; (2 bytes, 4 cycles, no page-cross) instead of abs,x. Touched every frame x8 slots.
+sBase    = $02
+sNum     = $0a
+sFrame   = $12
+sAnimTmr = $1a
+sAnimSpd = $22
+sSpeed   = $2a
+sDir     = $32
+sPosXlo  = $3a
+sPosXhi  = $42
+sPosYlo  = $4a
+sPosYhi  = $52
+; --- colder state stays in RAM at $c060+ (sound/music/print/multi-quad) ---
 scoreLo  = $c060
 scoreHi  = $c061
 vAct     = $c064
