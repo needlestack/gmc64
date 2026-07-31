@@ -1059,11 +1059,10 @@ sPosXlo  = $c038
 sPosXhi  = $c040
 sPosYlo  = $c048
 sPosYhi  = $c050
-; --- colder state also in ZERO PAGE ($5a-$dc) — sound/music/print/multi-quad.
-; Cold state stays in RAM at $c060 (NOT zero page). Moving it into ZP adjacent to the hot
-; block (tried in b483d2c) corrupted gameplay — a routine writes into the $5a+ range during
-; play (harmless free RAM when cold lived at $c000, but it clobbered cold state in ZP);
-; reverted pending root-cause. The hot arrays stay in ZP (the bulk of the size win). ---
+; --- cold state (score/sound/music/print/multi-quad) in RAM at $c060 ---
+; ALL runtime state currently lives at $c000 (hot $c000-$c058, cold $c060-$c0e2) == the
+; known-good v1 layout. See MEMORY-MAP.md for the full allocation map and the planned ZP
+; relocation (hot -> $60-$b7, cold -> reclaimed $0400 region) that dodges the variable block. ---
 scoreLo  = $c060
 scoreHi  = $c061
 vAct     = $c064
