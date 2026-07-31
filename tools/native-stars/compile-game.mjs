@@ -1126,6 +1126,17 @@ ${roomy ? `        lda #<roomy_int         ; roomy banks out KERNAL too, so firs
         lda #$08
         sta $d018               ; screen $4000, bitmap $6000
         ; (scene colors/matrix are set by the "scene is" opcode -> scene_show)
+        ; Zero the ZP runtime-state block ($02-$dc). All state lives in ZP now, and ZP is DIRTY
+        ; at boot (BASIC/KERNAL/the self-extract loader leave garbage there) — unlike the old
+        ; $c000 block, which was clean zero-padded image RAM. Without this, uncleared vars
+        ; (sPosXhi/Yhi, sFrame, sNum, sound/music state, activeScene...) start as garbage:
+        ; sprites flicker at random positions, garbage SFX, timers/counters mis-fire.
+        lda #$00
+        ldx #$00
+clrst:  sta $02,x
+        inx
+        cpx #$db                ; $02..$dc inclusive (219 bytes); $e0+ is pointer/scratch, leave it
+        bne clrst
         ; init slots: base=$ff (unassigned)
         ldx #$00
 islot:  lda #$ff
