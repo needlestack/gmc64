@@ -1042,9 +1042,12 @@ pc_ret: rts`;
 
 const execStream = `${zpBlock}
 ; --- slot state arrays (8 slots) in RAM at $c000 ---
-; NOTE: hot state was tried in zero page (bbd46d7) for a code-size win, but it caused an
-; intermittent gameplay corruption (ARCHER's targets flicker/vanish ~every N seconds — a false
-; collision). Reverted to $c000 (matches the known-good v1) pending root-cause of the ZP writer.
+; NOTE: hot state was tried in zero page (bbd46d7) for a code-size win, but it collided with the
+; GKGM VARIABLE region: variables are hardcoded to ZP at $40+(n-1) (see V(), ~line 245), so vars
+; 1..26 occupy $40-$59 -- exactly on top of sPosXlo/Xhi/Ylo/Yhi ($3a-$59) in the ZP layout. Every
+; game variable write then stomped a live sprite position, giving a false collision (ARCHER's
+; targets flicker/vanish). Reverted to $c000 (== known-good v1). To relocate state into ZP safely,
+; the variable block ($40-$59) must move too (or state must dodge it).
 sBase    = $c000
 sNum     = $c008
 sFrame   = $c010
