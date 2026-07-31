@@ -28,12 +28,22 @@ Two build modes share almost everything:
 | `$d000–$dfff` | I/O (VIC/SID/CIA/color) | Present in both modes (`$01` keeps I/O in). A contiguous LOAD **cannot cross this hole** — origin of the self-extractor. |
 | `$fffa/$fffb` | NMI vector | twobank: KERNAL's. roomy: our `roomy_int` (RTI) in RAM under KERNAL. |
 | `$fffc/$fffd` | RESET vector | |
-| `$fffe/$ffff` | IRQ vector | Masked all-game (`sei`, never `cli`; `$d01a=0`). |
+| `$fffe/$ffff` | IRQ vector | roomy: our `irqh` in RAM. twobank: KERNAL `$FF48` → `($0314)` → `irqh`. |
 | VIC bank `$4000–$7fff` | VIC-II | Bank 1 (`$dd00` bits). Matrix, sprite frames, live bitmap must sit here. |
 
-**Interrupt posture (why nothing but our code runs):** init does `sei` once and never `cli`;
-`$d01a=0` disables VIC IRQ; no CIA2 NMI is programmed. So no KERNAL/BASIC/IRQ/NMI code
-executes during play — **every write to RAM/ZP is ours**. (compile-game.mjs entry ~L1106.)
+**Interrupt posture / execution model:** init masks with `sei`, sets up a **raster IRQ at line 250**
+(`irqh`), then `cli`. `irqh` runs `frame_work` (the 60 Hz housekeeping: collision latch, sprite
+move/animate/draw, SID, music) **exactly once per frame, regardless of what the bytecode is doing** —
+this is the frame lock. The bytecode otherwise runs uninterrupted (free-run) or op-paced (throttle).
+- roomy banks KERNAL out (`$35`) → `irqh` is installed at `$fffe`; NMI (`$fffa`) = `roomy_int` (RTI).
+- twobank keeps KERNAL (`$36`) → hook the KERNAL IRQ vector `$0314`; `irqh` exits via `jmp $ea81`.
+- **Reentrancy:** the IRQ preempts the bytecode, so `irqh` saves/restores the ZP scratch pool
+  (`$e0–$ff` → `irq-save`) around `frame_work`; registers are saved by the handler (roomy) or KERNAL
+  `$FF48` (twobank). `frame_work` never touches GKGM variables/score/counters, so game logic is
+  race-free; only sprite/music state can show a one-frame cosmetic glitch on a mid-update preemption.
+- The old poll (`optick` checking `$d012`) was **removed** from free-run: it went blind inside runtime
+  routines (`print_value`, decompress, …), dropping ticks → choppy movement/animation (CHOPER).
+  (compile-game.mjs: `irqh`, `frame_work`, entry init.)
 
 ---
 
@@ -50,8 +60,9 @@ Everything indexed per-frame wants to live here.
 | `$02–$3f` | 62 | **FREE** | — |
 | `$40–$59` | 26 | **GKGM variables a–z** (`V(n)=$40+n-1`) | compile-game.mjs:245 |
 | `$60–$b7` | 88 | **HOT sprite state** (`sBase…sPosYhi`, ×8) — dodges vars | compile-game.mjs state block |
-| `$b8–$df` | 40 | **FREE** | — |
-| `$e0–$ff` | 32 | runtime scratch & pointers | compile-game.mjs:673–708 (roomy) / 712–742 (twobank) |
+| `$b8` | 1 | **frameCtr** — raster-IRQ frame counter (waitframe/pause poll it) | compile-game.mjs |
+| `$b9–$df` | 39 | **FREE** | — |
+| `$e0–$ff` | 32 | runtime scratch & pointers (saved by the IRQ, see `irq-save`) | compile-game.mjs:673–708 (roomy) / 712–742 (twobank) |
 
 Init **must clear `$60–$b7`** (ZP is dirty at boot; `islot` only sets some arrays).
 
@@ -77,6 +88,9 @@ sPosXlo $98, sPosXhi $a0, sPosYlo $a8, sPosYhi $b0` — 11 arrays × 8 = **88 B*
 **Cold** (score / sound `v*` / music `m*` / print / multi-quad `sParent/sQXoff/sQYoff/sLoad` /
 `activeScene`) → **reclaimed low RAM `$0500–$0582`** (~130 B). Below `$0801` ⇒ not in the loaded
 image ⇒ starts as garbage; init clears `$0500–$06ff`.
+
+Also in reclaimed low RAM: **`irq-save` `$0583–$05a2`** (32 B) — the IRQ's save area for the ZP
+scratch pool, and **`ram[]` `$0600`** (below).
 
 `$c000–$c0ff` is now **free** — which closes the roomy scene hole (§5). Twobank still puts
 `master` at `$c100` (harmless).

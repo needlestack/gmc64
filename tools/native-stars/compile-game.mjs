@@ -539,11 +539,11 @@ for (const op of ins) {
   if (op.label) { c(`LBL_${op.label}:`); }
   c(`__M${mk++}:`);    // split-safe boundary (start of an op) — both modes
   // THROTTLE mode checkpoints EVERY op (faithfully reproduces GKGM's exact ~N-ops/frame pacing —
-  // some games' collision/timing depend on it). FREE-RUN checkpoints only at loop heads + every
-  // OPTICK_EVERY ops (a non-blocking raster poll; cheaper, and pacing doesn't matter there).
+  // some games' collision/timing depend on it; optick spends the op budget + frame-syncs).
+  // FREE-RUN emits NO checkpoint: the bytecode runs uninterrupted and frame_work is driven by the
+  // raster IRQ, which ticks every frame no matter what runtime routine the CPU is inside. (The old
+  // free-run poll went blind during runtime routines like print_value -> choppy movement/anim.)
   if (THROTTLE) { c(`  jsr optick`); }
-  else if ((op.label && loopHeads.has(op.label)) || sinceOptick >= OPTICK_EVERY) { c(`  jsr optick`); sinceOptick = 0; }
-  sinceOptick++;
   // skip-next: emit the test (branch OVER the next op when the condition holds)
   if (op.opcode === 0x62 || op.opcode === 0x63 || op.opcode === 0x64) {
     const n = ++uid, sk = `SKIP_${n}`;
@@ -1102,24 +1102,29 @@ stridx   = $0581
 pvtmp    = $0582
 RAM      = $0600        ; GKGM ram[] (256 B, opcodes 0x5d/0x5e/0x5f) in reclaimed low RAM;
                         ; uninitialized -> cleared by init. Was an in-image !fill 256 in the tables.
+frameCtr = $b8          ; bumped by the raster IRQ every frame; waitframe/pause poll it. (free ZP)
+irqsav   = $0583        ; 32-byte save area for the ZP scratch pool ($e0-$ff) across the IRQ,
+                        ; so frame_work (in the IRQ) can't clobber a preempted bytecode op's scratch.
 
         * = $0801
         !byte $0c,$08, $0a,$00, $9e, $32,$30,$36,$31, $00, $00,$00
 entry:
         sei
-${roomy ? `        lda #<roomy_int         ; roomy banks out KERNAL too, so first install our own NMI + IRQ
-        sta $fffa               ; vectors in the RAM under KERNAL (writes hit RAM even while KERNAL
-        sta $fffe               ; ROM is still mapped). NMI = RESTORE key -> our handler (just RTI),
-        lda #>roomy_int         ; so banking KERNAL out below can't crash on a RESTORE press. (IRQ is
-        sta $fffb               ; masked by SEI but we point it safe too. RESET re-maps KERNAL itself
-        sta $ffff               ; before reading $fffc, so it stays safe without our help.)
-        lda #$35                ; bank BASIC + KERNAL out: RAM at $a000-$bfff AND $e000-$ffff, keep
-        sta $01                 ; I/O ($d000). ~30KB of code/data/scene room in a pure-RAM program.` : `        lda #$36                ; bank BASIC ROM out for good: $a000-$bfff becomes plain RAM for the
-        sta $01                 ; CPU (we don't use BASIC). Keeps KERNAL ($e000, for the NMI/reset
-                                ; vectors) + I/O ($d000). Lets the scene-2 bitmap at $a000 be read
-                                ; (plot RMW) instead of hitting ROM.`}
-        lda #$00
-        sta $d01a
+${roomy ? `        lda #<roomy_int         ; roomy banks KERNAL out: install our own NMI (RESTORE -> RTI) and
+        sta $fffa               ; IRQ vectors in the RAM under KERNAL. NMI = roomy_int so a RESTORE
+        lda #>roomy_int         ; press can't crash; IRQ = irqh, our raster frame tick (armed below).
+        sta $fffb
+        lda #<irqh
+        sta $fffe
+        lda #>irqh
+        sta $ffff
+        lda #$35                ; bank BASIC + KERNAL out: RAM at $a000-$bfff AND $e000-$ffff, keep I/O.
+        sta $01` : `        lda #<irqh              ; twobank keeps KERNAL mapped: hook the KERNAL IRQ RAM vector (CINV).
+        sta $0314               ; raster IRQ enters via KERNAL $FF48 (saves A/X/Y) -> ($0314) -> irqh,
+        lda #>irqh              ; which ends 'jmp $ea81' (KERNAL restores regs + RTI).
+        sta $0315
+        lda #$36                ; bank BASIC ROM out; keep KERNAL ($e000, IRQ dispatch) + I/O ($d000).
+        sta $01`}
         lda $dd00
         and #$fc
         ora #$02
@@ -1130,6 +1135,15 @@ ${roomy ? `        lda #<roomy_int         ; roomy banks out KERNAL too, so firs
         sta $d016
         lda #$08
         sta $d018               ; screen $4000, bitmap $6000
+        lda #$7f                ; --- raster IRQ @ line 250: runs frame_work once per frame regardless
+        sta $dc0d               ; of what the free-running bytecode is doing. Kill CIA1 timer IRQ first,
+        lda $dc0d               ; ack it, then arm the VIC raster IRQ. (cli is issued at end of init.)
+        lda #250
+        sta $d012
+        lda #$01
+        sta $d01a
+        lda #$ff
+        sta $d019
         ; clear relocated state: ZP is dirty at boot, and the cold block ($0500-$05ff) + ram[]
         ; ($0600-$06ff) sit below $0801 (not in the loaded image) so also start as garbage.
         ; The old $c000 block was zero from the image gap; islot only sets SOME arrays, so
@@ -1194,44 +1208,64 @@ ${roomy ? '' : `        sta bankEor             ; start on bank 1 (scene 1)
 ${roomy ? `        lda #0                  ; roomy: decompress + show scene 0 at startup, so games that
         sta activeScene         ; set up the scene with 0x28 only (no explicit 0x2e, e.g. ARCHER)
         jsr display_scene       ; still get a background (twobank shows the embedded bitmap for free)` : ''}
+        cli                     ; arm interrupts: the raster IRQ now runs frame_work every frame
 
 ${codeBody}
 
 ; ===================== runtime =====================
-${THROTTLE ? `; optick (THROTTLE=${THROTTLE}): op cap for testing GKGM-timed games. Each checkpoint
-; decrements the budget; when spent, block for the next frame and refill (~${THROTTLE} ops/frame).
+${THROTTLE ? `; optick (THROTTLE=${THROTTLE}): op cap for GKGM-timed games. Spend one op from the budget;
+; when it's gone, wait for the next frame and refill (~${THROTTLE} ops/frame). This only PACES the
+; bytecode — frame_work runs in the raster IRQ, so optick does no housekeeping itself.
 optick:
         dec opbudget
         bne otr
         jsr waitframe
         lda #${THROTTLE_REFILL}
         sta opbudget
-otr:    rts` : `; optick (free-run, DEFAULT): non-blocking frame poll. The bytecode runs at full native
-; speed; once per real frame (raster crossing line 250) we do the 60Hz housekeeping, then return
-; immediately. The opbudget byte is reused here as a 'ticked-this-frame' flag (bit7).
-optick:
-        lda $d012
-        cmp #250
-        bcc ot_lo
-        bit opbudget
-        bmi ot_ret
-        lda #$80
-        sta opbudget
-        jmp frame_work          ; do housekeeping; its rts returns to optick's caller
-ot_lo:  lda #0
-        sta opbudget
-ot_ret: rts`}
+otr:    rts
 
-; waitframe: BLOCK until the frame boundary (raster line 250), then do housekeeping. Used by
-; pause (real-time seconds) and, in throttle mode, by the op-cap checkpoint.
+` : ''}; waitframe: block until the next frame. The raster IRQ (irqh) bumps frameCtr every frame, so
+; we just wait for it to change. Used by pause (real-time seconds) and throttle's op cap. It does
+; NO housekeeping — the IRQ does that, exactly once per frame.
 waitframe:
-fw:     lda $d012
-        cmp #250
-        bne fw
-        lda #$80
-        sta opbudget            ; mark 'ticked' so a following free-run poll won't double-tick
+        lda frameCtr
+wf:     cmp frameCtr
+        beq wf
+        rts
+
+; irqh: raster IRQ at line 250. Runs frame_work once per frame no matter what runtime routine the
+; free-running bytecode is inside (the old poll went blind in print_value etc. -> choppy). It saves
+; the ZP scratch pool ($e0-$ff) around frame_work so a preempted bytecode op's temporaries survive.
+; Registers are saved by ${roomy ? 'this handler (KERNAL is out)' : 'the KERNAL ($FF48) before jmp ($0314)'}.
+irqh:
+${roomy ? `        pha
+        txa
+        pha
+        tya
+        pha` : `        ; A/X/Y already pushed by KERNAL $FF48`}
+        lda #$ff
+        sta $d019               ; ack the VIC raster IRQ
+        ldx #$1f                ; save scratch $e0-$ff -> irqsav (so frame_work can't corrupt a
+irs:    lda $e0,x               ; bytecode op we preempted mid-computation)
+        sta irqsav,x
+        dex
+        bpl irs
+        jsr frame_work
+        ldx #$1f                ; restore the scratch pool
+irr:    lda irqsav,x
+        sta $e0,x
+        dex
+        bpl irr
+        inc frameCtr            ; advance the frame counter waitframe/pause poll
+${roomy ? `        pla
+        tay
+        pla
+        tax
+        pla
+        rti` : `        jmp $ea81               ; KERNAL IRQ exit: pull Y/X/A then RTI`}
+
 ; frame_work: the 60Hz housekeeping — collision latch, sprite move/animate/draw, SID, music.
-; In free-run this runs once per real frame; it does NOT wait, so the bytecode keeps running.
+; Called ONLY from irqh, exactly once per real frame.
 frame_work:
         lda $d01e               ; latch sprite-sprite collisions once/frame (reading clears)
         sta collFlags
@@ -2021,8 +2055,10 @@ function lintMemory(L) {
   const REGIONS = [
     { name: 'gkgm-vars',  lo: 0x40,   hi: 0x59 },   // V(n)=$40+n-1, a..z
     { name: 'hot-state',  lo: 0x60,   hi: 0xb7 },   // sBase..sPosYhi, x8
+    { name: 'frameCtr',   lo: 0xb8,   hi: 0xb8 },   // raster-IRQ frame counter
     { name: 'scratch',    lo: 0xe0,   hi: 0xff },   // runtime pointers/temps
     { name: 'cold-state', lo: 0x0500, hi: 0x0582 }, // score/sound/music/print/multi-quad
+    { name: 'irq-save',   lo: 0x0583, hi: 0x05a2 }, // IRQ scratch-pool save area (32 B)
     { name: 'ram[]',      lo: 0x0600, hi: 0x06ff }, // GKGM ram[]
   ];
   for (let i = 0; i < REGIONS.length; i++) for (let j = i + 1; j < REGIONS.length; j++) {
