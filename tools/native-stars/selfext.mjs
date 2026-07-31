@@ -90,15 +90,15 @@ function simulate(data, C, dstStart, gap) {
   let ok = produced === U; if (ok) for (let j = 0; j < U; j++) if (mem[dstStart + j] !== data[j]) { ok = false; break; }
   return { clob, ok, Csrc0, Ctop };
 }
-// Stage the compressed stream so it ends at OUTTOP+gap. `floor` is the lowest address the
-// staged stream may start at: below the segment's own start lies either the I/O hole (seg2)
-// or the zero-page/stack (seg1), so Csrc0 must stay >= floor. A barely-compressible stream
-// (e.g. already-compressed scene blobs, ratio ~1.0) would otherwise stage below the start.
-function packSeg(data, dstStart, floor, barrier) {
-  const C = lzEncode(data);
+// Stage the compressed stream C so it ends at OUTTOP+gap. `floor` is the lowest address the
+// staged stream may start at (Csrc0 >= floor). Below the segment's own start lies either the
+// I/O hole (seg2) or the zero-page/stack (seg1); and Csrc0 must also stay above the loaded
+// file's top (the compressed bytes live IN the file, and are copied UP to Csrc0 — the copy
+// must not overlap its own source). A barely-compressible stream would otherwise stage low.
+function packSeg(data, C, dstStart, floor, barrier) {
   for (let gap = 1; gap <= 16384; gap++) {
     const r = simulate(data, C, dstStart, gap);
-    if (r.Ctop >= barrier) throw new Error(`segment ($${dstStart.toString(16)}, ${C.length}B packed) can't stage clear of $${barrier.toString(16)}`);
+    if (r.Ctop >= barrier) throw new Error(`segment ($${dstStart.toString(16)}, ${C.length}B packed) can't stage in [$${floor.toString(16)}..$${barrier.toString(16)})`);
     if (r.Csrc0 >= floor && !r.clob && r.ok) return { C, gap, dstStart, len: data.length, Csrc0: r.Csrc0, Ctop: r.Ctop };
   }
   throw new Error('no safe staging gap');
@@ -116,15 +116,24 @@ const OUTTOP = org + D.length - 1;
 
 // split at the I/O hole if the image reaches past it
 let segs;
+// The loaded file is [loader][decoder][C1][C2...] at $0801; its top must sit below the lowest
+// staged-stream start. LOADER_MAX bounds loader+decoder size (both are tiny & address-independent),
+// so we can require each segment's Csrc0 above the file top before choosing gaps.
+const LOADER_MAX = 700;
 if (OUTTOP < IO_LO) {
-  segs = [packSeg(D, ORG, ORG, IO_LO)];
+  const C = lzEncode(D);
+  const fileFloor = ORG + LOADER_MAX + C.length;
+  segs = [packSeg(D, C, ORG, Math.max(ORG, fileFloor), IO_LO)];
 } else {
   if (OUTTOP >= 0xfffa) throw new Error(`image top $${OUTTOP.toString(16)} leaves no room for vectors/staging`);
   let s1 = D.slice(0, IO_LO - ORG);                 // $0801..$cfff
   let e1 = s1.length; while (e1 > 0 && s1[e1 - 1] === 0) e1--;   // trim hole zero-pad for C1 headroom
   s1 = s1.slice(0, e1);
   const s2 = D.slice(IO_HI - ORG);                  // $e000..OUTTOP
-  segs = [packSeg(s1, ORG, ORG, IO_LO), packSeg(s2, IO_HI, IO_HI, 0xfffa)];   // seg2 must stay >= $e000 (not into I/O)
+  const C1 = lzEncode(s1), C2 = lzEncode(s2);
+  const fileFloor = ORG + LOADER_MAX + C1.length + C2.length;   // file top upper bound
+  segs = [packSeg(s1, C1, ORG, Math.max(ORG, fileFloor), IO_LO),
+          packSeg(s2, C2, IO_HI, IO_HI, 0xfffa)];   // seg2 stays >= $e000 (never into I/O)
 }
 const twoSeg = segs.length > 1;
 const bankByte = twoSeg ? 0x35 : 0x36;             // $35 = BASIC+KERNAL out (RAM at $e000); $36 = BASIC out only

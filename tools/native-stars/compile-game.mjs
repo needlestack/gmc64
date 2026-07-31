@@ -1043,45 +1043,48 @@ sPosXlo  = $3a
 sPosXhi  = $42
 sPosYlo  = $4a
 sPosYhi  = $52
-; --- colder state stays in RAM at $c060+ (sound/music/print/multi-quad) ---
-scoreLo  = $c060
-scoreHi  = $c061
-vAct     = $c064
-vBase    = $c068
-vNum     = $c06c
-vFrm     = $c070
-vTmr     = $c074
-vRep     = $c078
-vFreqLo  = $c07c
-vFreqHi  = $c080
-vSwLo    = $c084
-vSwHi    = $c088
-mAct     = $c08c
-mBase    = $c090
-mNum     = $c094
-mPtr     = $c098
-mTmr     = $c09c
-mCtl     = $c0a0
-mAD      = $c0a4
-mSR      = $c0a8
-mPulLo   = $c0ac
-mPulHi   = $c0b0
-scorePtrLo = $c0b4
-scorePtrHi = $c0b5
-scoreColByte = $c0b6
-sParent  = $c0b8        ; multi-quad: parent slot of a sub-quad ($ff = independent)
-sQXoff   = $c0c0        ; sub-quad gmX offset from parent
-sQYoff   = $c0c8        ; sub-quad gmY offset from parent
-sLoad    = $c0d0        ; master frame index currently copied into this slot ($ff=none)
-activeScene = $c0d8     ; 0 or 1 (which scene/bank is displayed)
-printRow = $c0d9        ; print cursor row (0-24)
-printCol = $c0da        ; print cursor column (0-19)
-printColByte = $c0db    ; print color: fg*4 + bg
-printTarget = $c0dc     ; 0=scene1 bitmap, 1=scene2, 2=both
-gcol     = $c0de        ; putglyph color-byte parameter
-strlen   = $c0e0        ; print_string length / index / value scratch
-stridx   = $c0e1
-pvtmp    = $c0e2
+; --- colder state also in ZERO PAGE ($5a-$dc) — sound/music/print/multi-quad.
+; Moving it here (from the old $c060 block) empties the whole $c000 page, so the
+; scene layout no longer has to reserve/skip it. ZP map: hot state $02-$59,
+; cold state $5a-$dc, our pointer/scratch $e0-$ff. ($00/$01 = CPU port.) ---
+scoreLo  = $5a
+scoreHi  = $5b
+vAct     = $5e
+vBase    = $62
+vNum     = $66
+vFrm     = $6a
+vTmr     = $6e
+vRep     = $72
+vFreqLo  = $76
+vFreqHi  = $7a
+vSwLo    = $7e
+vSwHi    = $82
+mAct     = $86
+mBase    = $8a
+mNum     = $8e
+mPtr     = $92
+mTmr     = $96
+mCtl     = $9a
+mAD      = $9e
+mSR      = $a2
+mPulLo   = $a6
+mPulHi   = $aa
+scorePtrLo = $ae
+scorePtrHi = $af
+scoreColByte = $b0
+sParent  = $b2          ; multi-quad: parent slot of a sub-quad ($ff = independent)
+sQXoff   = $ba          ; sub-quad gmX offset from parent
+sQYoff   = $c2          ; sub-quad gmY offset from parent
+sLoad    = $ca          ; master frame index currently copied into this slot ($ff=none)
+activeScene = $d2       ; which scene is displayed
+printRow = $d3          ; print cursor row (0-24)
+printCol = $d4          ; print cursor column (0-19)
+printColByte = $d5      ; print color: fg*4 + bg
+printTarget = $d6       ; 0=scene1 bitmap, 1=scene2, 2=both
+gcol     = $d8          ; putglyph color-byte parameter
+strlen   = $da          ; print_string length / index / value scratch
+stridx   = $db
+pvtmp    = $dc
 
         * = $0801
         !byte $0c,$08, $0a,$00, $9e, $32,$30,$36,$31, $00, $00,$00
@@ -1896,15 +1899,12 @@ sceneBg:  !byte ${rmScenes.map(sc => sc.bgColor).join(',')}`;
 sprdata:
 ${byteRows(frameBytes)}`;
   // Compressed scenes live in VIC-invisible RAM; display_scene decompresses one into $6000 at
-  // runtime. They are placed across three usable regions, skipping two reserved holes:
-  //   A [start .. $c000)   below the runtime state block
-  //   -- $c000-$c0ff RESERVED: sprite/runtime state RAM (sBase..) is written here at runtime;
-  //      a scene blob overlapping it would be clobbered -> lzdec reads garbage -> hard crash --
-  //   B [$c100 .. $cf00)   between the state block and the I/O hole
+  // runtime. They fill two usable regions, skipping the one reserved hole:
+  //   A [start .. $cf00)   below the I/O hole (runtime state now lives in ZP, so nothing to skip)
   //   -- $d000-$dfff RESERVED: I/O --
-  //   C [$e000 .. $fc00)   above the hole ($fc00 leaves room for the self-extractor's C2 staging
-  //      + the $fffa vectors). Any blob in B or C makes the image cross a hole -> self-extract only.
-  const REGIONS = [[null, 0xc000], [0xc100, 0xcf00], [0xe000, 0xfc00]];
+  //   B [$e000 .. $fc00)   above the hole ($fc00 leaves room for the self-extractor's C2 staging
+  //      + the $fffa vectors). Any blob in region B makes the image cross the hole -> self-extract.
+  const REGIONS = [[null, 0xcf00], [0xe000, 0xfc00]];
   // greedily place blobs; return {jumps: {blobIdx -> newOrigin}, end}
   const placeScenes = start => {
     let pc = start, reg = 0; const jumps = {};
