@@ -1056,47 +1056,48 @@ sPosXhi  = $42
 sPosYlo  = $4a
 sPosYhi  = $52
 ; --- colder state also in ZERO PAGE ($5a-$dc) — sound/music/print/multi-quad.
-; Moving it here (from the old $c060 block) empties the whole $c000 page, so the
-; scene layout no longer has to reserve/skip it. ZP map: hot state $02-$59,
-; cold state $5a-$dc, our pointer/scratch $e0-$ff. ($00/$01 = CPU port.) ---
-scoreLo  = $5a
-scoreHi  = $5b
-vAct     = $5e
-vBase    = $62
-vNum     = $66
-vFrm     = $6a
-vTmr     = $6e
-vRep     = $72
-vFreqLo  = $76
-vFreqHi  = $7a
-vSwLo    = $7e
-vSwHi    = $82
-mAct     = $86
-mBase    = $8a
-mNum     = $8e
-mPtr     = $92
-mTmr     = $96
-mCtl     = $9a
-mAD      = $9e
-mSR      = $a2
-mPulLo   = $a6
-mPulHi   = $aa
-scorePtrLo = $ae
-scorePtrHi = $af
-scoreColByte = $b0
-sParent  = $b2          ; multi-quad: parent slot of a sub-quad ($ff = independent)
-sQXoff   = $ba          ; sub-quad gmX offset from parent
-sQYoff   = $c2          ; sub-quad gmY offset from parent
-sLoad    = $ca          ; master frame index currently copied into this slot ($ff=none)
-activeScene = $d2       ; which scene is displayed
-printRow = $d3          ; print cursor row (0-24)
-printCol = $d4          ; print cursor column (0-19)
-printColByte = $d5      ; print color: fg*4 + bg
-printTarget = $d6       ; 0=scene1 bitmap, 1=scene2, 2=both
-gcol     = $d8          ; putglyph color-byte parameter
-strlen   = $da          ; print_string length / index / value scratch
-stridx   = $db
-pvtmp    = $dc
+; Cold state stays in RAM at $c060 (NOT zero page). Moving it into ZP adjacent to the hot
+; block (tried in b483d2c) corrupted gameplay — a routine writes into the $5a+ range during
+; play (harmless free RAM when cold lived at $c000, but it clobbered cold state in ZP);
+; reverted pending root-cause. The hot arrays stay in ZP (the bulk of the size win). ---
+scoreLo  = $c060
+scoreHi  = $c061
+vAct     = $c064
+vBase    = $c068
+vNum     = $c06c
+vFrm     = $c070
+vTmr     = $c074
+vRep     = $c078
+vFreqLo  = $c07c
+vFreqHi  = $c080
+vSwLo    = $c084
+vSwHi    = $c088
+mAct     = $c08c
+mBase    = $c090
+mNum     = $c094
+mPtr     = $c098
+mTmr     = $c09c
+mCtl     = $c0a0
+mAD      = $c0a4
+mSR      = $c0a8
+mPulLo   = $c0ac
+mPulHi   = $c0b0
+scorePtrLo = $c0b4
+scorePtrHi = $c0b5
+scoreColByte = $c0b6
+sParent  = $c0b8        ; multi-quad: parent slot of a sub-quad ($ff = independent)
+sQXoff   = $c0c0        ; sub-quad gmX offset from parent
+sQYoff   = $c0c8        ; sub-quad gmY offset from parent
+sLoad    = $c0d0        ; master frame index currently copied into this slot ($ff=none)
+activeScene = $c0d8     ; which scene is displayed
+printRow = $c0d9        ; print cursor row (0-24)
+printCol = $c0da        ; print cursor column (0-19)
+printColByte = $c0db    ; print color: fg*4 + bg
+printTarget = $c0dc     ; 0=scene1 bitmap, 1=scene2, 2=both
+gcol     = $c0de        ; putglyph color-byte parameter
+strlen   = $c0e0        ; print_string length / index / value scratch
+stridx   = $c0e1
+pvtmp    = $c0e2
 
         * = $0801
         !byte $0c,$08, $0a,$00, $9e, $32,$30,$36,$31, $00, $00,$00
@@ -1126,16 +1127,15 @@ ${roomy ? `        lda #<roomy_int         ; roomy banks out KERNAL too, so firs
         lda #$08
         sta $d018               ; screen $4000, bitmap $6000
         ; (scene colors/matrix are set by the "scene is" opcode -> scene_show)
-        ; Zero the ZP runtime-state block ($02-$dc). All state lives in ZP now, and ZP is DIRTY
-        ; at boot (BASIC/KERNAL/the self-extract loader leave garbage there) — unlike the old
-        ; $c000 block, which was clean zero-padded image RAM. Without this, uncleared vars
-        ; (sPosXhi/Yhi, sFrame, sNum, sound/music state, activeScene...) start as garbage:
-        ; sprites flicker at random positions, garbage SFX, timers/counters mis-fire.
+        ; Zero the hot sprite-state block ($02-$59) — it lives in ZP, which is DIRTY at boot
+        ; (BASIC/KERNAL/the self-extract loader leave garbage). The old $c000 block was clean
+        ; zero-padded image RAM; ZP is not. Cold state is back at $c000 (clean), so only the
+        ; hot block needs clearing here.
         lda #$00
         ldx #$00
 clrst:  sta $02,x
         inx
-        cpx #$db                ; $02..$dc inclusive (219 bytes); $e0+ is pointer/scratch, leave it
+        cpx #$58                ; $02..$59 inclusive (88 bytes = 11 arrays x 8 slots)
         bne clrst
         ; init slots: base=$ff (unassigned)
         ldx #$00
@@ -1941,12 +1941,14 @@ sceneBg:  !byte ${rmScenes.map(sc => sc.bgColor).join(',')}`;
 sprdata:
 ${byteRows(frameBytes)}`;
   // Compressed scenes live in VIC-invisible RAM; display_scene decompresses one into $6000 at
-  // runtime. They fill two usable regions, skipping the one reserved hole:
-  //   A [start .. $cf00)   below the I/O hole (runtime state now lives in ZP, so nothing to skip)
+  // runtime. They fill three usable regions, skipping two reserved holes:
+  //   A [start .. $c000)   below the runtime state block
+  //   -- $c000-$c0ff RESERVED: cold runtime state RAM (score/sound/music/... lives here) --
+  //   B [$c100 .. $cf00)   between the state block and the I/O hole
   //   -- $d000-$dfff RESERVED: I/O --
-  //   B [$e000 .. $fc00)   above the hole ($fc00 leaves room for the self-extractor's C2 staging
-  //      + the $fffa vectors). Any blob in region B makes the image cross the hole -> self-extract.
-  const REGIONS = [[null, 0xcf00], [0xe000, 0xfc00]];
+  //   C [$e000 .. $fc00)   above the hole ($fc00 leaves room for the self-extractor's C2 staging
+  //      + the $fffa vectors). Any blob in region B/C makes the image cross a hole -> self-extract.
+  const REGIONS = [[null, 0xc000], [0xc100, 0xcf00], [0xe000, 0xfc00]];
   // greedily place blobs; return {jumps: {blobIdx -> newOrigin}, end}
   const placeScenes = start => {
     let pc = start, reg = 0; const jumps = {};
