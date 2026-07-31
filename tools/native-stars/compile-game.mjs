@@ -445,7 +445,18 @@ function emitOp(op) {
         c(`sk_${u}:`);
         c(`  lda #${quads[q].base}`); c(`  sta sBase+${sl}`);
         c(`  lda #${meta.num}`); c(`  sta sNum+${sl}`);
-        if (q === 0) { c(`  lda #$ff`); c(`  sta sParent+${sl}`); }    // main = independent (position preserved)
+        if (q === 0) {                                                // main = independent
+          // If this slot WAS a sub-quad, capture its live on-screen position (parent pos + offset)
+          // before going independent. Otherwise a free-run override freezes whatever stale value
+          // fsub last wrote (fsub only refreshes sub-quad positions once/frame in the IRQ), so the
+          // sprite spawns at the wrong place -- e.g. CHOPER's enemy heli inheriting the PREVIOUS
+          // screen's carrier X. Computing it here is deterministic (same in free-run + throttle).
+          c(`  ldx sParent+${sl}`); c(`  cpx #$ff`); c(`  beq nqc_${u}`);
+          c(`  lda sPosXhi,x`); c(`  clc`); c(`  adc sQXoff+${sl}`); c(`  sta sPosXhi+${sl}`); c(`  lda #0`); c(`  sta sPosXlo+${sl}`);
+          c(`  lda sPosYhi,x`); c(`  clc`); c(`  adc sQYoff+${sl}`); c(`  sta sPosYhi+${sl}`); c(`  lda #0`); c(`  sta sPosYlo+${sl}`);
+          c(`nqc_${u}:`);
+          c(`  lda #$ff`); c(`  sta sParent+${sl}`);
+        }
         else { c(`  lda #${a1}`); c(`  sta sParent+${sl}`);           // sub-quad -> tracks parent
                c(`  lda #${quads[q].xoff}`); c(`  sta sQXoff+${sl}`);
                c(`  lda #${quads[q].yoff}`); c(`  sta sQYoff+${sl}`); }
