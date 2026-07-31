@@ -1041,21 +1041,21 @@ pc_s2:  lda #$a0
 pc_ret: rts`;
 
 const execStream = `${zpBlock}
-; --- slot state arrays (8 slots) ---
-; The hot per-frame arrays live in ZERO PAGE ($02-$59): with BASIC+KERNAL banked
-; out, ZP $02-$8f is free, so the movement/animation/draw loop gets zp,x access
-; (2 bytes, 4 cycles, no page-cross) instead of abs,x. Touched every frame x8 slots.
-sBase    = $02
-sNum     = $0a
-sFrame   = $12
-sAnimTmr = $1a
-sAnimSpd = $22
-sSpeed   = $2a
-sDir     = $32
-sPosXlo  = $3a
-sPosXhi  = $42
-sPosYlo  = $4a
-sPosYhi  = $52
+; --- slot state arrays (8 slots) in RAM at $c000 ---
+; NOTE: hot state was tried in zero page (bbd46d7) for a code-size win, but it caused an
+; intermittent gameplay corruption (ARCHER's targets flicker/vanish ~every N seconds — a false
+; collision). Reverted to $c000 (matches the known-good v1) pending root-cause of the ZP writer.
+sBase    = $c000
+sNum     = $c008
+sFrame   = $c010
+sAnimTmr = $c018
+sAnimSpd = $c020
+sSpeed   = $c028
+sDir     = $c030
+sPosXlo  = $c038
+sPosXhi  = $c040
+sPosYlo  = $c048
+sPosYhi  = $c050
 ; --- colder state also in ZERO PAGE ($5a-$dc) — sound/music/print/multi-quad.
 ; Cold state stays in RAM at $c060 (NOT zero page). Moving it into ZP adjacent to the hot
 ; block (tried in b483d2c) corrupted gameplay — a routine writes into the $5a+ range during
@@ -1128,16 +1128,6 @@ ${roomy ? `        lda #<roomy_int         ; roomy banks out KERNAL too, so firs
         lda #$08
         sta $d018               ; screen $4000, bitmap $6000
         ; (scene colors/matrix are set by the "scene is" opcode -> scene_show)
-        ; Zero the hot sprite-state block ($02-$59) — it lives in ZP, which is DIRTY at boot
-        ; (BASIC/KERNAL/the self-extract loader leave garbage). The old $c000 block was clean
-        ; zero-padded image RAM; ZP is not. Cold state is back at $c000 (clean), so only the
-        ; hot block needs clearing here.
-        lda #$00
-        ldx #$00
-clrst:  sta $02,x
-        inx
-        cpx #$58                ; $02..$59 inclusive (88 bytes = 11 arrays x 8 slots)
-        bne clrst
         ; init slots: base=$ff (unassigned)
         ldx #$00
 islot:  lda #$ff
