@@ -290,6 +290,10 @@ cnt  = $f4
         * = $0801
         !byte $0c,$08, $0a,$00, $9e, $32,$30,$36,$31, $00, $00,$00   ; SYS 2061
         sei
+        lda #$0b                ; blank the display (VIC DEN off) while decoding: the image is
+        sta $d011               ; decoded across VIC-visible RAM ($0801+), so hide the churn.
+        lda #$00                ; $01 is still $37 here (I/O mapped) so this reaches the VIC; the
+        sta $d020               ; game's init re-enables ($d011=$3b). Border black = clean screen.
         lda #$${bankByte.toString(16)}   ; bank config for decode (RAM under BASIC${twoSeg ? '+KERNAL' : ''})
         sta $01
 ${copies}        jmp $${DEC.toString(16)}
