@@ -243,6 +243,35 @@ const c = s => L.push(s);
 let uid = 0;
 const ifStack = [];
 const V = n => '$' + (0x40 + (n - 1)).toString(16);   // GKGM var n -> ZP
+
+// --- print change-detection (see MEMORY-MAP.md / the print discussion) ---
+// A value display ("print value [f]") in a free-run loop re-renders the SAME digits every
+// iteration (~1000x/frame) even though the framebuffer is shown once/frame -- pure waste, and the
+// dominant per-iteration cost (twobank draws to two bitmaps). We DON'T buffer the screen (that
+// would cost roomy's scene RAM); the bitmap already IS the buffer. Instead each print op caches
+// what it last drew (value,row,col) in `pcache` and skips the render when unchanged, so the digit
+// re-renders only when it CHANGES. A scene switch wipes the bitmap, so display_scene invalidates
+// the cache (jsr pcinval). 4 bytes/site (value,row,col,pad).
+let printSites = 0;
+const nPrintSites = ins.filter(op => op.opcode === 0x3c || op.opcode === 0x3d).length;
+if (0x05a3 + nPrintSites * 4 > 0x0600) throw new Error(`pcache: ${nPrintSites} print sites overflow $05a3-$05ff`);
+const printCached = (valExpr, isValue) => {
+  const b = (printSites++) * 4, n = ++uid;
+  c(`  lda ${valExpr}`);
+  c(`  cmp pcache+${b}`); c(`  bne pcd_${n}`);
+  c(`  lda printRow`); c(`  cmp pcache+${b + 1}`); c(`  bne pcd_${n}`);
+  c(`  lda printCol`); c(`  cmp pcache+${b + 2}`); c(`  beq pcs_${n}`);   // (value,row,col) unchanged -> skip
+  c(`pcd_${n}:`);                                                        // changed -> render + update cache
+  c(`  lda ${valExpr}`); c(`  sta pcache+${b}`);
+  c(`  lda printRow`); c(`  sta pcache+${b + 1}`);
+  c(`  lda printCol`); c(`  sta pcache+${b + 2}`);
+  c(`  lda ${valExpr}`);
+  if (isValue) c(`  jsr print_value`); else { c(`  jsr print_char`); c(`  inc printCol`); }
+  c(`  jmp pce_${n}`);
+  c(`pcs_${n}:`);                                                        // skipped render -> still advance cursor
+  if (isValue) { c(`  lda printCol`); c(`  clc`); c(`  adc #3`); c(`  sta printCol`); } else c(`  inc printCol`);
+  c(`pce_${n}:`);
+};
 const slotAddr = (arr, gmSlot) => `${arr}+${gmSlot - 1}`; // GKGM sprite 1..8 -> vic slot 0..7
 
 // score threshold parse from instructionName (e.g. "if score1 > 002000 then")
@@ -341,7 +370,7 @@ function emitOp(op) {
       c(`  lda #${sc.bgColor}`); c(`  sta $d021`); c(`  sta $d020`);               // background/border
       break;
     }
-    case 0x2e: c(`  lda #${a1}`); c(`  sta activeScene`); c(`  jsr display_scene`); break;                 // display scene N
+    case 0x2e: c(`  lda #${a1}`); c(`  sta activeScene`); c(`  jsr display_scene`); if (nPrintSites) c(`  jsr pcinval`); break;   // display scene N
     case 0x56:                                                       // display other scene
       if (roomy && rmScenes.length > 2) {                            // cycle: activeScene = (activeScene+1) mod N
         const u = ++uid;
@@ -349,13 +378,14 @@ function emitOp(op) {
       } else {
         c(`  lda activeScene`); c(`  eor #1`); c(`  sta activeScene`); c(`  jsr display_scene`);
       }
+      if (nPrintSites) c(`  jsr pcinval`);                           // scene switch wiped the bitmap -> redraw HUD
       break;
     case 0x39: c(`  lda #${a1}`); c(`  sta printRow`); c(`  lda #${a2}`); c(`  sta printCol`); break;   // print at row/col
     case 0x3e: c(`  lda #${(a1 & 3) * 4 + (a2 & 3)}`); c(`  sta printColByte`); break;                  // print color fg on bg
     case 0x5c: c(`  lda #${a2}`); c(`  sta printTarget`); break;                                        // print on scene(s)
     case 0x5b: break;   // scoreN on scene(s): score currently renders to scene1 only (target TODO)
-    case 0x3d: c(`  lda ${V(a2)}`); c(`  jsr print_value`); break;                                      // print value of [var]
-    case 0x3c: c(`  lda ${V(a2)}`); c(`  jsr print_char`); c(`  inc printCol`); break;                  // print char of [var]
+    case 0x3d: printCached(V(a2), true); break;                                                        // print value of [var]
+    case 0x3c: printCached(V(a2), false); break;                                                        // print char of [var]
     case 0x3b: {                                                                                        // print literal string
       const b = op._strBase ?? 0, l = op._strLen ?? 0;
       c(`  lda #<prnStr+${b}`); c(`  sta pcl`); c(`  lda #>prnStr+${b}`); c(`  sta pch`);
@@ -1105,6 +1135,8 @@ RAM      = $0600        ; GKGM ram[] (256 B, opcodes 0x5d/0x5e/0x5f) in reclaime
 frameCtr = $b8          ; bumped by the raster IRQ every frame; waitframe/pause poll it. (free ZP)
 irqsav   = $0583        ; 32-byte save area for the ZP scratch pool ($e0-$ff) across the IRQ,
                         ; so frame_work (in the IRQ) can't clobber a preempted bytecode op's scratch.
+pcache   = $05a3        ; print change-detection cache: 4 B/site (value,row,col,pad). Invalidated
+                        ; ($ff) at init + on every display_scene (a scene switch wipes the bitmap).
 
         * = $0801
         !byte $0c,$08, $0a,$00, $9e, $32,$30,$36,$31, $00, $00,$00
@@ -1158,6 +1190,7 @@ zcold:  sta $0500,x             ; cold state $0500-$05ff + ram[] $0600-$06ff
         sta $0600,x
         inx
         bne zcold
+${nPrintSites ? '        jsr pcinval             ; prime the print cache to $ff (zcold zeroed it)' : ''}
         ; (scene colors/matrix are set by the "scene is" opcode -> scene_show)
         ; init slots: base=$ff (unassigned)
         ldx #$00
@@ -1648,7 +1681,14 @@ pg_lp:  lda (fptr),y
         rts
 
 ${printCharChunk}
-pc_render:                      ; A = bitmap base high byte
+${nPrintSites ? `pcinval:                        ; invalidate the print change-detection cache ($ff = "nothing drawn").
+        lda #$ff                ; called at init + on every display_scene (a scene switch wipes the bitmap,
+        ldx #${nPrintSites * 4} ; so cached "already drew X here" is stale and the HUD must be redrawn).
+pci:    sta pcache-1,x
+        dex
+        bne pci
+        rts
+` : ''}pc_render:                      ; A = bitmap base high byte
         sta tmp
         clc
         lda sval
