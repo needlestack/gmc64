@@ -2012,6 +2012,40 @@ ${roomyScenes(jumps)}`;
   }
 }
 
+// ---- build-time memory-map lint (guards the ARCHER var-collision class of bug) ----
+// Canonical reserved regions from MEMORY-MAP.md. Assert (1) they are mutually disjoint and
+// (2) every owner's symbols resolve inside its region. This fails the build the moment a future
+// edit drifts a state array onto the GKGM variable block (or any other owner) -- the exact overlap
+// that let variable writes stomp sprite positions (the ARCHER target flicker). Cheap insurance.
+function lintMemory(L) {
+  const REGIONS = [
+    { name: 'gkgm-vars',  lo: 0x40,   hi: 0x59 },   // V(n)=$40+n-1, a..z
+    { name: 'hot-state',  lo: 0x60,   hi: 0xb7 },   // sBase..sPosYhi, x8
+    { name: 'scratch',    lo: 0xe0,   hi: 0xff },   // runtime pointers/temps
+    { name: 'cold-state', lo: 0x0500, hi: 0x0582 }, // score/sound/music/print/multi-quad
+    { name: 'ram[]',      lo: 0x0600, hi: 0x06ff }, // GKGM ram[]
+  ];
+  for (let i = 0; i < REGIONS.length; i++) for (let j = i + 1; j < REGIONS.length; j++) {
+    const a = REGIONS[i], b = REGIONS[j];
+    if (a.lo <= b.hi && b.lo <= a.hi) throw new Error(`memory-map lint: ${a.name} ($${a.lo.toString(16)}-$${a.hi.toString(16)}) overlaps ${b.name} ($${b.lo.toString(16)}-$${b.hi.toString(16)})`);
+  }
+  const OWN = {
+    'hot-state':  { span: 8, syms: ['sBase','sNum','sFrame','sAnimTmr','sAnimSpd','sSpeed','sDir','sPosXlo','sPosXhi','sPosYlo','sPosYhi'] },
+    'cold-state': { span: 1, syms: ['scoreLo','scoreHi','vAct','vBase','vNum','vFrm','vTmr','vRep','vFreqLo','vFreqHi','vSwLo','vSwHi','mAct','mBase','mNum','mPtr','mTmr','mCtl','mAD','mSR','mPulLo','mPulHi','scorePtrLo','scorePtrHi','scoreColByte','sParent','sQXoff','sQYoff','sLoad','activeScene','printRow','printCol','printColByte','printTarget','gcol','strlen','stridx','pvtmp'] },
+    'ram[]':      { span: 1, syms: ['RAM'] },
+  };
+  for (const [rn, { span, syms }] of Object.entries(OWN)) {
+    const R = REGIONS.find(r => r.name === rn);
+    for (const s of syms) {
+      const a = L[s]; if (a === undefined) continue;   // mode-specific symbol absent -> skip
+      const top = a + span - 1;
+      if (a < R.lo || top > R.hi) throw new Error(`memory-map lint: ${s} ($${a.toString(16)}${span > 1 ? '-$' + top.toString(16) : ''}) escapes ${rn} ($${R.lo.toString(16)}-$${R.hi.toString(16)})`);
+    }
+  }
+  return REGIONS.length;
+}
+console.log(`  memory-map lint: OK (${lintMemory(r.labels)} reserved regions disjoint, state symbols in range)`);
+
 writeFileSync(outPath.replace(/\.prg$/, '.asm'), asm);
 writeFileSync(outPath, Buffer.from(r.prg));
 console.log(`  -> ${outPath}  (${r.bytes.length} bytes, org=$${r.org.toString(16)} end=$${r.end.toString(16)})`);

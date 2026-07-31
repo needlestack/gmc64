@@ -231,6 +231,8 @@ assumes the current `$4000` bank.
 3. **Regression gate.** ZP/state moves must pass the multi-frame flicker detector
    (`/tmp/tgt.mjs`-style: decode the VICE screenshot and scan many frames, not one) — single
    screenshots hid the ARCHER flicker for many iterations.
-4. **A future lint** could assert no `sta/lda $xx` literal falls inside a reserved range from
-   this map. Cheap insurance; would have caught the var collision at build time.
+4. **Build-time lint (IMPLEMENTED)** — `lintMemory()` in compile-game.mjs runs after assembly and
+   fails the build if the reserved regions (`gkgm-vars`, `hot-state`, `scratch`, `cold-state`,
+   `ram[]`) overlap, or if any state symbol resolves outside its region. This would have caught the
+   var collision at build time. **Keep the region table in that function in sync with §2–§4 here.**
 ```
