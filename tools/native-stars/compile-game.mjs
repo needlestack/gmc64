@@ -679,11 +679,11 @@ dcol   = $f4
 tmp    = $f5
 fptr   = $f6
 curv   = $f7
-animtog = $f8
+animtog = $b9
 ptr2   = $f9
 nidx   = $fa
-collFlags = $fd
-bgFlags = $fe
+collFlags = $ba
+bgFlags = $bb
 bankEor = $ff           ; 0=bank1 active, $c0=bank2 (XOR onto slot/matrix high bytes)
 opbudget = $ee          ; bytecode ops left this frame (throttle)
 OPS_PER_FRAME = ${OPS_PER_FRAME}
@@ -718,11 +718,11 @@ dcol   = $f4
 tmp    = $f5
 fptr   = $f6
 curv   = $f7
-animtog = $f8
+animtog = $b9
 ptr2   = $f9
 nidx   = $fa
-collFlags = $fd
-bgFlags = $fe
+collFlags = $ba
+bgFlags = $bb
 bankEor = $ff           ; 0=bank1 active, $c0=bank2 (XOR onto slot/matrix high bytes)
 opbudget = $ee          ; bytecode ops left this frame (throttle)
 OPS_PER_FRAME = ${OPS_PER_FRAME}
@@ -1184,6 +1184,8 @@ ${roomy ? '' : `        sta sLoad,x
         sta $d01b               ; all sprites in front of the bitmap
         sta collFlags
         sta bgFlags
+        sta animtog             ; frame_work outputs (collFlags/bgFlags/animtog) live at $b9-$bb,
+        sta frameCtr            ; OUTSIDE the IRQ-saved scratch pool, and aren't in a cleared block
 ${roomy ? '' : `        sta bankEor             ; start on bank 1 (scene 1)
 `}        sta activeScene
         lda #${THROTTLE ? THROTTLE_REFILL : 0}
@@ -2055,7 +2057,7 @@ function lintMemory(L) {
   const REGIONS = [
     { name: 'gkgm-vars',  lo: 0x40,   hi: 0x59 },   // V(n)=$40+n-1, a..z
     { name: 'hot-state',  lo: 0x60,   hi: 0xb7 },   // sBase..sPosYhi, x8
-    { name: 'frameCtr',   lo: 0xb8,   hi: 0xb8 },   // raster-IRQ frame counter
+    { name: 'irq-state',  lo: 0xb8,   hi: 0xbb },   // frameCtr + frame_work outputs (animtog/collFlags/bgFlags) — OUTSIDE the IRQ-saved scratch pool
     { name: 'scratch',    lo: 0xe0,   hi: 0xff },   // runtime pointers/temps
     { name: 'cold-state', lo: 0x0500, hi: 0x0582 }, // score/sound/music/print/multi-quad
     { name: 'irq-save',   lo: 0x0583, hi: 0x05a2 }, // IRQ scratch-pool save area (32 B)
