@@ -21,9 +21,9 @@
 // Usage: node compile-game.mjs <disk.d64> <NAME/PRG> <out.prg> [twobank|roomy]
 
 import { readFileSync, writeFileSync } from 'fs';
-import { assemble } from '../asm6502.mjs';
+import { assemble } from './asm6502.mjs';
 
-const B = '/Users/jfield/GMC64/code/js/';
+const B = '../js/';
 for (const m of ['d64lib','c64lib','gmOpcodes','gmSprite','gmScene','gmSound','gmMusic','gmCharset','gmParser'])
   await import(B + m + '.js');
 globalThis.charset = new globalThis.gmCharset();

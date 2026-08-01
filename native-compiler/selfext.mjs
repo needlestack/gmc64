@@ -29,9 +29,9 @@
 // Usage: node selfext.mjs <game.prg> <out.prg>
 
 import { readFileSync, writeFileSync } from 'fs';
-import { assemble } from '../asm6502.mjs';
+import { assemble } from './asm6502.mjs';
 
-const B = '/Users/jfield/GMC64/code/js/';
+const B = '../js/';
 for (const m of ['d64lib']) await import(B + m + '.js');
 
 const IO_LO = 0xd000, IO_HI = 0xe000;    // the $d000-$dfff I/O hole

@@ -10,7 +10,7 @@
 // jungle variants), add "scene K is <name>" instructions, and re-serialize.
 
 import { readFileSync, writeFileSync } from 'fs';
-const B = '/Users/jfield/GMC64/code/js/';
+const B = '../js/';
 for (const m of ['d64lib', 'c64lib', 'gmOpcodes', 'gmSprite', 'gmScene', 'gmSound', 'gmMusic', 'gmCharset', 'gmParser']) await import(B + m + '.js');
 globalThis.charset = new globalThis.gmCharset();
 globalThis.decode16bit = (lo, hi) => lo + (hi << 8);
