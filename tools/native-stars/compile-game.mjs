@@ -950,6 +950,9 @@ const displaySceneChunk = roomy ? `; display_scene: roomy single-bank switch. ac
 ; the sprite pointers (the matrix fill overwrites $43F8-$43FF). This is where the ~few-frame
 ; switch cost lives (vs the two-bank build's instant $DD00 flip).
 display_scene:
+        lda #1
+        sta redrawing           ; freeze frame_work: the decompress below takes ~30 frames and the
+                                ; bytecode is blocked here, so pause all motion until we're done
         ldx activeScene
         lda sceneLo,x
         sta rlsrc
@@ -976,6 +979,8 @@ dsp:    lda sBase,x
         sta $43f8,x
 dsp2:   dex
         bpl dsp
+        lda #0
+        sta redrawing           ; redraw done -> frame_work resumes
         rts
 ds_matrix:                      ; A = matrix byte -> fill $4000-$43FF (colors 1/2)
         ldx #0
@@ -998,7 +1003,9 @@ dscr:   sta $d800,x
 ; set bankEor for the sprite copies, and force all sprite slots to re-copy into the
 ; now-active bank (its slots hold stale frames from when it was last shown).
 display_scene:
-        lda activeScene
+        lda #1
+        sta redrawing           ; brief here (instant bank flip) but keeps frame_work from drawing
+        lda activeScene         ; mid-flip with stale slot frames; uniform with roomy.
         bne dsB
         lda #$00
         sta bankEor
@@ -1018,6 +1025,8 @@ dsL:    lda #$ff
         sta sLoad,x
         dex
         bpl dsL
+        lda #0
+        sta redrawing
         rts`;
 
 // print_char scene targeting: twobank renders to $6000 and/or $a000 per printTarget; roomy always $6000.
@@ -1144,6 +1153,9 @@ pvtmp    = $0582
 RAM      = $0600        ; GKGM ram[] (256 B, opcodes 0x5d/0x5e/0x5f) in reclaimed low RAM;
                         ; uninitialized -> cleared by init. Was an in-image !fill 256 in the tables.
 frameCtr = $b8          ; bumped by the raster IRQ every frame; waitframe/pause poll it. (free ZP)
+redrawing = $bc         ; set by display_scene, checked by frame_work: while a scene is redrawing
+                        ; (roomy lzdec, ~30 frames), the IRQ still fires but frame_work bails out so
+                        ; nothing moves -- restores the implicit "pause during redraw" the poll had.
 irqsav   = $0583        ; 32-byte save area for the ZP scratch pool ($e0-$ff) across the IRQ,
                         ; so frame_work (in the IRQ) can't clobber a preempted bytecode op's scratch.
 pcache   = $05a3        ; print change-detection cache: 4 B/site (value,row,col,pad). Invalidated
@@ -1230,6 +1242,7 @@ ${roomy ? '' : `        sta sLoad,x
         sta bgFlags
         sta animtog             ; frame_work outputs (collFlags/bgFlags/animtog) live at $b9-$bb,
         sta frameCtr            ; OUTSIDE the IRQ-saved scratch pool, and aren't in a cleared block
+        sta redrawing           ; $bc: 0 = not redrawing (else frame_work would freeze everything)
 ${roomy ? '' : `        sta bankEor             ; start on bank 1 (scene 1)
 `}        sta activeScene
         lda #${THROTTLE ? THROTTLE_REFILL : 0}
@@ -1313,6 +1326,10 @@ ${roomy ? `        pla
 ; frame_work: the 60Hz housekeeping — collision latch, sprite move/animate/draw, SID, music.
 ; Called ONLY from irqh, exactly once per real frame.
 frame_work:
+        lda redrawing           ; scene redraw in progress (roomy decompress)? freeze everything --
+        beq fw_go               ; the bytecode is stuck in lzdec, so pause all motion until it's done
+        rts
+fw_go:
         lda $d01e               ; latch sprite-sprite collisions once/frame (reading clears)
         sta collFlags
         lda $d01f               ; latch sprite-background collisions likewise
@@ -2108,7 +2125,7 @@ function lintMemory(L) {
   const REGIONS = [
     { name: 'gkgm-vars',  lo: 0x40,   hi: 0x59 },   // V(n)=$40+n-1, a..z
     { name: 'hot-state',  lo: 0x60,   hi: 0xb7 },   // sBase..sPosYhi, x8
-    { name: 'irq-state',  lo: 0xb8,   hi: 0xbb },   // frameCtr + frame_work outputs (animtog/collFlags/bgFlags) — OUTSIDE the IRQ-saved scratch pool
+    { name: 'irq-state',  lo: 0xb8,   hi: 0xbc },   // frameCtr + frame_work outputs (animtog/collFlags/bgFlags) + redrawing — OUTSIDE the IRQ-saved scratch pool
     { name: 'scratch',    lo: 0xe0,   hi: 0xff },   // runtime pointers/temps
     { name: 'cold-state', lo: 0x0500, hi: 0x0582 }, // score/sound/music/print/multi-quad
     { name: 'irq-save',   lo: 0x0583, hi: 0x05a2 }, // IRQ scratch-pool save area (32 B)
