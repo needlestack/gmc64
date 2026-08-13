@@ -467,11 +467,22 @@ class D64 {
                 this.data[sectorOffset] = sectorChain[i + 1].track;
                 this.data[sectorOffset + 1] = sectorChain[i + 1].sector;
             } else {
-                // Last sector: byte 0 = $00, byte 1 = bytes used indicator
-                // Per 1541 convention: 0 means full sector (254 bytes),
-                // otherwise it's the offset past the last data byte
+                // Last sector: byte 0 = $00, byte 1 = the OFFSET OF THE LAST USED BYTE.
+                // Data occupies offsets 2..N+1 for N bytes, so byte 1 is N + 1 -- including the
+                // full case, where 254 bytes end at offset 255. No special case is needed.
+                //
+                // This read `bytesThisSector === 254 ? 0 : bytesThisSector + 2`, which was wrong
+                // twice. The +2 made EVERY file this writer has ever produced one byte too long:
+                // the loader reads one byte past the file and stores it past the end. And the 254
+                // case wrote 0, which is not a valid last-byte offset -- so any file whose length
+                // is an exact multiple of 254 got a broken sector chain, c1541 reported "Track 0,
+                // Sector 0 out of bounds", and the KERNAL hung at LOADING.
+                //
+                // Found in c64fps, which vendors this file: a 19,050-byte image (254 x 75) would
+                // not boot while an 18,991-byte one did, so it looked like whichever feature last
+                // changed the build size had broken something.
                 this.data[sectorOffset] = 0x00;
-                this.data[sectorOffset + 1] = bytesThisSector === 254 ? 0 : bytesThisSector + 2;
+                this.data[sectorOffset + 1] = bytesThisSector + 1;
             }
 
             for (let j = 0; j < bytesThisSector; j++) {
