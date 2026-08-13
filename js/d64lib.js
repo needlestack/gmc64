@@ -186,9 +186,17 @@ class D64 {
             const nextSector = sectorData[1];
 
             if (nextTrack === 0) {
-                // Last sector - nextSector indicates bytes used
-                // Per 1541 convention: 0 means full sector (254 bytes)
-                const endOffset = nextSector === 0 ? 256 : nextSector;
+                // Last sector: nextSector is the OFFSET OF THE LAST USED BYTE, so the exclusive
+                // end is one past it. No special case for a full sector -- 254 bytes end at
+                // offset 255 and slice(2, 256) returns all of them.
+                //
+                // This read `nextSector === 0 ? 256 : nextSector`, which was the exact MIRROR of
+                // the writer's bug: slice is exclusive, so treating the pointer as one-past-the-end
+                // undid the writer's +2, and 0 -> 256 undid its 254 -> 0. The two cancelled, every
+                // round-trip through this library was byte-perfect, and nothing here could ever
+                // detect either fault. Only a real KERNAL, which uses the actual convention, saw
+                // the malformed disk. Fixing the writer alone therefore BREAKS this reader.
+                const endOffset = nextSector + 1;
                 chainData.push(...sectorData.slice(dataStart, endOffset));
                 break;
             }
