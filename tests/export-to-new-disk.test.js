@@ -1,7 +1,7 @@
 /**
- * "Export to New Disk": turning a program -- above all a standalone game found without its
+ * "Export All Game Assets to New Disk": turning a program -- above all a standalone game found without its
  * source disk -- back into separate GameMaker files on a fresh disk (programToFiles in
- * gmParser.js, and the program editor's Export to New Disk button).
+ * gmParser.js, and the program editor's Export All Game Assets to New Disk button).
  *
  * Fixture: tests/disks/gmc64-standalone.d64 is our ALIENS demo exported to standalone by
  * GameMaker, scrubbed of GameMaker's runtime by tools/make-standalone-fixture.mjs. Its source
@@ -168,13 +168,13 @@ async function openWithStandalone() {
 }
 
 const clickExport = (page) => page.evaluate(() => {
-    [...document.querySelectorAll('.gm-disk-custom')].find(b => b.textContent === 'Export to New Disk').click();
+    [...document.querySelectorAll('.gm-disk-custom')].find(b => b.textContent === 'Export All Game Assets to New Disk').click();
 });
 const message = (page) => page.evaluate(() => document.querySelector('.gm-disk-info-message').textContent);
 const exported = (page) => page.waitForFunction(() =>
     /Exported/.test(document.querySelector('.gm-disk-info-message').textContent));
 
-describe('Export to New Disk button', () => {
+describe('Export All Game Assets to New Disk button', () => {
     test('writes the program and its assets to a new disk, and inserts it', async () => {
         const page = await openWithStandalone();
         const before = await page.evaluate(() => ({ id: gmDisk.currentDiskId, pool: GMDisk.getPool().length }));

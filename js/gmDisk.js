@@ -774,10 +774,13 @@ class GMDisk {
             this.popup.remove();
         }
 
-        // Build custom buttons HTML
-        const customBtnHtml = this.popupOptions.customButtons
-            .map((btn, i) => `<button class="gm-disk-custom" data-custom-index="${i}">${btn.label}</button>`)
-            .join('');
+        // Page actions. The last one shares the bottom row with Download D64; any others stack
+        // above it in a full-width row, so a long label (e.g. "Export All Game Assets to New
+        // Disk") gets the whole dialog width instead of wrapping beside Download.
+        const customBtn = (btn, i) => `<button class="gm-disk-custom" data-custom-index="${i}">${btn.label}</button>`;
+        const customs = this.popupOptions.customButtons;
+        const extraCustomHtml = customs.slice(0, -1).map(customBtn).join('');
+        const lastCustomHtml = customs.length ? customBtn(customs[customs.length - 1], customs.length - 1) : '';
 
         // Create overlay (uses standard classes from c64-ui.css)
         this.popup = document.createElement('div');
@@ -850,12 +853,13 @@ class GMDisk {
                     <input type="text" class="gm-disk-name-input" maxlength="6" placeholder="filename" autocomplete="off" spellcheck="false">
                     <button class="gm-disk-save">Save</button>` : ''}
                 </div>
+                ${extraCustomHtml ? `<div class="gm-disk-extra-actions">${extraCustomHtml}</div>` : ''}
                 <div class="popup-buttons-bottom">
                     <div class="popup-buttons-left">
                         <button class="gm-disk-download">Download D64</button>
                     </div>
                     <div class="popup-buttons-right">
-                        ${customBtnHtml}
+                        ${lastCustomHtml}
                     </div>
                 </div>
             </div>

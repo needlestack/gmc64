@@ -1,5 +1,5 @@
 // Shared player chrome behaviors — used by play.html, program-editor.html's game
-// overlay, and the standalone Export Game bundle. Each host owns its own
+// overlay, and the standalone Export Game to HTML bundle. Each host owns its own
 // DOM structure (they only differ around it — program-editor.html has additional
 // dev controls in the settings popup, play.html doesn't need a stop
 // button, etc.), but the icon set, joystick presets, input listeners,

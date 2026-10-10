@@ -1639,7 +1639,7 @@ function serializeProgram(programData, originalFileData = null) {
 
 // Every file a program needs, as GameMaker stores them on disk: the program itself, the scenes
 // it names, and each embedded sprite, sound and song as its own .SPR/.SND/.SNG. Backs the program
-// editor's "Export to New Disk": how a standalone game found without its source disk becomes
+// editor's "Export All Game Assets to New Disk": how a standalone game found without its source disk becomes
 // editable in every gmc64 editor (and in GameMaker itself) again.
 //
 // Returns { files: [{ fileName, kind, data }], skipped: [{ fileName, kind, reason }] }.

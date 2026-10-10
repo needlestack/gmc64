@@ -272,7 +272,7 @@ Verified byte-perfect on ALIENS (one scene, STARS) and on multi-scene
 game exports (both slots populated with distinct names). Single-scene
 games return just one entry at $A000.
 
-**Export to New Disk** (`programToFiles` in gmParser.js, the program
+**Export All Game Assets to New Disk** (`programToFiles` in gmParser.js, the program
 editor's file-popup button): writes the loaded program plus every scene,
 sprite, sound and song it uses as separate GameMaker files on a NEW disk
 named after the program, and inserts it. This is what makes a standalone
@@ -719,7 +719,7 @@ their own deps.
 
 | Tool | Purpose |
 |------|---------|
-| `bundle-standalone.js` | Regenerates `js/standalone-source.js` — a snapshot of `play.html` with every `<script src>` inlined. The editor's "Export Game" patches two `EMBEDDED_` consts in this snapshot with base64-encoded game bytes to produce a self-contained playable HTML file. Re-run after editing `play.html` or any file it loads. |
+| `bundle-standalone.js` | Regenerates `js/standalone-source.js` — a snapshot of `play.html` with every `<script src>` inlined. The editor's "Export Game to HTML" patches two `EMBEDDED_` consts in this snapshot with base64-encoded game bytes to produce a self-contained playable HTML file. Re-run after editing `play.html` or any file it loads. |
 | `bundle-demo-disk.js` | Regenerates `js/demo-disk-source.js` — `disks/gmc64-demo.d64` base64-encoded so the editor's first-visit demo auto-load works under `file://` (where `fetch` is CORS-blocked). Re-run after editing the demo disk. |
 | `render-test-frames.js` | Renders the runtime frame goldens as full 320×200 PNGs (`tools/test-frame-*.png`). Useful when you want to *see* what the pixel-comparison tests are actually checking — the sparse 40×25 sampling in the golden throws away most of the detail. |
 | `build-demo.js` | One-shot synthesizer that builds a demo disk from scratch (sprites, scenes, sounds, programs constructed in memory). Not the source of truth for the demo disk anymore — once a disk is hand-edited in the editor, `build-demo.js` is a historical artifact and rebuilding from it would clobber edits. |
@@ -761,7 +761,7 @@ Format / runtime tests (node, no browser):
 | `gmRuntime.test.js` | VM execution, input simulation, frame goldens, collision |
 | `standalone-bundle.test.js` | Asserts `js/standalone-source.js` is in sync with `play.html` + the runtime JS it inlines |
 | `browser-load.test.js` | Loads each HTML page headlessly and asserts no script errors |
-| `export-to-new-disk.test.js` | Export to New Disk: a standalone extracts to the same files as its source program, assets re-save unchanged, missing/duplicate handling, and the editor button (new disk inserted, original untouched) |
+| `export-to-new-disk.test.js` | Export All Game Assets to New Disk: a standalone extracts to the same files as its source program, assets re-save unchanged, missing/duplicate handling, and the editor button (new disk inserted, original untouched) |
 | `gm-fidelity.test.js` | Checks against things that aren't us: the 1541 last-sector rule, VICE `c1541` (if installed), and byte-exact re-saves of every file on the original GameMaker S1/S2 disks (if present in `tests/disks/` — gitignored, never committed) |
 
 Editor UI tests (puppeteer):

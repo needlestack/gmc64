@@ -539,7 +539,7 @@ body.mobile-phone #gameControls:hover { opacity: 1; }
 
 <!-- Runtime files. play.html deliberately does NOT include:
        - editor JS (instruction picker, arg editing, save/load UI, …)
-       - standalone-source.js (only needed by editor's Export Game flow)
+       - standalone-source.js (only needed by editor's Export Game to HTML flow)
        - demo-disk-source.js (only relevant to editor's demo shortcut) -->
 <script src="js/c64lib.js"></script>
 <script src="js/c64Screen.js"></script>
@@ -568,7 +568,7 @@ body.mobile-phone #gameControls:hover { opacity: 1; }
 //      click starts the VM and unlocks the AudioContext (autoplay-policy
 //      compliant).
 //
-//   2. Embedded — the editor's "Export Game" flow patches the two
+//   2. Embedded — the editor's "Export Game to HTML" flow patches the two
 //      EMBEDDED_ consts below with base64-encoded PRG + D64 bytes. When
 //      those aren't null, we skip the URL fetch entirely and decode the
 //      bytes locally. That's how the exported HTML is *literally*

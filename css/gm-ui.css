@@ -360,6 +360,25 @@ button:disabled:hover {
     align-items: flex-end;
 }
 
+/* Disk dialog: page actions beyond the last stack right-aligned above the
+   bottom row (see GMDisk._createPopup). Footer labels never wrap — a label
+   too long for its row should get its own row, not a second line. */
+.gm-disk-extra-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+    margin-top: 10px;
+}
+/* Keep the stack's spacing the same as when every action shared one column. */
+.gm-disk-extra-actions + .popup-buttons-bottom {
+    margin-top: 2px;
+}
+.gm-disk-dialog .popup-buttons-bottom button,
+.gm-disk-extra-actions button {
+    white-space: nowrap;
+}
+
 /* Horizontal Insert / New / Rename / Eject row at the top of the disk
    dialog. Four buttons compete for limited width — trim per-button
    horizontal padding/margin so labels don't wrap to two lines. */

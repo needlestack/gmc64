@@ -97,7 +97,7 @@ Then:
 - **Host a `.d64`** - you can point to an online `d64` as
   well: `program-editor.html?disk=https://your-host/game.d64` opens the same file picker
 
-When your game is ready, hit **Export Game** to get a single HTML file of your creation.
+When your game is ready, hit **Export Game to HTML** to get a single HTML file of your creation.
 
 ## Sharing your creations
 
@@ -146,7 +146,7 @@ specific asset for editing.
 
 Two ways to get an embeddable game, depending on what you're willing to host.
 
-**Option A — self-contained HTML.** Use the editor's **Export Game** button
+**Option A — self-contained HTML.** Use the editor's **Export Game to HTML** button
 under **file**. It downloads a single HTML file containing your program, the
 disk image, and the runtime. Host it anywhere (GitHub Pages, Netlify, S3, your
 own server), then embed it. The Export dialog also generates the iframe snippet
@@ -203,7 +203,7 @@ node tools/bundle-standalone.js
 ```
 
 This regenerates `js/standalone-source.js` — a snapshot of `play.html` with
-every `<script src>` inlined, used by the editor's "Export Game" flow to
+every `<script src>` inlined, used by the editor's "Export Game to HTML" flow to
 produce a self-contained playable HTML file.
 
 **To run the test suite:** the test tooling lives in `dev/` (kept out of the
