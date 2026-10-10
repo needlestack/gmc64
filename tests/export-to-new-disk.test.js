@@ -1,7 +1,7 @@
 /**
- * "Extract All": turning a program -- above all a standalone game found without its source
- * disk -- back into separate GameMaker files (programToFiles in gmParser.js, and the program
- * editor's Extract All button).
+ * "Export to New Disk": turning a program -- above all a standalone game found without its
+ * source disk -- back into separate GameMaker files on a fresh disk (programToFiles in
+ * gmParser.js, and the program editor's Export to New Disk button).
  *
  * Fixture: tests/disks/gmc64-standalone.d64 is our ALIENS demo exported to standalone by
  * GameMaker, scrubbed of GameMaker's runtime by tools/make-standalone-fixture.mjs. Its source
@@ -167,42 +167,64 @@ async function openWithStandalone() {
     return page;
 }
 
-const clickExtract = (page) => page.evaluate(() => {
-    [...document.querySelectorAll('.gm-disk-custom')].find(b => b.textContent === 'Extract All').click();
+const clickExport = (page) => page.evaluate(() => {
+    [...document.querySelectorAll('.gm-disk-custom')].find(b => b.textContent === 'Export to New Disk').click();
 });
 const message = (page) => page.evaluate(() => document.querySelector('.gm-disk-info-message').textContent);
+const exported = (page) => page.waitForFunction(() =>
+    /Exported/.test(document.querySelector('.gm-disk-info-message').textContent));
 
-describe('Extract All button', () => {
-    test('writes the program and its assets to the inserted disk', async () => {
+describe('Export to New Disk button', () => {
+    test('writes the program and its assets to a new disk, and inserts it', async () => {
         const page = await openWithStandalone();
-        await clickExtract(page);
-        await page.waitForFunction(() => /Extracted/.test(document.querySelector('.gm-disk-info-message').textContent));
-        expect(await message(page)).toBe('Extracted 10 files');
-        const names = await page.evaluate(() => gmDisk.listFiles().map(e => e.fileName));
-        for (const n of ['ALIENS/PRG', 'STARS /PIC', 'SHIP  /SPR', 'BOOM  /SND']) expect(names).toContain(n);
+        const before = await page.evaluate(() => ({ id: gmDisk.currentDiskId, pool: GMDisk.getPool().length }));
+        await clickExport(page);
+        await exported(page);
+        expect(await message(page)).toBe('Exported 10 files to new disk aliens');
+
+        const after = await page.evaluate(() => ({
+            id: gmDisk.currentDiskId,
+            pool: GMDisk.getPool().length,
+            diskName: gmDisk.getDiskName().trim(),
+            names: gmDisk.listFiles().map(e => e.fileName),
+        }));
+        expect(after.id).not.toBe(before.id);
+        expect(after.pool).toBe(before.pool + 1);
+        expect(after.diskName).toBe('ALIENS');
+        expect(after.names).toEqual([
+            'ALIENS/PRG',
+            'SHIP  /SPR', 'PBULL /SPR', 'EBULL /SPR', 'PAIR  /SPR', 'LEFT  /SPR', 'RIGHT /SPR',
+            'STARS /PIC',
+            'ZAP   /SND', 'BOOM  /SND',
+        ]);
         await page.close();
     }, 30000);
 
-    test('a second extract finds everything already there', async () => {
+    test('leaves the original disk untouched and in the pool', async () => {
         const page = await openWithStandalone();
-        await clickExtract(page);
-        await page.waitForFunction(() => /Extracted/.test(document.querySelector('.gm-disk-info-message').textContent));
-        await clickExtract(page);
-        await page.waitForFunction(() => /already on this disk/.test(document.querySelector('.gm-disk-info-message').textContent));
-        expect(await message(page)).toBe('All 10 files are already on this disk');
+        const original = await page.evaluate(() => ({
+            id: gmDisk.currentDiskId,
+            bytes: Array.from(gmDisk.disk.getData()),
+        }));
+        await clickExport(page);
+        await exported(page);
+        const stillThere = await page.evaluate((id) => {
+            const entry = GMDisk.getPool().find(e => e.id === id);
+            return entry ? Array.from(GMDisk._getDiskBytes(id)) : null;
+        }, original.id);
+        expect(stillThere).toEqual(original.bytes);
         await page.close();
     }, 30000);
 
-    test('asks before replacing a file that differs, and leaves it alone on "no"', async () => {
+    test('exporting twice makes two separate disks', async () => {
         const page = await openWithStandalone();
-        await page.evaluate(() => gmDisk.saveFile('BOOM  /SND', new Uint8Array([1, 2, 3])));
-        await clickExtract(page);
-        await page.waitForFunction(() => !document.querySelector('.gm-disk-replace-prompt').hidden);
-        expect(await page.evaluate(() => document.querySelector('.gm-disk-replace-text').textContent))
-            .toBe('Replace 1 existing file?');
-        await page.evaluate(() => document.querySelector('.gm-disk-replace-no').click());
-        expect(await page.evaluate(() => Array.from(gmDisk.loadFile('BOOM  /SND')))).toEqual([1, 2, 3]);
-        expect(await page.evaluate(() => gmDisk.listFiles().some(e => e.fileName === 'ALIENS/PRG'))).toBe(false);
+        const before = await page.evaluate(() => GMDisk.getPool().length);
+        await clickExport(page);
+        await exported(page);
+        await page.evaluate(() => { document.querySelector('.gm-disk-info-message').textContent = ''; });
+        await clickExport(page);
+        await exported(page);
+        expect(await page.evaluate(() => GMDisk.getPool().length)).toBe(before + 2);
         await page.close();
     }, 30000);
 });

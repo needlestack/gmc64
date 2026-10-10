@@ -272,15 +272,16 @@ Verified byte-perfect on ALIENS (one scene, STARS) and on multi-scene
 game exports (both slots populated with distinct names). Single-scene
 games return just one entry at $A000.
 
-**Extract All** (`programToFiles` in gmParser.js, the program editor's
-file-popup button): writes the loaded program plus every scene, sprite,
-sound and song it uses to the inserted disk as separate GameMaker files.
-This is what makes a standalone found in the wild — no source disk —
-editable again in every editor. Missing scenes are skipped (never written
-as the blank placeholder parseProgramData substitutes); files already on
-the disk with identical bytes are left alone; files that would change get
-one confirmation; a dry run on a scratch copy of the disk catches a full
-disk/directory before anything is written.
+**Export to New Disk** (`programToFiles` in gmParser.js, the program
+editor's file-popup button): writes the loaded program plus every scene,
+sprite, sound and song it uses as separate GameMaker files on a NEW disk
+named after the program, and inserts it. This is what makes a standalone
+found in the wild — no source disk — editable again in every editor; for
+any program it also moves a game and exactly what it needs onto a clean
+disk. Always a new disk, so nothing is ever overwritten; the original stays
+in the pool. Missing scenes are skipped (never written as the blank
+placeholder parseProgramData substitutes), as is a second asset with an
+already-used name.
 
 **IP:** a standalone bundles GameMaker's 6502 runtime ($8800–$9FFF,
 byte-identical across games by different authors) — Activision's code. gmc64
@@ -760,7 +761,7 @@ Format / runtime tests (node, no browser):
 | `gmRuntime.test.js` | VM execution, input simulation, frame goldens, collision |
 | `standalone-bundle.test.js` | Asserts `js/standalone-source.js` is in sync with `play.html` + the runtime JS it inlines |
 | `browser-load.test.js` | Loads each HTML page headlessly and asserts no script errors |
-| `extract-all.test.js` | Extract All: a standalone extracts to the same files as its source program, assets re-save unchanged, missing/duplicate handling, and the editor button (write, already-there, replace prompt) |
+| `export-to-new-disk.test.js` | Export to New Disk: a standalone extracts to the same files as its source program, assets re-save unchanged, missing/duplicate handling, and the editor button (new disk inserted, original untouched) |
 | `gm-fidelity.test.js` | Checks against things that aren't us: the 1541 last-sector rule, VICE `c1541` (if installed), and byte-exact re-saves of every file on the original GameMaker S1/S2 disks (if present in `tests/disks/` — gitignored, never committed) |
 
 Editor UI tests (puppeteer):

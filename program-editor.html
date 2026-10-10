@@ -4378,90 +4378,59 @@ function showFilePopup() {
             updateStatusInfo();
         },
         customButtons: [
-            { label: 'Extract All', onClick: () => extractAllToDisk() },
+            { label: 'Export to New Disk', onClick: () => exportToNewDisk() },
             { label: 'Export Game', onClick: () => showExportDialog() }
         ]
     });
 }
 
-// Write the loaded program and everything it uses to the inserted disk as separate GameMaker
-// files: the .PRG, its scenes, and each embedded sprite, sound and song (see programToFiles).
-// Made for standalone games found without their source disk, but works on any program -- e.g.
-// to pull an embedded sprite out for the sprite maker.
+// Write the loaded program and everything it uses -- every scene, sprite, sound and song -- as
+// separate GameMaker files on a NEW disk named after the program (see programToFiles), then
+// insert that disk. Made for standalone games found without their source disk, but works on
+// any program: it's also how to move a game and exactly what it needs onto a clean disk.
 //
-// Files already on the disk with identical bytes are left alone (such as the scenes of a
-// program loaded from this disk); files that would change need one confirmation. Everything
-// is first written to a scratch copy of the disk, so a full disk or directory reports the
-// 1541's own error and leaves the real disk untouched rather than half-extracted.
-async function extractAllToDisk() {
+// Always a new disk, never the inserted one, so nothing can be overwritten and no conflict
+// prompts are needed. Inserting it follows the one-drive model: every editor now sees the
+// exported files, and saving the program goes beside its assets. The original disk stays in
+// the pool.
+async function exportToNewDisk() {
     if (!currentProgramData || !currentProgramData.instructions ||
         currentProgramData.instructions.length === 0) {
-        gmDisk.showInfoMessage('No program to extract');
-        return;
-    }
-    if (!gmDisk.hasDisk()) {
-        gmDisk.showInfoMessage('No disk inserted');
+        gmDisk.showInfoMessage('No program to export');
         return;
     }
 
     const programName = document.getElementById('programName').textContent
-        .replace(/\u00A0/g, ' ').trim() || 'PROGRM';
-    let result;
+        .replace(/\u00A0/g, ' ').trim().toUpperCase() || 'PROGRM';
+    let result, bytes;
     try {
         result = programToFiles(currentProgramData, programName, currentFileData);
+        const disk = D64.createEmpty(programName, GMDisk._randomDiskId());
+        for (const f of result.files) disk.writeFile(f.fileName, f.data, D64.FILE_TYPE_PRG);
+        bytes = disk.getData();
     } catch (e) {
-        console.error('Extract failed:', e);
-        gmDisk.showInfoMessage('Extract error: ' + e.message);
-        return;
-    }
-
-    const sameBytes = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
-    const onDisk = new Set(gmDisk.listFiles().map(e => e.fileName.toUpperCase()));
-    const toWrite = [];
-    let replacing = 0;
-    let unchanged = 0;
-    for (const f of result.files) {
-        if (onDisk.has(f.fileName.toUpperCase())) {
-            const current = gmDisk.loadFile(f.fileName);
-            if (current && sameBytes(current, f.data)) { unchanged++; continue; }
-            replacing++;
-        }
-        toWrite.push(f);
-    }
-    if (toWrite.length === 0) {
-        gmDisk.showInfoMessage(`All ${unchanged} files are already on this disk`, { color: 'var(--c64-green)' });
+        console.error('Export to new disk failed:', e);
+        gmDisk.showInfoMessage('Export error: ' + e.message, { duration: 5000 });
         return;
     }
 
     try {
-        const scratch = new D64(gmDisk.disk.getData().slice());
-        for (const f of toWrite) {
-            if (onDisk.has(f.fileName.toUpperCase())) scratch.deleteFile(f.fileName);
-            scratch.writeFile(f.fileName, f.data, D64.FILE_TYPE_PRG);
-        }
+        const poolId = await GMDisk.addToPool(bytes, programName.replace(/[^A-Z0-9 ]/g, '').trim() + '.d64');
+        gmDisk.selectDisk(poolId);
     } catch (e) {
-        gmDisk.showInfoMessage(`Won't fit: ${e.message}`, { duration: 5000 });
+        // Most likely browser storage is full (each disk is ~230KB of a ~5MB budget).
+        console.error('Export to new disk failed:', e);
+        gmDisk.showInfoMessage('Could not store the new disk: ' + e.message + '. Eject a disk you no longer need.', { duration: 6000 });
         return;
     }
 
-    if (replacing > 0) {
-        const ok = await gmDisk.confirm(`Replace ${replacing} existing file${replacing === 1 ? '' : 's'}?`);
-        if (!ok) return;
-    }
-
-    let written = 0;
-    for (const f of toWrite) {
-        if (gmDisk.saveFile(f.fileName, f.data)) written++;
-    }
     gmDisk.refreshPopup();
-    updateStatusInfo();   // free-blocks readout
-    const notes = [];
-    if (unchanged) notes.push(`${unchanged} already there`);
-    if (result.skipped.length) notes.push(`${result.skipped.length} skipped`);
-    gmDisk.showInfoMessage(
-        `Extracted ${written} file${written === 1 ? '' : 's'}` + (notes.length ? ` (${notes.join(', ')})` : ''),
-        { color: written === toWrite.length ? 'var(--c64-green)' : 'var(--c64-red)', duration: 5000 });
-    for (const s of result.skipped) console.warn(`Extract All: skipped ${s.fileName} (${s.reason})`);
+    updateStatusInfo();   // free-blocks readout now reflects the new disk
+    const count = result.files.length;
+    const skippedNote = result.skipped.length ? ` (${result.skipped.length} skipped)` : '';
+    gmDisk.showInfoMessage(`Exported ${count} file${count === 1 ? '' : 's'} to new disk ${programName.toLowerCase()}${skippedNote}`,
+        { color: 'var(--c64-green)', duration: 5000 });
+    for (const s of result.skipped) console.warn(`Export to new disk: skipped ${s.fileName} (${s.reason})`);
 }
 
 // Save current program to D64 disk
