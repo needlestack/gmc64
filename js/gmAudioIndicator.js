@@ -70,26 +70,59 @@ class GMAudioIndicator {
         return false;
     }
 
+    // Touch devices have no hover to reveal a volume panel, so with a panel host set, a tap there
+    // opens/closes the panel (host gets .gm-volume-open) instead of muting; muting is done by
+    // sliding to zero. A tap that finds audio muted or browser-locked still unmutes first: that
+    // tap is the user gesture the autoplay policy needs, so it can't be spent only on the panel.
+    // Any press outside the host closes the panel. The panel opens upward unless there isn't room
+    // above the button (host gets .gm-volume-below), since layouts put the controls at different
+    // heights on different devices and orientations.
+    enableTouchPanel(host) {
+        this._panelHost = host;
+        document.addEventListener('pointerdown', (e) => {
+            if (!host.contains(e.target)) host.classList.remove('gm-volume-open');
+        });
+    }
+
+    static _isTouchOnly() {
+        return !!window.matchMedia?.('(hover: none)').matches;
+    }
+
     _onClick() {
         if (!this.binding) return;
-        const wasMuted = this._isEffectivelyMuted();
-        if (wasMuted) {
-            // Unmute path: clear user mute, resume context (if suspended —
-            // and this click is the user gesture that lets resume() actually
-            // work), then notify host so it can restart any song that lost
-            // its scheduling window during the suspension.
-            this.binding.setMuted(false);
-            const ctx = this.binding.getAudioContext?.();
-            if (ctx && ctx.state === 'suspended') {
-                ctx.resume().then(() => {
-                    if (this.binding.onUnlock) this.binding.onUnlock();
-                    this.refresh();
-                });
+        if (this._panelHost && GMAudioIndicator._isTouchOnly()) {
+            const host = this._panelHost;
+            const open = this._isEffectivelyMuted() || !host.classList.contains('gm-volume-open');
+            if (this._isEffectivelyMuted()) this._unmute();
+            if (open) {
+                const panel = host.firstElementChild;
+                const needed = (panel ? panel.offsetHeight : 0) + 12;
+                host.classList.toggle('gm-volume-below', host.getBoundingClientRect().top < needed);
             }
+            host.classList.toggle('gm-volume-open', open);
+            this.refresh();
+            return;
+        }
+        if (this._isEffectivelyMuted()) {
+            this._unmute();
         } else {
             this.binding.setMuted(true);
         }
         this.refresh();
+    }
+
+    // Clear user mute, resume the context if suspended (this click is the user gesture that lets
+    // resume() actually work), then notify the host so it can restart any song that lost its
+    // scheduling window during the suspension.
+    _unmute() {
+        this.binding.setMuted(false);
+        const ctx = this.binding.getAudioContext?.();
+        if (ctx && ctx.state === 'suspended') {
+            ctx.resume().then(() => {
+                if (this.binding.onUnlock) this.binding.onUnlock();
+                this.refresh();
+            });
+        }
     }
 
     _render(muted) {

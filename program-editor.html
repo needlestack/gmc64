@@ -888,10 +888,30 @@ body.kbd-active .program-line .instruction:hover {
     right: 0;
     height: 8px;
 }
-#volumeControl:hover #volumePanel,
-#volumeControl:focus-within #volumePanel {
+/* Reveal: hover only where hover exists (touch browsers fake a sticky :hover
+   on tap, which would open the panel and never let it close); keyboard focus
+   via :focus-visible (a tap doesn't match it); and .gm-volume-open, which
+   GMAudioIndicator.enableTouchPanel toggles on tap for touch devices. */
+@media (hover: hover) {
+    #volumeControl:hover #volumePanel {
+        opacity: 1;
+        visibility: visible;
+    }
+}
+#volumeControl:has(:focus-visible) #volumePanel,
+#volumeControl.gm-volume-open #volumePanel {
     opacity: 1;
     visibility: visible;
+}
+/* Opened by tap with too little room above (GMAudioIndicator picks this at
+   open time), the panel drops below the button instead, bridge above it. */
+#volumeControl.gm-volume-below #volumePanel {
+    bottom: auto;
+    top: calc(100% + 6px);
+}
+#volumeControl.gm-volume-below #volumePanel::after {
+    top: auto;
+    bottom: 100%;
 }
 /* Vertical range. writing-mode + direction:rtl gives min-at-bottom,
    max-at-top on modern browsers; accent-color restyles track/thumb. */
@@ -903,6 +923,8 @@ body.kbd-active .program-line .instruction:hover {
     margin: 0;
     accent-color: rgba(255, 255, 255, 0.85);
     cursor: pointer;
+    /* A vertical drag on the slider must move the thumb, not scroll the page. */
+    touch-action: none;
 }
 
 /* Export Game dialog. Full-viewport modal (needs to escape #screen's
@@ -1630,6 +1652,7 @@ function initApp() {
     // Mount inside #volumeControl so it flexes with the other icons and
     // anchors the hover-up volume slider.
     audioIndicator = new GMAudioIndicator(document.getElementById('volumeControl'));
+    audioIndicator.enableTouchPanel(document.getElementById('volumeControl'));
     audioIndicator.bind({
         // Effectively muted whenever the hard-mute flag is set OR the slider
         // is at zero — keeps the icon truthful against both.
