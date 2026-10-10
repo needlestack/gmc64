@@ -6,14 +6,14 @@
 - **Export Game Assets to New Disk**: turns a program back into separate
   GameMaker files on a new disk. Brings standalone games found without their
   source disk back into every editor.
-- Community disk archive page.
+- Community disk archive page ([#4](https://github.com/needlestack/gmc64/issues/4)).
 - Top navigation bar with an Editors menu on every page.
 - Scene maker: a compact proportional font for the text tool, alongside
   GameMaker's 8×8 font.
 - Sprite maker: undo/redo (Cmd/Ctrl+Z; Cmd/Ctrl+Shift+Z or Ctrl+Y to redo).
 - Volume slider on the mute button (tap to open on touch screens).
 - Loading a file meant for another editor opens it there, disk and file
-  ready; browser Back returns to your work.
+  ready; browser Back returns to your work ([#3](https://github.com/needlestack/gmc64/issues/3)).
 
 ### Changed
 - All editors share one working disk, like a single 1541 drive: insert a
@@ -34,7 +34,7 @@
   ([#6](https://github.com/needlestack/gmc64/issues/6)).
 - Saved files match GameMaker byte-for-byte: every sprite, scene, sound and
   song re-saves identically, and disks follow the real 1541 format (checked
-  against VICE). Disks saved by older versions still load.
+  against VICE). Disks saved by older versions still load ([#7](https://github.com/needlestack/gmc64/issues/7)).
 - Edited or newly inserted print statements now show their new text when run.
 - `if score2 > …` compared score1 instead.
 - A jump to its own label now stops in place, as in GameMaker.
