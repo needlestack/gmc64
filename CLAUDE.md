@@ -272,7 +272,7 @@ Verified byte-perfect on ALIENS (one scene, STARS) and on multi-scene
 game exports (both slots populated with distinct names). Single-scene
 games return just one entry at $A000.
 
-**Export All Game Assets to New Disk** (`programToFiles` in gmParser.js, the program
+**Export Game Assets to New Disk** (`programToFiles` in gmParser.js, the program
 editor's file-popup button): writes the loaded program plus every scene,
 sprite, sound and song it uses as separate GameMaker files on a NEW disk
 named after the program, and inserts it. This is what makes a standalone
@@ -761,7 +761,7 @@ Format / runtime tests (node, no browser):
 | `gmRuntime.test.js` | VM execution, input simulation, frame goldens, collision |
 | `standalone-bundle.test.js` | Asserts `js/standalone-source.js` is in sync with `play.html` + the runtime JS it inlines |
 | `browser-load.test.js` | Loads each HTML page headlessly and asserts no script errors |
-| `export-to-new-disk.test.js` | Export All Game Assets to New Disk: a standalone extracts to the same files as its source program, assets re-save unchanged, missing/duplicate handling, and the editor button (new disk inserted, original untouched) |
+| `export-to-new-disk.test.js` | Export Game Assets to New Disk: a standalone extracts to the same files as its source program, assets re-save unchanged, missing/duplicate handling, and the editor button (new disk inserted, original untouched) |
 | `gm-fidelity.test.js` | Checks against things that aren't us: the 1541 last-sector rule, VICE `c1541` (if installed), and byte-exact re-saves of every file on the original GameMaker S1/S2 disks (if present in `tests/disks/` — gitignored, never committed) |
 
 Editor UI tests (puppeteer):

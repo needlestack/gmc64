@@ -775,7 +775,7 @@ class GMDisk {
         }
 
         // Page actions. The last one shares the bottom row with Download D64; any others stack
-        // above it in a full-width row, so a long label (e.g. "Export All Game Assets to New
+        // above it in a full-width row, so a long label (e.g. "Export Game Assets to New
         // Disk") gets the whole dialog width instead of wrapping beside Download.
         const customBtn = (btn, i) => `<button class="gm-disk-custom" data-custom-index="${i}">${btn.label}</button>`;
         const customs = this.popupOptions.customButtons;
