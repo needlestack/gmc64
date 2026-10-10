@@ -854,8 +854,53 @@ body.kbd-active .program-line .instruction:hover {
     border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
-#settingsPopup input[type="range"] {
-    width: 120px;
+/* Volume control — video-player style. The mute button (audio indicator)
+   sits in the bar; a vertical slider floats directly above it so the user
+   can drag straight up. Panel hidden until hover/focus. */
+#volumeControl {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+#volumePanel {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 4px;
+    padding: 10px 4px;
+    display: flex;
+    justify-content: center;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.12s ease;
+    z-index: 10;
+}
+/* Invisible bridge over the gap between panel and button so the pointer
+   can travel up without dropping :hover and collapsing the panel. */
+#volumePanel::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    height: 8px;
+}
+#volumeControl:hover #volumePanel,
+#volumeControl:focus-within #volumePanel {
+    opacity: 1;
+    visibility: visible;
+}
+/* Vertical range. writing-mode + direction:rtl gives min-at-bottom,
+   max-at-top on modern browsers; accent-color restyles track/thumb. */
+#volumeSlider {
+    writing-mode: vertical-lr;
+    direction: rtl;
+    width: 18px;
+    height: 90px;
+    margin: 0;
     accent-color: rgba(255, 255, 255, 0.85);
     cursor: pointer;
 }
@@ -1115,14 +1160,17 @@ body.kbd-active .program-line .instruction:hover {
                               stroke-linecap="round" stroke-linejoin="round"/>
                     </svg>
                 </button>
-                <!-- Audio indicator mounts here (rightmost). -->
+                <!-- Volume: mute button (GMAudioIndicator) mounts here; the
+                     vertical slider floats directly above it, revealed on hover. -->
+                <div id="volumeControl">
+                    <div id="volumePanel">
+                        <input type="range" id="volumeSlider" min="0" max="100" step="1"
+                               value="75" orient="vertical" aria-label="Volume">
+                    </div>
+                    <!-- audio indicator (mute button) mounts here -->
+                </div>
             </div>
             <div id="settingsPopup">
-                <div class="settings-section-label">Audio</div>
-                <div class="row">
-                    <label>Volume</label>
-                    <input type="range" id="volumeSlider" min="0" max="100" step="1" value="75">
-                </div>
                 <div class="settings-section-label">Controls</div>
                 <div class="row">
                     <label>Joystick 1</label>
@@ -1329,15 +1377,11 @@ const undoStack = [];
 const redoStack = [];
 const MAX_UNDO = 50;
 
-// GMDisk instance
-// Explicit selectionKey preserves the pre-rename localStorage key
-// (`gm_disk_selection_editor`) after the file rename from editor.html
-// to program-editor.html. Without this, GMDisk would derive
-// `gm_disk_selection_program-editor` from the new filename, and every
-// existing user would lose their currently-selected disk on next visit.
-const gmDisk = new GMDisk({
-    selectionKey: GMDisk.SELECTION_PREFIX + 'editor'
-});
+// GMDisk instance — uses the shared working-disk selection (GMDisk.CURRENT_KEY) like every
+// other editor, so the same disk is "inserted" everywhere. The one-time upgrade seed in
+// GMDisk.load() adopts any existing per-editor selection (incl. the pre-rename
+// `gm_disk_selection_editor`), so existing users keep their current disk on next visit.
+const gmDisk = new GMDisk();
 
 // VM and screen for running programs
 let vm = null;
@@ -1369,6 +1413,9 @@ let audioIndicator = null;
 const VOLUME_KEY = 'gmc64-volume';
 let userVolume = parseFloat(localStorage.getItem(VOLUME_KEY));
 if (!isFinite(userVolume) || userVolume < 0 || userVolume > 1) userVolume = 0.75;
+// Remembers the last audible level so unmuting from a zeroed slider (or a
+// mute click) can restore something sensible rather than dead silence.
+let lastNonZeroVolume = userVolume > 0 ? userVolume : 0.75;
 // SFX_BASELINE is the pre-slider gain — the "100% user volume" ceiling.
 const SFX_BASELINE = 0.3;
 
@@ -1486,19 +1533,49 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Volume slider — shared localStorage key with play.html, applies to
-    // both the host masterGain (SFX) and vm.config.userVolume (music).
+    // Volume slider — drives applyUserVolume live on drag. Crossing 0
+    // mirrors the hard-mute flag so the speaker icon always tells the truth:
+    // slide to the bottom and it reads muted; slide back up and it clears.
     const slider = document.getElementById('volumeSlider');
     if (slider) {
         slider.value = Math.round(userVolume * 100);
         slider.addEventListener('input', () => {
-            userVolume = slider.value / 100;
-            localStorage.setItem(VOLUME_KEY, String(userVolume));
-            if (masterGain) masterGain.gain.value = SFX_BASELINE * userVolume;
-            if (vm) vm.setConfig({ userVolume });
+            // Flip the editor's own audioMuted, not just the VM's: the mute icon reads it and
+            // every new run starts from it, so updating only vm.config left the icon saying
+            // "muted" over audible sound and muted the next run.
+            const v = slider.value / 100;
+            if ((v === 0) !== audioMuted) {
+                audioMuted = v === 0;
+                if (vm) vm.setConfig({ audioMuted });
+            }
+            applyUserVolume(v);
         });
     }
 });
+
+// Apply a new volume level to both audio paths (SFX via host masterGain,
+// music via vm.setConfig → _effectiveSongVolume), persist it, and resync
+// the UI. The single choke point for every volume change so the slider,
+// mute icon, and stored preference never drift apart.
+function applyUserVolume(v, { persist = true } = {}) {
+    userVolume = Math.max(0, Math.min(1, v));
+    if (userVolume > 0) lastNonZeroVolume = userVolume;
+    if (masterGain) masterGain.gain.value = SFX_BASELINE * userVolume;
+    if (vm) vm.setConfig({ userVolume });
+    if (persist) localStorage.setItem(VOLUME_KEY, String(userVolume));
+    syncVolumeUI();
+}
+
+// Push current state out to the visible controls. Skips writing the slider
+// while it's the one being dragged (activeElement) so we don't fight the
+// user's own input mid-gesture.
+function syncVolumeUI() {
+    const slider = document.getElementById('volumeSlider');
+    if (slider && document.activeElement !== slider) {
+        slider.value = Math.round(userVolume * 100);
+    }
+    if (audioIndicator) audioIndicator.refresh();
+}
 
 // Load file by name (required by gmParser for scene loading)
 function loadFileByName(fileName) {
@@ -1514,6 +1591,10 @@ function initApp() {
 
     // Load disk from localStorage
     gmDisk.autoLoad();
+
+    // Live cross-tab sync: follow the shared working disk if another tab switches it
+    // (repoints the picker/save/load/run; the in-progress program is left untouched).
+    gmDisk.onExternalChange();
 
     // First-visit convenience: seed the demo disk into an empty pool so the
     // file menu isn't a dead end. Fire-and-forget; URL-driven loads below
@@ -1546,12 +1627,22 @@ function initApp() {
         showPicker: () => showFilePopup()
     });
 
-    audioIndicator = new GMAudioIndicator(document.getElementById('gameControls'));
+    // Mount inside #volumeControl so it flexes with the other icons and
+    // anchors the hover-up volume slider.
+    audioIndicator = new GMAudioIndicator(document.getElementById('volumeControl'));
     audioIndicator.bind({
-        getMuted: () => audioMuted,
+        // Effectively muted whenever the hard-mute flag is set OR the slider
+        // is at zero — keeps the icon truthful against both.
+        getMuted: () => audioMuted || userVolume === 0,
         setMuted: (muted) => {
+            // Unmuting a zeroed slider would still be silent — restore the
+            // last audible level so a click actually brings sound back.
+            if (!muted && userVolume === 0) {
+                applyUserVolume(lastNonZeroVolume || 0.75);
+            }
             audioMuted = muted;
             if (vm) vm.setConfig({ audioMuted: muted });
+            syncVolumeUI();
         },
         getAudioContext: () => audioContext,
         onUnlock: () => {

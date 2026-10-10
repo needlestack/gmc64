@@ -126,7 +126,8 @@ class GMDisk {
 
     static POOL_INDEX_KEY = 'gm_disk_pool_index';
     static POOL_DATA_PREFIX = 'gm_disk_pool_data_';
-    static SELECTION_PREFIX = 'gm_disk_selection_';
+    static SELECTION_PREFIX = 'gm_disk_selection_';   // legacy per-editor selection (pre-shared)
+    static CURRENT_KEY = 'gm_disk_current';           // the ONE working disk shared across all editors
 
     static _migrated = false;
 
@@ -301,6 +302,26 @@ class GMDisk {
         if (changed) this._savePoolIndex(index);
     }
 
+    /**
+     * Seed the shared working-disk selection from a legacy per-editor selection (one-time upgrade).
+     * Prefers `preferredKey` (this editor's old key); else the first surviving per-editor selection.
+     * Returns a pool id that still exists, or null.
+     */
+    static _adoptLegacySelection(preferredKey) {
+        const pool = this.getPool();
+        const valid = id => id && pool.some(e => e.id === id);
+        const pref = localStorage.getItem(preferredKey);
+        if (valid(pref)) return pref;
+        for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k && k.startsWith(this.SELECTION_PREFIX)) {
+                const v = localStorage.getItem(k);
+                if (valid(v)) return v;
+            }
+        }
+        return null;
+    }
+
     // =========================================================================
     // CONSTRUCTOR
     // =========================================================================
@@ -313,7 +334,10 @@ class GMDisk {
      */
     constructor(options = {}) {
         const pageName = window.location.pathname.split('/').pop().replace('.html', '') || 'default';
-        this.selectionKey = options.selectionKey || `${GMDisk.SELECTION_PREFIX}${pageName}`;
+        // One working disk shared across all editors: default to the shared CURRENT_KEY rather than a
+        // per-editor key, so inserting/switching a disk in one editor is seen in every other editor.
+        this.selectionKey = options.selectionKey || GMDisk.CURRENT_KEY;
+        this._legacyKey = `${GMDisk.SELECTION_PREFIX}${pageName}`;   // pre-shared per-editor key, for the one-time upgrade seed
 
         this.container = options.container || document.body;
 
@@ -359,7 +383,14 @@ class GMDisk {
      * @returns {boolean} true if a disk was loaded
      */
     load() {
-        const savedId = localStorage.getItem(this.selectionKey);
+        let savedId = localStorage.getItem(this.selectionKey);
+        // Upgrade seed: the first time we read the shared key and it's empty, adopt any existing
+        // per-editor selection so a user's current working disk carries over instead of jumping to
+        // the first disk in the pool. Runs once (the write below makes it non-empty thereafter).
+        if (!savedId && this.selectionKey === GMDisk.CURRENT_KEY) {
+            savedId = GMDisk._adoptLegacySelection(this._legacyKey);
+            if (savedId) localStorage.setItem(this.selectionKey, savedId);
+        }
         if (savedId && this.selectDisk(savedId)) return true;
 
         // Stale or missing selection — fall back to first disk in pool
@@ -393,6 +424,22 @@ class GMDisk {
             console.warn('GMDisk: Failed to instantiate D64:', e.message);
             return false;
         }
+    }
+
+    /**
+     * Keep this editor's inserted disk in sync when the shared working disk is switched in ANOTHER
+     * tab. The `storage` event fires only in other tabs, so when CURRENT_KEY changes we silently
+     * repoint this instance at the new disk — the picker / save / load then use it, like a 1541
+     * where every tool reads whatever disk is in the drive. The current in-progress edit is left
+     * untouched; the disk stays partitioned behind the file popup, so no UI notice is needed.
+     */
+    onExternalChange() {
+        if (this.selectionKey !== GMDisk.CURRENT_KEY) return;   // only the shared working disk syncs cross-tab
+        window.addEventListener('storage', (e) => {
+            if (e.key !== GMDisk.CURRENT_KEY || !e.newValue) return;
+            if (e.newValue === this.currentDiskId) return;       // already on this disk
+            this.selectDisk(e.newValue);
+        });
     }
 
     /**

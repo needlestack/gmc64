@@ -3341,6 +3341,9 @@ function syncToSprite() {
 // GMDisk instance
 const disk = new GMDisk();
 disk.autoLoad();
+// Live cross-tab sync: follow the shared working disk if another tab switches it
+// (repoints the picker/save/load; the in-progress sprite is left untouched).
+disk.onExternalChange();
 // First-visit convenience: seed the demo disk into an empty pool so the
 // file picker isn't a dead end. Fire-and-forget; addToPool dedupes.
 GMTools.ensureDemoDiskInPool(disk);

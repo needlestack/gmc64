@@ -279,11 +279,53 @@ body {
     border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
-/* Range input tuned to fit the dark hamburger popup. accent-color lets
-   modern browsers restyle the track/thumb without a full custom shadow-
-   DOM rebuild — good enough for a soft-launch. */
-#settingsPopup input[type="range"] {
-    width: 120px;
+/* Volume control — video-player style. The mute button (audio indicator)
+   sits in the bar; a vertical slider floats directly above it so the user
+   can drag straight up. Panel hidden until hover/focus. */
+#volumeControl {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+#volumePanel {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 4px;
+    padding: 10px 4px;
+    display: flex;
+    justify-content: center;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.12s ease;
+    z-index: 10;
+}
+/* Invisible bridge over the gap between panel and button so the pointer
+   can travel up without dropping :hover and collapsing the panel. */
+#volumePanel::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    height: 8px;
+}
+#volumeControl:hover #volumePanel,
+#volumeControl:focus-within #volumePanel {
+    opacity: 1;
+    visibility: visible;
+}
+/* Vertical range. writing-mode + direction:rtl gives min-at-bottom,
+   max-at-top on modern browsers; accent-color restyles track/thumb. */
+#volumeSlider {
+    writing-mode: vertical-lr;
+    direction: rtl;
+    width: 18px;
+    height: 90px;
+    margin: 0;
     accent-color: rgba(255, 255, 255, 0.85);
     cursor: pointer;
 }
@@ -450,14 +492,17 @@ body.mobile-phone #gameControls:hover { opacity: 1; }
                       stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
         </button>
-        <!-- audio indicator mounts here at first play -->
+        <!-- Volume: mute button (GMAudioIndicator) mounts here; the vertical
+             slider floats directly above it, revealed on hover. -->
+        <div id="volumeControl">
+            <div id="volumePanel">
+                <input type="range" id="volumeSlider" min="0" max="100" step="1"
+                       value="75" orient="vertical" aria-label="Volume">
+            </div>
+            <!-- audio indicator (mute button) mounts here at first play -->
+        </div>
     </div>
     <div id="settingsPopup">
-        <div class="settings-section-label">Audio</div>
-        <div class="row">
-            <label>Volume</label>
-            <input type="range" id="volumeSlider" min="0" max="100" step="1" value="75">
-        </div>
         <div class="settings-section-label">Controls</div>
         <div class="row">
             <label>Joystick 1</label>
@@ -541,6 +586,9 @@ let animationFrameToggle = false;
 const VOLUME_KEY = 'gmc64-volume';
 let userVolume = parseFloat(localStorage.getItem(VOLUME_KEY));
 if (!isFinite(userVolume) || userVolume < 0 || userVolume > 1) userVolume = 0.75;
+// Remembers the last audible level so unmuting from a zeroed slider (or a
+// mute click) can restore something sensible rather than dead silence.
+let lastNonZeroVolume = userVolume > 0 ? userVolume : 0.75;
 
 // SFX_BASELINE is the pre-user-volume gain the host masterGain was pinned
 // at before we introduced the slider. Keep it as the "100% user volume"
@@ -651,17 +699,43 @@ function toggleSettingsPopup(e) {
     document.getElementById('settingsPopup').classList.toggle('active');
 }
 
-// Volume slider — reads current userVolume, applies changes to both
-// audio paths (SFX via host masterGain, music via vm.setConfig →
-// _effectiveSongVolume), persists on 'input' so drags feel live.
+// Apply a new volume level to both audio paths (SFX via host masterGain,
+// music via vm.setConfig → _effectiveSongVolume), persist it, and resync
+// the UI. The single choke point for every volume change so the slider,
+// mute icon, and stored preference never drift apart.
+function applyUserVolume(v, { persist = true } = {}) {
+    userVolume = Math.max(0, Math.min(1, v));
+    if (userVolume > 0) lastNonZeroVolume = userVolume;
+    if (masterGain) masterGain.gain.value = SFX_BASELINE * userVolume;
+    if (vm) vm.setConfig({ userVolume });
+    if (persist) localStorage.setItem(VOLUME_KEY, String(userVolume));
+    syncVolumeUI();
+}
+
+// Push current state out to the visible controls. Skips writing the slider
+// while it's the one being dragged (activeElement) so we don't fight the
+// user's own input mid-gesture.
+function syncVolumeUI() {
+    const slider = document.getElementById('volumeSlider');
+    if (slider && document.activeElement !== slider) {
+        slider.value = Math.round(userVolume * 100);
+    }
+    if (audioIndicator) audioIndicator.refresh();
+}
+
+// Volume slider — drives applyUserVolume live on drag. Crossing 0 mirrors
+// the hard-mute flag so the speaker icon always tells the truth: slide to
+// the bottom and it reads muted; slide back up and it clears.
 function setupVolumeSlider() {
     const slider = document.getElementById('volumeSlider');
     slider.value = Math.round(userVolume * 100);
     slider.addEventListener('input', () => {
-        userVolume = slider.value / 100;
-        localStorage.setItem(VOLUME_KEY, String(userVolume));
-        if (masterGain) masterGain.gain.value = SFX_BASELINE * userVolume;
-        if (vm) vm.setConfig({ userVolume });
+        const v = slider.value / 100;
+        if (vm) {
+            if (v === 0 && !vm.config.audioMuted) vm.setConfig({ audioMuted: true });
+            else if (v > 0 && vm.config.audioMuted) vm.setConfig({ audioMuted: false });
+        }
+        applyUserVolume(v);
     });
 }
 
@@ -819,13 +893,24 @@ async function startGame() {
     vm.setConfig({ userVolume });
 
     if (!audioIndicator) {
-        // Mount inside #gameControls so it flexes with the other icons.
-        // (The shared CSS defaults the indicator to position:absolute; our
+        // Mount inside #volumeControl (in #gameControls) so it flexes with
+        // the other icons and anchors the hover-up volume slider. (The
+        // shared CSS defaults the indicator to position:absolute; our
         // #gameControls .gm-audio-indicator override neutralises that.)
-        audioIndicator = new GMAudioIndicator(document.getElementById('gameControls'));
+        audioIndicator = new GMAudioIndicator(document.getElementById('volumeControl'));
         audioIndicator.bind({
-            getMuted: () => vm.config.audioMuted,
-            setMuted: (muted) => vm.setConfig({ audioMuted: muted }),
+            // Effectively muted whenever the hard-mute flag is set OR the
+            // slider is at zero — keeps the icon truthful against both.
+            getMuted: () => vm.config.audioMuted || userVolume === 0,
+            setMuted: (muted) => {
+                // Unmuting a zeroed slider would still be silent — restore
+                // the last audible level so a click actually brings sound back.
+                if (!muted && userVolume === 0) {
+                    applyUserVolume(lastNonZeroVolume || 0.75);
+                }
+                vm.setConfig({ audioMuted: muted });
+                syncVolumeUI();
+            },
             getAudioContext: () => audioContext,
             onUnlock: () => {
                 if (vm && vm.currentSong) {
