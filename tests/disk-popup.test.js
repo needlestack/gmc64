@@ -29,7 +29,7 @@ beforeAll(async () => {
     browser = await puppeteer.launch({ headless: true });
     blankDiskBase64 = readFileSync(join(PROJECT_ROOT, 'tests/disks/BlankDisk.d64')).toString('base64');
     s2DiskBase64 = readFileSync(join(PROJECT_ROOT, 'tests/disks/gmc64-test.d64')).toString('base64');
-    standaloneDiskBase64 = readFileSync(join(PROJECT_ROOT, 'tests/disks/standalone.d64')).toString('base64');
+    standaloneDiskBase64 = readFileSync(join(PROJECT_ROOT, 'tests/disks/gmc64-standalone.d64')).toString('base64');
     s2Directory = JSON.parse(readFileSync(join(PROJECT_ROOT, 'tests/golden/testdisk-directory.json'), 'utf8'));
 });
 
@@ -46,7 +46,7 @@ async function openPage({ withDisk = true, disk = 'blank' } = {}) {
                    : disk === 'standalone' ? standaloneDiskBase64
                    : blankDiskBase64;
         const name = disk === 's2' ? 'gmc64-test.d64'
-                   : disk === 'standalone' ? 'standalone.d64'
+                   : disk === 'standalone' ? 'gmc64-standalone.d64'
                    : 'test.d64';
         await page.evaluateOnNewDocument((data, name, key) => {
             localStorage.clear();
@@ -634,7 +634,7 @@ describe('disk popup shows all file types', () => {
 });
 
 describe('disk popup standalone-file detection', () => {
-    // standalone.d64 has one ALIENS standalone (no /XXX extension, 191
+    // gmc64-standalone.d64 has one ALIENS standalone (no /XXX extension, 191
     // blocks, load addr $0302). ALIENS appears in its own "standalone"
     // group. Standalones only load in the program editor (only it handles
     // the $0302 magic), so in every other editor — this popup is hosted on

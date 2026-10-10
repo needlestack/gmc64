@@ -1637,8 +1637,59 @@ function serializeProgram(programData, originalFileData = null) {
     return result;
 }
 
+// Every file a program needs, as GameMaker stores them on disk: the program itself, the scenes
+// it names, and each embedded sprite, sound and song as its own .SPR/.SND/.SNG. This is how a
+// standalone game found without its source disk becomes editable in every gmc64 editor (and in
+// GameMaker itself) again.
+//
+// Returns { files: [{ fileName, kind, data }], skipped: [{ fileName, kind, reason }] }.
+// fileName is GameMaker form ("NAME  /SPR"). Scenes the program couldn't load are skipped --
+// parseProgramData stands in a blank scene for those, which must not be written as if real. A
+// second asset with an already-used name is skipped too: a disk can only hold one of each name.
+function programToFiles(programData, programName, originalFileData = null) {
+    const files = [];
+    const skipped = [];
+    const used = new Set();
+    const add = (name, ext, kind, makeBytes) => {
+        const fileName = String(name).toUpperCase().padEnd(6, ' ').slice(0, 6) + '/' + ext;
+        if (used.has(fileName)) {
+            skipped.push({ fileName, kind, reason: 'duplicate name' });
+            return;
+        }
+        used.add(fileName);
+        files.push({ fileName, kind, data: makeBytes() });
+    };
+
+    add(programName, 'PRG', 'program', () => serializeProgram(programData, originalFileData));
+
+    const missing = new Set((programData.missingScenes || []).map(m => m.index));
+    (programData.mediaStore || []).forEach((entry, idx) => {
+        if (!entry) return;
+        if (entry.type === 'scene') {
+            if (missing.has(idx) || !entry.scene) {
+                skipped.push({ fileName: entry.name.toUpperCase() + '/PIC', kind: 'scene', reason: 'not found' });
+            } else {
+                add(entry.name, 'PIC', 'scene', () => entry.scene.save());
+            }
+        } else if (entry.type === 'sprite') {
+            // Quad markers (quadIndex > 0) have no data: the main entry's gmSprite holds every
+            // quad and serializes them into one .SPR, as GameMaker stores multi-part sprites.
+            if (entry.sprite && !(entry.quadIndex > 0)) {
+                add(entry.name, 'SPR', 'sprite', () => entry.sprite.serialize());
+            }
+        } else if (entry.type === 'sound' && entry.soundFileData) {
+            add(entry.name, 'SND', 'sound', () => new gmSound(entry.soundFileData).serialize());
+        } else if (entry.type === 'song' && entry.songFileData) {
+            add(entry.name, 'SNG', 'song', () => new gmMusic(entry.songFileData).serialize());
+        }
+    });
+
+    return { files, skipped };
+}
+
 // Make available globally for browser and Node.js testing
 if (typeof globalThis !== 'undefined') {
+    globalThis.programToFiles = programToFiles;
     globalThis.parseProgramData = parseProgramData;
     globalThis.serializeProgram = serializeProgram;
     globalThis.standaloneToPRG = standaloneToPRG;

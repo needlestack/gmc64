@@ -272,6 +272,24 @@ Verified byte-perfect on ALIENS (one scene, STARS) and on multi-scene
 game exports (both slots populated with distinct names). Single-scene
 games return just one entry at $A000.
 
+**Extract All** (`programToFiles` in gmParser.js, the program editor's
+file-popup button): writes the loaded program plus every scene, sprite,
+sound and song it uses to the inserted disk as separate GameMaker files.
+This is what makes a standalone found in the wild — no source disk —
+editable again in every editor. Missing scenes are skipped (never written
+as the blank placeholder parseProgramData substitutes); files already on
+the disk with identical bytes are left alone; files that would change get
+one confirmation; a dry run on a scratch copy of the disk catches a full
+disk/directory before anything is written.
+
+**IP:** a standalone bundles GameMaker's 6502 runtime ($8800–$9FFF,
+byte-identical across games by different authors) — Activision's code. gmc64
+only ever *reads* standalones; it must never produce C64 output containing
+that runtime, and raw standalone exports are never committed. The committed
+fixture `tests/disks/gmc64-standalone.d64` is our ALIENS export scrubbed by
+`tools/make-standalone-fixture.mjs`: every byte gmc64 doesn't extract is
+zeroed, the runtime region is verified empty.
+
 ### PRG Multi-Part Sprite Parsing (CRITICAL)
 
 **ARCHITECTURAL RULE: Multi-part sprites are ALWAYS a single gmSprite object.**
@@ -705,6 +723,7 @@ their own deps.
 | `render-test-frames.js` | Renders the runtime frame goldens as full 320×200 PNGs (`tools/test-frame-*.png`). Useful when you want to *see* what the pixel-comparison tests are actually checking — the sparse 40×25 sampling in the golden throws away most of the detail. |
 | `build-demo.js` | One-shot synthesizer that builds a demo disk from scratch (sprites, scenes, sounds, programs constructed in memory). Not the source of truth for the demo disk anymore — once a disk is hand-edited in the editor, `build-demo.js` is a historical artifact and rebuilding from it would clobber edits. |
 | `screenshot.js` | Puppeteer-driven screenshot utility (`node tools/screenshot.js music-maker.html`). |
+| `make-standalone-fixture.mjs` | Regenerates `tests/disks/gmc64-standalone.d64` from a raw GameMaker standalone export: keeps only the bytes gmc64 extracts (program, data, scenes) plus the load address, verifies extraction is unchanged and GameMaker's runtime region is empty. `node tools/make-standalone-fixture.mjs <standalone.d64> [FILENAME]` |
 | `hex-viewer.html` | Browser-based hex viewer for inspecting `.d64`/`.prg` bytes. Loaded by `browser-load.test.js` as a smoke test. |
 | `scale-font.py` | Python script to horizontally compress a font to match the C64's non-square pixel aspect ratio. One-shot — used when generating the woff2 files in `css/fonts/`. |
 
@@ -741,6 +760,7 @@ Format / runtime tests (node, no browser):
 | `gmRuntime.test.js` | VM execution, input simulation, frame goldens, collision |
 | `standalone-bundle.test.js` | Asserts `js/standalone-source.js` is in sync with `play.html` + the runtime JS it inlines |
 | `browser-load.test.js` | Loads each HTML page headlessly and asserts no script errors |
+| `extract-all.test.js` | Extract All: a standalone extracts to the same files as its source program, assets re-save unchanged, missing/duplicate handling, and the editor button (write, already-there, replace prompt) |
 | `gm-fidelity.test.js` | Checks against things that aren't us: the 1541 last-sector rule, VICE `c1541` (if installed), and byte-exact re-saves of every file on the original GameMaker S1/S2 disks (if present in `tests/disks/` — gitignored, never committed) |
 
 Editor UI tests (puppeteer):
@@ -798,6 +818,8 @@ The IP-clean test disk is `tests/disks/gmc64-test.d64`. Its two programs:
 
 - **GMC64I/PRG** — Intro demo: multi-quad sprites (including the 4-quad SAUCER with magnification), per-slot sprite color, scene plotting, character printing, subroutines, music.
 - **ALIENS/PRG** — Shooter: 4-direction input, formation logic, data table reads, sprite swaps, scene bg mutation, sprite/sprite collision, hi-res sprites (PBULL, EBULL).
+
+`tests/disks/gmc64-standalone.d64` holds ALIENS exported to standalone by GameMaker, scrubbed of GameMaker's runtime (see "Standalone files").
 
 ## Open Questions
 

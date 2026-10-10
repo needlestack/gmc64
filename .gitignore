@@ -39,6 +39,9 @@ bludred/
 # Test fixtures (frozen content, edited via tests only)
 !tests/disks/BlankDisk.d64
 !tests/disks/gmc64-test.d64
+# Our ALIENS demo exported to standalone, scrubbed of GameMaker's runtime by
+# tools/make-standalone-fixture.mjs. (The raw export, standalone.d64, stays ignored.)
+!tests/disks/gmc64-standalone.d64
 
 # Public-facing demo disks (curated content, may evolve over time)
 !disks/

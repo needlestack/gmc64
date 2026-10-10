@@ -1194,13 +1194,25 @@ class GMDisk {
     }
 
     _askReplace(fileName) {
+        return this.confirm(`Replace existing ${fileName}?`);
+    }
+
+    /**
+     * Ask a yes/no question in the popup's message bar (the same chip prompt as "Replace
+     * existing X?"). Resolves true on yes; false on no or any dismissal (outside click,
+     * Escape, popup close). Requires the popup to be open.
+     * @param {string} question
+     * @returns {Promise<boolean>}
+     */
+    confirm(question) {
+        if (!this.popup) return Promise.resolve(false);
         return new Promise((resolve) => {
             const prompt = this.popup.querySelector('.gm-disk-replace-prompt');
             const text = prompt.querySelector('.gm-disk-replace-text');
             const yes = prompt.querySelector('.gm-disk-replace-yes');
             const no = prompt.querySelector('.gm-disk-replace-no');
 
-            text.textContent = `Replace existing ${fileName}?`;
+            text.textContent = question;
             const baseRestore = this._openPrompt({ promptEl: prompt });
 
             // Single resolution path. The promise MUST resolve exactly

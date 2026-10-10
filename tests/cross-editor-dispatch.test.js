@@ -35,7 +35,7 @@ beforeAll(async () => {
         join(PROJECT_ROOT, 'tests/disks/gmc64-test.d64')
     ).toString('base64');
     standaloneDiskBase64 = readFileSync(
-        join(PROJECT_ROOT, 'tests/disks/standalone.d64')
+        join(PROJECT_ROOT, 'tests/disks/gmc64-standalone.d64')
     ).toString('base64');
 });
 
@@ -165,7 +165,7 @@ describe('cross-editor dispatch — standalone exports', () => {
     test('sprite-maker → Load on a dimmed standalone dispatches to program-editor', async () => {
         const page = await browser.newPage();
         await openEditor(page, 'sprite-maker', {
-            diskBase64: standaloneDiskBase64, diskName: 'standalone.d64'
+            diskBase64: standaloneDiskBase64, diskName: 'gmc64-standalone.d64'
         });
         const poolId = await page.evaluate(() => disk.currentDiskId);
 
@@ -204,7 +204,7 @@ describe('cross-editor dispatch — standalone exports', () => {
         // sprite-maker page, then craft the dispatch URL by hand.
         const setup = await browser.newPage();
         await openEditor(setup, 'sprite-maker', {
-            diskBase64: standaloneDiskBase64, diskName: 'standalone.d64'
+            diskBase64: standaloneDiskBase64, diskName: 'gmc64-standalone.d64'
         });
         await openDiskPopup(setup); // populates disk.directoryEntries
         const { poolId, fileName } = await setup.evaluate(() => {
@@ -239,7 +239,7 @@ describe('cross-editor dispatch — standalone exports', () => {
     test('program-editor → the same standalone is loadable, not dimmed', async () => {
         const page = await browser.newPage();
         await openEditor(page, 'program-editor', {
-            diskBase64: standaloneDiskBase64, diskName: 'standalone.d64'
+            diskBase64: standaloneDiskBase64, diskName: 'gmc64-standalone.d64'
         });
 
         await openDiskPopup(page);
