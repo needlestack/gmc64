@@ -119,6 +119,9 @@ class gmSound {
         this.speed = 255 - fileData[14];
         this.eqOn = (fileData[15] >> 4) > 7;
         this.volume = fileData[15] & 0x0F;
+        // Bits 4-6 of byte 15 aren't modeled (most GameMaker files have 0x7_ here, some 0x0_),
+        // but they must survive a re-save for the file to match what GameMaker wrote.
+        this._byte15Extra = fileData[15] & 0x70;
         const frameCount = fileData[17];
 
         // Parse frames
@@ -140,7 +143,11 @@ class gmSound {
                 eqLowPass: fileData[o + 9] & 0x0F,      // 0-7
                 eqBandPass: fileData[o + 10] >> 4,      // 0-15
                 eqHighPass: fileData[o + 10] & 0x0F,    // 0-15
-                tie: (fileData[o + 11] >> 4) === 8
+                tie: (fileData[o + 11] >> 4) === 8,
+                // The frame's raw 16 bytes, so serialize() can carry through bits we don't model
+                // (e.g. byte 13 is 0x80 in one frame of SIREN/SND). Never mutated; frames created
+                // in the editor simply have no _raw and those bits default to zero.
+                _raw: fileData.slice(o, o + gmSound.FRAME_SIZE)
             });
         }
     }
@@ -160,7 +167,9 @@ class gmSound {
     // Returns Uint8Array suitable for writing to D64
     serialize() {
         const frameCount = this.frames.length;
-        const totalSize = gmSound.HEADER_SIZE + (frameCount * gmSound.FRAME_SIZE) + 1; // +1 for trailing 00
+        // Exactly header + frames: every original GameMaker .SND is 18 + 16 * frames bytes.
+        // (This used to add a "trailing 00" byte; that was never in GameMaker's files.)
+        const totalSize = gmSound.HEADER_SIZE + (frameCount * gmSound.FRAME_SIZE);
         const data = new Uint8Array(totalSize);
 
         // Magic number (bytes 0-4)
@@ -188,7 +197,7 @@ class gmSound {
 
         // EQ on (bit 7) + Volume (bits 0-3) (byte 15)
         // eqOn: when true, high nibble > 7 (we use 0x80)
-        data[15] = (this.eqOn ? 0x80 : 0x00) | (this.volume & 0x0F);
+        data[15] = (this.eqOn ? 0x80 : 0x00) | (this._byte15Extra || 0) | (this.volume & 0x0F);
 
         // Unknown byte 16 (observed as 0x00)
         data[16] = 0x00;
@@ -200,6 +209,10 @@ class gmSound {
         for (let i = 0; i < frameCount; i++) {
             const frame = this.frames[i];
             const o = gmSound.HEADER_SIZE + (i * gmSound.FRAME_SIZE);
+
+            // Start from the frame's original bytes (if it came from a file) so unmodeled bits
+            // round-trip; every modeled field below overwrites its own bits.
+            if (frame._raw) data.set(frame._raw, o);
 
             // Wave type (byte 0)
             data[o] = frame.wave;
@@ -229,23 +242,16 @@ class gmSound {
             data[o + 8] = frame.dur;
 
             // EQ low pass (byte 9, low nibble)
-            data[o + 9] = frame.eqLowPass & 0x0F;
+            data[o + 9] = (data[o + 9] & 0xF0) | (frame.eqLowPass & 0x0F);
 
             // EQ band pass (high nibble) + high pass (low nibble) (byte 10)
             data[o + 10] = ((frame.eqBandPass & 0x0F) << 4) | (frame.eqHighPass & 0x0F);
 
             // Tie flag (byte 11) - 0x80 when tie is on
-            data[o + 11] = frame.tie ? 0x80 : 0x00;
+            data[o + 11] = (data[o + 11] & 0x0F) | (frame.tie ? 0x80 : 0x00);
 
-            // Remaining bytes in frame (12-15) are zeros
-            data[o + 12] = 0x00;
-            data[o + 13] = 0x00;
-            data[o + 14] = 0x00;
-            data[o + 15] = 0x00;
+            // Bytes 12-15 aren't modeled: carried from _raw above, else zero.
         }
-
-        // Trailing 00 byte
-        data[totalSize - 1] = 0x00;
 
         return data;
     }

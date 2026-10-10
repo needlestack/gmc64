@@ -196,7 +196,13 @@ class D64 {
                 // round-trip through this library was byte-perfect, and nothing here could ever
                 // detect either fault. Only a real KERNAL, which uses the actual convention, saw
                 // the malformed disk. Fixing the writer alone therefore BREAKS this reader.
-                const endOffset = nextSector + 1;
+                //
+                // Legacy repair: before that fix our writer stored 0 (not 255) for a final sector
+                // holding a full 254 bytes. 0 and 1 are never valid here (they would mean the last
+                // used byte sits inside the link bytes), so read either as a full sector. Without
+                // this, a file saved by the old writer at an exact multiple of 254 bytes would
+                // silently lose its last 254 bytes.
+                const endOffset = nextSector < 2 ? 256 : nextSector + 1;
                 chainData.push(...sectorData.slice(dataStart, endOffset));
                 break;
             }

@@ -135,7 +135,7 @@ regions.push({ memStart: bytecodeTailEnd, memEnd: dataStart, cat: 'runtime-ram',
 regions.push({ memStart: dataStart, memEnd: 0x3D90, cat: 'game-data', name: 'Data section',            note: 'sprites, sounds, songs, print strings' });
 regions.push({ memStart: 0x3D90, memEnd: 0x3F9C, cat: 'zero-init',     name: 'Data-section headroom',    note: 'unused gap up to pointer table' });
 regions.push({ memStart: 0x3F9C, memEnd: 0x3FB0, cat: 'editor-state',  name: 'Pointer table',            note: '2-byte entries pointing into data section' });
-regions.push({ memStart: 0x3FB0, memEnd: 0x4000, cat: 'editor-state',  name: 'Slot names region',        note: '79 bytes of editor sprite/sound slot state' });
+regions.push({ memStart: 0x3FB0, memEnd: 0x4000, cat: 'editor-state',  name: 'Slot names region',        note: '80 bytes: 8 sprite-slot names + "ANYONE  CLR2/3" $80 \'-\'' });
 regions.push({ memStart: 0x4000, memEnd: 0x6000, cat: 'runtime',       name: 'Runtime code (mid)',       note: 'engine machine code + tables' });
 regions.push({ memStart: 0x6000, memEnd: 0x7F40, cat: 'scene',         name: 'Scene slot 1 bitmap',      note: 'VIC bank 1 hi-res (8KB)' });
 regions.push({ memStart: 0x7F40, memEnd: 0x7F4A, cat: 'scene',         name: 'Scene slot 1 footer',      note: 'palette + 6-char name' });

@@ -64,44 +64,66 @@
 // code that was causing bugs in hi-res sprite handling.
 //
 // === SPRITE FILE FORMAT ===
+//
 // GameMaker sprites have a 37-byte main header, followed by frame data.
 // Multi-sprite ("quad") sprites have additional 32-byte subheaders.
 // Each frame is 64 bytes (63 bytes of pixel data + 1 padding byte).
 // A C64 hardware sprite is 24×21 pixels (12×21 in multicolor fat pixels).
 //
+// Offsets below match decodeHeader()/serialize() and were checked byte-for-byte against all 66
+// sprites on the original GameMaker S1/S2 disks (tests/gm-fidelity.test.js). A previous version
+// of this table had most offsets wrong; if you change it, re-run that test.
+//
 // Main Header (37 bytes):
 //   [0-4]   Magic number: 1D 60 47 45 4B
-//   [5-10]  Sprite name (6 PETSCII characters)
-//   [11]    X position (GM coordinate space)
-//   [12]    Y position (GM coordinate space)
-//   [13]    Color 1 (C64 palette index 0-15, unique per sprite)
-//   [14]    Color 2 (C64 palette index 0-15, shared)
-//   [15]    Color 3 (C64 palette index 0-15, shared)
-//   [16]    Background color (C64 palette index 0-15)
-//   [17]    Flags byte 1: bit 7 = X-double, bit 6 = Y-double
-//   [18]    Flags byte 2: bit 7 = multicolor mode, bit 6 = overlay
-//   [19]    Number of frames
-//   [20]    Number of additional sprites (quads: 0-3)
-//   [21-36] Reserved/padding
+//   [5-10]  Sprite name (6 screen-code characters)
+//   [11]    Always 0x01
+//   [12]    GM "Color 2" (shared, pixel value 01). Stored in hi-res sprites too.
+//   [13]    GM "Color 3" (shared, pixel value 11). Stored in hi-res sprites too.
+//   [14]    Multicolor flag: 0 = hi-res, 1 = multicolor
+//   [15]    Animation frame count - 1 (0-30)
+//   [16]    X double (0/1)
+//   [17]    Y double (0/1)
+//   [18]    Background color
+//   [19]    Quad count - 1 (0-3)
+//   [20-21] Quad data size, little-endian: 32 + totalFrames * 64 (totalFrames may exceed
+//           the animation count: hidden frames past the loop)
+//   [22-23] 0x00
+//   [24]    X position, low byte (hi-res coordinates of the RIGHT edge, i.e. left + 24)
+//   [25]    Y position + 50
+//   [26]    Bit 4: X position + 256. The other bits look like a snapshot of the VIC x-MSB
+//           register from GM's editor (C0 on most originals); preserved, not interpreted.
+//   [27]    Sprite number within the quad set (0 = main)
+//   [28]    GM "Color 1" (unique, pixel value 10; the drawing colour in hi-res)
+//   [29-36] 0x00
 //
-// Subheader (32 bytes, for each additional quad sprite):
-//   [0-5]   Sprite name (6 PETSCII characters, no magic number)
-//   [6]     X offset from main sprite
-//   [7]     Y offset from main sprite
-//   [8]     Color 1
-//   [9]     Color 2
-//   [10]    Color 3
-//   [11]    Background color
-//   [12]    Flags byte 1
-//   [13]    Flags byte 2
-//   [14]    Number of frames
-//   [15-31] Reserved/padding
+// Subheader (32 bytes, for each additional quad; no magic number):
+//   [0]     0x2D marker
+//   [1-5]   Sprite name (5 screen-code characters)
+//   [6]     Always 0x01
+//   [7-8]   Color 2, Color 3 (copies; the main header's palette is the one used)
+//   [9]     Multicolor flag
+//   [10]    Animation frame count - 1
+//   [11-12] X double, Y double
+//   [13]    Background color (copy)
+//   [14]    Quad count - 1
+//   [15-16] This quad's data size, little-endian: 32 + totalFrames * 64
+//   [17-18] X / Y offset from the main sprite, signed, in fat pixels (both modes)
+//   [19-20] Absolute X low byte (main x + offset * 2, in BOTH modes) / absolute Y
+//   [21]    0x00
+//   [22]    Sprite number within the quad set (1-3)
+//   [23]    Color 1 (copy)
+//   [24-31] 0x00
 //
-// Frame Data (64 bytes per frame):
+// Embedded in a PRG, each quad is a separate 32-byte-header data page entry instead:
+// see CLAUDE.md "Header Size Difference (.SPR vs Data Page)".
+//
+// Frame Data (64 bytes per frame, the last frame included):
 //   [0-62]  Pixel data: 21 rows × 3 bytes per row = 63 bytes
 //           Each byte contains 4 pixels (2 bits each) in multicolor mode
 //           or 8 pixels (1 bit each) in hi-res mode
-//   [63]    Padding byte
+//   [63]    Padding byte. Never drawn, but GM sometimes stores a non-zero value
+//           (e.g. 08 in BOAT01/SPR), so it round-trips.
 //
 // === MULTI-PART SPRITE CONVENTION ===
 // ONE gmSprite object manages ALL quads. Whether loaded from .SPR file or PRG,
@@ -278,8 +300,8 @@ class gmSprite {
     // Header byte layout (offsets shown for main header; subtract 5 for subheader):
     //   [0-4]   Magic number (main only): identifies as GM sprite file
     //   [5-10]  Sprite name: 6 PETSCII characters (main) or 5 chars (sub)
-    //   [12]    Color 1 (multicolor mode)
-    //   [13]    Color 3 (multicolor mode)
+    //   [12]    GM Color 2 (shared; stored in both modes)
+    //   [13]    GM Color 3 (shared; stored in both modes)
     //   [14]    Mode: 0=hi-res, non-zero=multicolor
     //   [15]    Animation frame count (0-30, add 1 for actual count 1-31)
     //   [16]    X double: 0=normal, non-zero=2× width
@@ -291,7 +313,7 @@ class gmSprite {
     //           This may exceed numFrames when sprite has hidden frames beyond animation.
     //   [24]    X position (low byte)
     //   [25]    Y position (values 50-229 map to screen rows 0-179)
-    //   [26]    X position high bit (bit 4 indicates +256 for far-right positions)
+    //   [26]    X position high bit (bit 4 indicates +256; other bits preserved, see file header)
     //   [27]    Sprite number within quad (0-3, add 1 for 1-4)
     //   [28]    Color 2 (both modes)
     decodeHeader(fileData, isSub) {
@@ -328,6 +350,9 @@ class gmSprite {
         //
         // In hi-res mode, only _gmColor1 is used (the sole drawing color).
         // GM stores hi-res color at byte 28 (same as multicolor's unique color).
+        // Bytes 12/13 are still read in hi-res: GameMaker keeps its shared colours there in
+        // both modes (e.g. 02/06 in SHIP and ARROW on the S2 disk), so they must round-trip.
+        // The renderer never uses them for a hi-res sprite.
         //
         // The palette is sprite-wide: the VIC chip applies one palette to
         // every quad. The file format stores colour bytes on every subheader
@@ -338,14 +363,8 @@ class gmSprite {
         // the per-quad fields always agree with the canonical sprite palette.
         sprite._bgColor = fileData[18 + o];  // background (transparent in-game)
         sprite._gmColor1 = fileData[28 + o]; // GM "Color 1" - unique sprite color (always byte 28)
-        if (sprite.isMultiColor) {
-            sprite._gmColor2 = fileData[12 + o];  // GM "Color 2" - shared (byte 12)
-            sprite._gmColor3 = fileData[13 + o];  // GM "Color 3" - shared (byte 13)
-        } else {
-            // Hi-res: only _gmColor1 is used
-            sprite._gmColor2 = 0;  // unused in hi-res
-            sprite._gmColor3 = 0;  // unused in hi-res
-        }
+        sprite._gmColor2 = fileData[12 + o];  // GM "Color 2" - shared (byte 12)
+        sprite._gmColor3 = fileData[13 + o];  // GM "Color 3" - shared (byte 13)
 
         // === POSITIONING ===
         if (sprite.spriteNum === 1) {
@@ -400,6 +419,11 @@ class gmSprite {
         const header = this.decodeHeader(this.fileData);
         let readStart = gmSprite.HEADER_DATA_SIZE;
 
+        // Byte 26: only bit 4 (main sprite x > 255) is understood. GameMaker's other bits look
+        // like a snapshot of the VIC x-MSB register, editor sprites included (C0 on most
+        // single-quad originals), and can't be derived from the sprite, so keep them verbatim.
+        this._byte26 = this.fileData[26];
+
         this.sprite = [];
         for (let quad = 0; quad < header.numSprites; ++quad) {
             let quadHeader;
@@ -416,14 +440,9 @@ class gmSprite {
             // Read frame data for this quad using totalFrames from header
             // (totalFrames may exceed numFrames when sprite has hidden frames beyond animation).
             //
-            // A C64 sprite is 24×21 = 63 real bytes; frames are padded to 64 for
-            // alignment EXCEPT the very last frame stored, which serialize() writes as
-            // 63 (no trailing padding — matches original GM files). We read a flat 64
-            // here, so for a sprite embedded in a PRG (where more data follows), the
-            // final frame's 64th byte over-reads 1 byte of the next entry. That byte is
-            // index 63 = padding, which the renderer never draws — so it's harmless.
-            // Don't "fix" this by trimming: standalone .SPR reads clamp at EOF anyway,
-            // and code that treats a full 64-byte buffer as authoritative would break.
+            // A C64 sprite is 24×21 = 63 real bytes; every frame, the last included, is
+            // stored as 64 (GameMaker's files carry a full 64th byte on the final frame,
+            // occasionally non-zero). Index 63 is never drawn, but it round-trips.
             this.sprite[quad].imageData = [];
             for (let frame = 0; frame < quadHeader.totalFrames; ++frame) {
                 this.sprite[quad].imageData[frame] = this.fileData.slice(
@@ -974,9 +993,9 @@ class gmSprite {
     // NOTE: this scans ALL bytes, including the 64th (index 63) — which is padding
     // that the renderer never draws (see renderFrames: only row*3+col, indices
     // 0..62, become pixels). So this is a serialization/trim helper, NOT a test for
-    // "visibly blank". An embedded sprite's final frame can carry a non-zero byte 63
-    // (a benign over-read of the next entry — see decodeSpriteData) and still render
-    // completely empty. To ask "does this frame show anything?", check indices 0..62.
+    // "visibly blank". GameMaker sometimes stores a non-zero byte 63 (e.g. 08 in
+    // BOAT01/SPR), so a frame can carry data here and still render completely empty.
+    // To ask "does this frame show anything?", check indices 0..62.
     static _frameHasData(imageData) {
         if (!imageData) return false;
         for (let i = 0; i < imageData.length; i++) {
@@ -1008,16 +1027,15 @@ class gmSprite {
         // frames are blank.
         const framesToSave = this.sprite.map(q => gmSprite._framesToSaveForQuad(q, numFrames));
 
-        // Calculate total size
-        // All frames are 64 bytes except the very last frame (63 bytes, no trailing padding)
-        const totalFrameCount = framesToSave.reduce((a, b) => a + b, 0);
+        // Calculate total size. Every frame is 64 bytes, the last included -- GameMaker's own
+        // files end with the final frame's 64th byte. (We used to write the last frame as 63: the
+        // old D64 reader dropped each file's final byte, so that's what GameMaker files looked like.)
         let size = 37; // Main header
         size += framesToSave[0] * 64; // Main sprite frames
         for (let q = 1; q < numQuads; q++) {
             size += 32; // Subheader
             size += framesToSave[q] * 64; // Subsprite frames
         }
-        size -= 1; // Last frame has no trailing padding byte
 
         const data = new Uint8Array(size);
 
@@ -1031,7 +1049,9 @@ class gmSprite {
         let anySubspriteExceedsX255 = false;
         for (let q = 1; q < numQuads; q++) {
             const subSprite = this.sprite[q];
-            const subAbsX = xPos + (header.isMultiColor ? subSprite.xPosition * 2 : subSprite.xPosition);
+            // Offsets are fat pixels in BOTH modes, so GameMaker always doubles them (verified on
+            // the hi-res CTITLE and BOOM sprites, whose stored absolute x only matches with * 2).
+            const subAbsX = xPos + subSprite.xPosition * 2;
             if (subAbsX > 255) {
                 anySubspriteExceedsX255 = true;
                 break;
@@ -1098,9 +1118,15 @@ class gmSprite {
         data[25] = header.yPosition + 50;
 
         // [26] X position high bit flags
-        let byte26 = 0x00;
+        // A parsed sprite keeps GameMaker's other bits (see decodeSpriteData); a new one gets our
+        // best guess for them.
+        let byte26;
+        if (this._byte26 !== undefined) {
+            byte26 = this._byte26 & ~0x10;
+        } else {
+            byte26 = anySubspriteExceedsX255 ? 0x80 : 0x00;
+        }
         if (xPos > 255) byte26 |= 0x10;
-        if (anySubspriteExceedsX255) byte26 |= 0x80;
         data[26] = byte26;
 
         // [27] Sprite number (0 for main sprite)
@@ -1116,17 +1142,11 @@ class gmSprite {
 
         let offset = 37;
 
-        // Track total frames written to know when we're at the last one
-        let framesWritten = 0;
-        const totalFrames = framesToSave.reduce((a, b) => a + b, 0);
 
         // Write frame data for main sprite
         for (let f = 0; f < framesToSave[0]; f++) {
             const imgData = this.sprite[0].imageData[f];
-            framesWritten++;
-            const isLastFrame = framesWritten === totalFrames;
-            const bytesToWrite = isLastFrame ? 63 : 64; // Last frame has no padding byte
-            for (let i = 0; i < bytesToWrite; i++) {
+            for (let i = 0; i < 64; i++) {
                 data[offset++] = imgData ? (imgData[i] || 0) : 0;
             }
         }
@@ -1183,7 +1203,9 @@ class gmSprite {
             data[offset++] = subSprite.yPosition < 0 ? subSprite.yPosition + 256 : subSprite.yPosition;
 
             // Bytes 19-20 - Absolute position
-            const subAbsX = xPos + (header.isMultiColor ? subSprite.xPosition * 2 : subSprite.xPosition);
+            // Offsets are fat pixels in BOTH modes, so GameMaker always doubles them (verified on
+            // the hi-res CTITLE and BOOM sprites, whose stored absolute x only matches with * 2).
+            const subAbsX = xPos + subSprite.xPosition * 2;
             const subAbsY = mainYFile + subSprite.yPosition;
             data[offset++] = subAbsX & 0xFF;
             data[offset++] = subAbsY & 0xFF;
@@ -1203,10 +1225,7 @@ class gmSprite {
             // Frame data for this subsprite
             for (let f = 0; f < framesToSave[q]; f++) {
                 const imgData = subSprite.imageData[f];
-                framesWritten++;
-                const isLastFrame = framesWritten === totalFrames;
-                const bytesToWrite = isLastFrame ? 63 : 64;
-                for (let i = 0; i < bytesToWrite; i++) {
+                for (let i = 0; i < 64; i++) {
                     data[offset++] = imgData ? (imgData[i] || 0) : 0;
                 }
             }

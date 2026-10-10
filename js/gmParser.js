@@ -112,14 +112,20 @@ function parseProgramData(fileData) {
     const OFFSET = 0x3D90;
     const DATA_END = OFFSET - decode16bit(fileData[516], fileData[517]);
 
+    // The pointer table's first entry (the $3D90 sentinel) sits at a fixed distance past the
+    // data section; later entries run backwards from it. Located from the header, NOT from the
+    // end of the file: GameMaker's files end 82 bytes past it, but files saved by older gmc64
+    // builds can be a byte shorter or longer, and counting back from EOF breaks on those.
+    const POINTER_TABLE_START = PROGRAM_END + DATA_END + 542;
+
     // Helper function to read a specific pointer table entry on-demand
     // Note: index is the "compacted" index (skipping OFFSET entries), not raw byte position
     function getPointerForIndex(index) {
         let currentIndex = 0;
 
-        for (let i = -81; i > -256; i -= 2) {
-            const lowByte = fileData.at(i);
-            const highByte = fileData.at(i + 1);
+        for (let p = POINTER_TABLE_START; p > POINTER_TABLE_START - 175; p -= 2) {
+            const lowByte = fileData[p];
+            const highByte = fileData[p + 1];
             const rawAddr = decode16bit(lowByte, highByte);
 
             if (rawAddr === 0) break; // End of table
@@ -249,9 +255,9 @@ function parseProgramData(fileData) {
     // Calculate actual data sizes for each entry by reading ALL pointer entries
     // and computing gaps between them.
     const allPointerEntries = [];
-    for (let i = -81; i > -256; i -= 2) {
-        const lowByte = fileData.at(i);
-        const highByte = fileData.at(i + 1);
+    for (let p = POINTER_TABLE_START; p > POINTER_TABLE_START - 175; p -= 2) {
+        const lowByte = fileData[p];
+        const highByte = fileData[p + 1];
         const rawAddr = decode16bit(lowByte, highByte);
 
         if (rawAddr === 0) break; // End of table
@@ -597,7 +603,7 @@ function parseProgramData(fileData) {
 //                                (ins 189 onward — contiguous to end)
 //   ...            $36D2-$3D8F  data section content (media entries, etc.)
 //   ...            $3F9C-$3FAE  pointer table (2-byte entries, sentinel 0x3D90)
-//   ...            $3FB0-$3FFE  slot names region (79 bytes editor state)
+//   ...            $3FB0-$3FFF  slot names region (80 bytes editor state)
 //   0x8000-0x81FF  $8300-$84FF  ORIGINAL loaded .PRG label table — 512 bytes
 //   0x8200-0x8208  $8500-$8508  ORIGINAL loaded .PRG header
 //                                (programLen@0x8200, dataSize@0x8202, 5 reserved)
@@ -669,8 +675,8 @@ function standaloneToPRG(standaloneBytes) {
     //   [514..522] header (9 bytes: programLen, dataSize, 5 reserved)
     //   [523..PROGRAM_END-1] bytecode + strings
     //   [PROGRAM_END..PROGRAM_END+DATA_END-1] data section
-    //   [tail 623 bytes] gap + pointer table + slot names
-    const totalSize = PROGRAM_END + DATA_END + 623;
+    //   [tail 624 bytes] gap + pointer table + slot names
+    const totalSize = PROGRAM_END + DATA_END + 624;
     const prg = new Uint8Array(totalSize);
 
     // Load address stays $0400 to match every other editor .PRG on disk.
@@ -706,8 +712,8 @@ function standaloneToPRG(standaloneBytes) {
     }
 
     // Tail region: pointer table + slot names. parseProgramData walks the
-    // pointer table backwards via `fileData.at(-81)` (low byte of sentinel).
-    // Layout: last 79 bytes = slot names; byte at -80/-81 = sentinel high/low;
+    // pointer table backwards from PROGRAM_END + DATA_END + 542 (low byte of sentinel).
+    // Layout: last 80 bytes = slot names; bytes -82/-81 = sentinel low/high;
     // preceding pairs = media pointer entries; then 0x0000 marker; then padding.
     //
     // In the standalone memory image these sit at fixed memory $3FB0
@@ -715,9 +721,9 @@ function standaloneToPRG(standaloneBytes) {
     // low byte at $3FAE, and entries grow backward from there. We copy
     // the whole tail region back-aligned.
     const slotNamesInStandalone = SLOT_NAMES_MEMORY - STANDALONE_LOAD + 2;
-    // Slot names: last 79 bytes of both files.
-    for (let i = 0; i < 79; i++) {
-        prg[totalSize - 79 + i] = standaloneBytes[slotNamesInStandalone + i];
+    // Slot names: last 80 bytes of both files ($3FB0-$3FFF).
+    for (let i = 0; i < 80; i++) {
+        prg[totalSize - 80 + i] = standaloneBytes[slotNamesInStandalone + i];
     }
     // Pointer table: copy backward from the byte immediately before slot
     // names (that byte is the sentinel's high byte, i.e. 0x3D). Loop covers
@@ -725,7 +731,7 @@ function standaloneToPRG(standaloneBytes) {
     // zero, which terminates parseProgramData's backward walk.
     for (let i = 0; i < 100; i++) {
         const src = slotNamesInStandalone - 1 - i;
-        const dst = totalSize - 79 - 1 - i;
+        const dst = totalSize - 80 - 1 - i;
         if (src < 0 || dst < 0) break;
         prg[dst] = standaloneBytes[src];
     }
@@ -959,7 +965,8 @@ function buildAST(programData) {
 // Bytes 518-522:   Reserved (zeros)
 // Bytes 523+:      Program bytecode (4 bytes per instruction)
 // After program:   Data section (sprites, sounds, songs, strings, comments)
-// End of file:     Pointer table (2-byte entries, read backwards from -81)
+// After data:      Pointer table (2-byte entries, read backwards from
+//                  PROGRAM_END + DATA_END + 542), then the 80-byte slot-name tail
 //
 // === DATA SECTION LAYOUT ===
 //
@@ -972,7 +979,8 @@ function buildAST(programData) {
 //
 // === POINTER TABLE FORMAT ===
 //
-// The pointer table is at the END of the file, read backwards from byte -81.
+// The pointer table sits just before the 80-byte tail, read backwards from
+// PROGRAM_END + DATA_END + 542 (82 bytes before the end of a GameMaker file).
 // Each entry is a 16-bit little-endian "rawAddr" value.
 //
 // To convert a file offset (dataStart) to a rawAddr for the pointer table:
@@ -1313,7 +1321,8 @@ function serializeProgram(programData, originalFileData = null) {
             //   [24-26]: FF FF FF delimiter
             //   [27-33]: Preamble
             //   [34+]:   Note data (<duration> <pitch> pairs)
-            //   Each channel ends with FF FF, file ends with single FF
+            //   Each channel ends with FF FF (GameMaker's files), but files saved by
+            //   gmc64 before 2026-10 end the last channel with a single FF -- accept both.
             // Parse through to find actual end.
             const maxSearch = Math.min(rawData.length, 5000);
             let pos = 34;  // Note data starts at byte 34
@@ -1411,7 +1420,7 @@ function serializeProgram(programData, originalFileData = null) {
 
     const pointerTable = [];
 
-    // Add leading OFFSET sentinel at position -81
+    // Add leading OFFSET sentinel at POINTER_TABLE_START
     // The original GameMaker format always starts with an OFFSET sentinel before
     // the actual data page entries. The parser skips this when indexing.
     pointerTable.push(...encode16bit(OFFSET));
@@ -1465,19 +1474,19 @@ function serializeProgram(programData, originalFileData = null) {
     // PHASE 7: Assemble complete file
     // =========================================================================
 
-    // Calculate total size using the formula derived from analyzing original GM files:
-    //   fileSize = PROGRAM_END + DATA_END + 623
+    // Total size, as in every GameMaker PRG on the original S1/S2 disks:
+    //   fileSize = PROGRAM_END + DATA_END + 624
     //
-    // The 623 bytes after DATA_END consist of:
-    //   - 542 bytes: "gap" region (mostly zeros, pointer table entries stored here)
-    //   - 81 bytes: reserved region containing:
-    //     - 2 bytes: sentinel $3D90 at position -81
-    //     - 79 bytes: data page entry names (8 bytes each: 6-char name + 2-char slot)
+    // The 624 bytes after DATA_END consist of:
+    //   - 542 bytes: "gap" region (zeros; the pointer table grows backwards into it)
+    //   - 2 bytes:   the $3D90 sentinel, first pointer-table entry
+    //   - 80 bytes:  tail -- 8 sprite-slot names + "ANYONE  " + "CLR2/3" $80 '-' (see PHASE 8)
     //
-    // This formula was verified against 7 of 8 original GM PRG files (all except 2SCENE).
-    // The pointer table entries are written backwards starting from position -81,
-    // growing into the 542-byte gap region.
-    const RESERVED_AFTER_DATA = 623;
+    // This was 623 with a 79-byte tail until 2026-10: the old D64 reader dropped every file's
+    // final byte, so GameMaker's files looked one byte short and this formula was fitted to that.
+    const RESERVED_AFTER_DATA = 624;
+    const POINTER_TABLE_START = PROGRAM_END + DATA_END + 542;   // same anchor parseProgramData uses
+    const TAIL_START = POINTER_TABLE_START + 2;
     const fileSize = PROGRAM_END + DATA_END + RESERVED_AFTER_DATA;
 
     const result = new Uint8Array(fileSize);
@@ -1572,50 +1581,58 @@ function serializeProgram(programData, originalFileData = null) {
         result[PROGRAM_END + i] = dataSection[i];
     }
 
-    // Pointer table: at end of file, readable from byte -81 backwards
-    // Parser reads: fileData.at(-81), at(-83), at(-85), ... (pairs going backwards)
-    // So we write each 2-byte entry at decreasing positions from -81
-    // Entry 1 at -81/-80, Entry 2 at -83/-82, Entry 3 at -85/-84, etc.
+    // Pointer table: 2-byte entries running backwards from POINTER_TABLE_START
+    // (entry 1 = sentinel at +0/+1, entry 2 at -2/-1, entry 3 at -4/-3, ...)
     for (let i = 0; i < pointerTable.length; i += 2) {
-        const writePos = fileSize - 81 - i;  // -81, -83, -85, ... relative to end
+        const writePos = POINTER_TABLE_START - i;
         result[writePos] = pointerTable[i];      // low byte
         result[writePos + 1] = pointerTable[i + 1];  // high byte
     }
 
     // =========================================================================
-    // PHASE 8: Write last 79 bytes (entry names region)
+    // PHASE 8: Write the 80-byte tail
     // =========================================================================
     //
-    // The last 81 bytes of the file contain:
-    //   - Bytes -81/-80: Sentinel $3D90 (already written as first pointer entry)
-    //   - Bytes -79 to -1: Entry names/editor state (79 bytes)
-    //   - Last byte (-1): Terminator 0x80
+    // Layout in every original GameMaker PRG (ten 8-byte entries):
+    //   8 x [6-char name]['1'..'8']['-']   one per sprite slot 0..7
+    //   "ANYONE  "                         constant
+    //   "CLR2/3" $80 '-'                   constant
     //
-    // Analysis of original GM files shows this region contains sprite/entry names
-    // that don't directly correspond to mediaStore order. This appears to be
-    // editor-specific state. For maximum compatibility, we preserve the original
-    // data when available. Otherwise, we write mediaStore entry names.
-
-    // The last 79 bytes appear to track sprite SLOT assignments (sprite1-sprite8).
-    // Format: 8 bytes per slot (6-char name + 2-char slot marker like "1-")
-    // When only one sprite is ever assigned to a slot, GM shows that sprite's name
-    // in instructions. Otherwise it shows "SPRITE1" etc.
-    //
-    // For now, blank these bytes to test what breaks. We'll need to scan
-    // instructions to properly reconstruct slot assignments later.
-    //
-    // TODO: Implement proper slot assignment tracking by scanning "sprite N is X"
-    // instructions to determine which sprites are assigned to which slots.
-
-    const ENTRY_NAME_START = fileSize - 79;
-
-    // Blank the entry region with spaces
-    for (let i = 0; i < 79; i++) {
-        result[ENTRY_NAME_START + i] = 0x20;  // Space
+    // A slot's name is what GameMaker's editor shows for it: the sprite's name when every
+    // `sprite N is X` for that slot names the same sprite, "SPRITE" when the slot gets
+    // different sprites, and "------" when it is never assigned. That matches 11 of the 12
+    // PRGs on the S1/S2 disks. The twelfth (BRTHDY) shows "SPRITE" for slots that now hold a
+    // single sprite: GameMaker's "SPRITE" is sticky, remembering an earlier assignment that
+    // was since edited away. That history isn't in the instructions, so carry "SPRITE" over
+    // from the file we loaded (when it has a GameMaker-format tail) while the slot is in use.
+    const SPRITE_NAME = [0x13, 0x10, 0x12, 0x09, 0x14, 0x05];   // "SPRITE" in screen codes
+    const originalSlotIsSprite = (slot) => {
+        if (!originalFileData || originalFileData.length < 518) return false;
+        const oProgEnd = 514 + decode16bit(originalFileData[514], originalFileData[515] - 6);
+        const oDataEnd = OFFSET - decode16bit(originalFileData[516], originalFileData[517]);
+        const e = oProgEnd + oDataEnd + 544 + slot * 8;
+        if (originalFileData[e + 6] !== 0x31 + slot || originalFileData[e + 7] !== 0x2D) return false;
+        return SPRITE_NAME.every((c, i) => originalFileData[e + i] === c);
+    };
+    const slotSprites = Array.from({ length: 8 }, () => new Set());
+    for (const instr of instructions) {
+        if (instr.opcode === 0x27 && instr.arg1 < 8 && instr.arg2 > 0) {
+            slotSprites[instr.arg1].add(instr.arg2);
+        }
     }
-
-    // Write terminator at last byte
-    result[fileSize - 1] = 0x80;
+    for (let slot = 0; slot < 8; slot++) {
+        const assigned = [...slotSprites[slot]];
+        let name;
+        if (assigned.length === 0) name = '------';
+        else if (assigned.length > 1 || originalSlotIsSprite(slot)) name = 'SPRITE';
+        else name = mediaStore[assigned[0]]?.name || 'SPRITE';
+        const entryStart = TAIL_START + slot * 8;
+        result.set(encodeString(name.toUpperCase(), 6), entryStart);
+        result[entryStart + 6] = 0x31 + slot;   // '1'..'8'
+        result[entryStart + 7] = 0x2D;          // '-'
+    }
+    result.set([0x01, 0x0E, 0x19, 0x0F, 0x0E, 0x05, 0x20, 0x20], TAIL_START + 64);  // "ANYONE  "
+    result.set([0x03, 0x0C, 0x12, 0x32, 0x2F, 0x33, 0x80, 0x2D], TAIL_START + 72);  // "CLR2/3" $80 '-'
 
     return result;
 }

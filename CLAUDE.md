@@ -132,7 +132,7 @@ The serializer (`serializeProgram` in gmParser.js) builds a PRG file from the so
 
 7. **Assemble complete file** - Combine all sections into final byte array
 
-8. **Write entry names region** - Last 79 bytes for editor state
+8. **Write the 80-byte tail** - 8 sprite-slot names + `ANYONE  CLR2/3` $80 `-`
 
 **Key principles:**
 - AST is source of truth for instructions
@@ -152,7 +152,8 @@ The serializer (`serializeProgram` in gmParser.js) builds a PRG file from the so
 | Reserved | 518-522 | Zeros |
 | Instructions | 523+ | 4 bytes each: [label, arg1, opcode, arg2] |
 | Data section | after instructions | Sprites, sounds, songs, strings, comments |
-| Pointer table | end of file | 2-byte entries, read backwards from byte -81 |
+| Pointer table | PROGRAM_END + DATA_END + 542 | 2-byte entries, read backwards (sentinel first) |
+| Tail | last 80 bytes | 8 sprite-slot names, then constant `ANYONE  CLR2/3` $80 `-` |
 
 ### Label Table (bytes 2-513)
 
@@ -169,31 +170,37 @@ The address is calculated from the instruction's position in the bytecode.
 - Byte 12: Repeat count
 - Byte 14: Speed (XOR'd with 128)
 - Byte 17: Frame count
-- Bytes 18+: Frame data (16 bytes each)
+- Bytes 18+: Frame data (16 bytes each). File is exactly `18 + 16 * frames` bytes
 
 ### .SNG (Music)
 - Bytes 0-4: Load addr + "GEK"
 - Byte 20: Tempo (80 = 140 BPM, linear scaling)
 - Bytes 21-23: Instrument per channel (0-13)
-- Bytes 34+: Note data by channel (`<duration> <pitch>` pairs, `FF FF` = end)
+- Bytes 24-33: Preamble, varies between GM's own files (looks like leftover memory) — preserved verbatim
+- Bytes 34+: Note data by channel (`<duration> <pitch>` pairs). Every channel, the last included, ends `FF FF`
 - Duration: 0x00=32nd, 0x07=quarter, 0x0F=half, 0x1F=whole. +0x20=tied, +0x40=rest
 - Pitch: 0x26 = A440, +1 = semitone up
 
 ### .SPR (Sprites)
 - 37-byte header with position, colors, flags, frame count
-- Each frame: 63 real bytes (24×21 pixels), padded to 64 for alignment — **except
-  the last stored frame, which is 63 with no trailing padding** (matches original
-  GM files). Consequence: a sprite embedded in a PRG reads its final frame as 64
-  bytes and over-reads 1 byte (index 63) of the next data entry. That byte is
-  padding and is never rendered (only indices 0–62 are pixels), so it's harmless —
-  don't mistake a non-zero byte 63 for a visible pixel. `gmSprite._frameHasData`
-  scans all 64 bytes, so it is NOT a "visibly blank" test; check bytes 0–62 for that.
+- Each frame: 63 real bytes (24×21 pixels) + 1 padding byte = 64, **the last frame
+  included**. GM sometimes stores a non-zero padding byte (e.g. `08` in BOAT01/SPR);
+  it's never rendered (only indices 0–62 are pixels) but must round-trip.
+  `gmSprite._frameHasData` scans all 64 bytes, so it is NOT a "visibly blank" test;
+  check bytes 0–62 for that.
+- Bytes 12/13 (shared colours) are stored in hi-res sprites too; keep them.
+- Byte 26: only bit 4 (main x > 255) is understood; the other bits look like a VIC
+  x-MSB snapshot from GM's editor and are preserved verbatim from the parsed file.
+- Subheader absolute x (byte 19) = main x + offset × 2 in BOTH modes.
 - Multicolor: 12 fat pixels wide, hi-res: 24 thin pixels
 
 ### .PIC (Scenes)
 - 6-byte header (magic + RLE flag)
 - 8000 bytes pixel data (160×200, 4 colors, 2 bits per pixel)
 - 10-byte footer with colors and name
+- RLE-compressed files (byte 5 = $FF): the pair stream covers 8011 bytes (footer + one
+  extra $00, so it ends `01 00`), followed by one stray byte GM's loader never reads
+  (`00`/`55`/`AA`/`FF` in originals) — preserved from the parsed file, `00` for new scenes
 
 ### .PRG (Programs)
 - Bytes 0-513: Pre-header region (see "Open Questions" below)
@@ -202,8 +209,12 @@ The address is calculated from the instruction's position in the bytecode.
 - Bytes 518-522: Reserved
 - Bytes 523+: Program bytecode (4 bytes per instruction: label, arg1, opcode, arg2)
 - After program: Embedded asset data (sprites, sounds, songs, comments, print strings)
-- End of file: Pointer table (read backwards from byte -81)
-- Total file size: `PROGRAM_END + DATA_END + 623` (623 = gap + pointer table + slot names)
+- Pointer table: read backwards from `PROGRAM_END + DATA_END + 542` — locate it from the
+  header, never by counting back from EOF (older gmc64 saves are ±1 byte)
+- Last 80 bytes: 8 × `[6-char name][slot digit]['-']` (sprite name if the slot only ever
+  gets one sprite, `SPRITE` if several — sticky across edits in GM — `------` if unused),
+  then the constant `ANYONE  ` and `CLR2/3` $80 `-`
+- Total file size: `PROGRAM_END + DATA_END + 624` (624 = 542 gap + 2 sentinel + 80 tail)
 
 ### Standalone files (GameMaker "export to standalone" output)
 
@@ -228,7 +239,7 @@ ALIENS/PRG exported to standalone):
 | 0x05FD+       | $08FD+      | bytecode TAIL (ins 189..end, runtime working copy) |
 | dataSize→$3D90 | $[dataSize]..$3D8F | data section content |
 | $3F9C+        | $3F9C+      | pointer table (2-byte entries, sentinel 0x3D90) |
-| $3FB0+        | $3FB0+      | slot names region (79 bytes editor state) |
+| $3FB0+        | $3FB0+      | slot names region (80 bytes, to $3FFF) |
 
 Why the bytecode is split across two chunks: runtime machine code starts
 at memory $8800 and clobbers the tail of the loaded PRG at $8509. Only
@@ -659,6 +670,12 @@ section. Internal-only convenience worth calling out:
 
 **Don't trim() filenames:** Spaces can be significant (e.g., `"STARS /PIC"`). GameMaker filenames are exactly 6 chars (space-padded if shorter) + `/` + 3-char extension. `disk.readFile` normalizes on lookup, but round-tripping and directory display are picky.
 
+**Check file formats against something external.** Our D64 reader and writer once had
+mirror-image last-sector bugs that cancelled out, so every self round-trip was perfect while
+real 1541s saw a different file — and the formats were then fitted to the buggy reader (every
+file looked one byte short). `tests/gm-fidelity.test.js` compares against VICE's `c1541` and
+the original GameMaker disks; when changing a format, run it with those available.
+
 **Opcode 0x00 halts execution.** A "blank line" in the source *terminates the program* — it isn't a no-op or visual spacer. If you're inserting comments to break up a listing, use opcode 0x2B, not 0x00. The one legitimate blank line is at the very end of a program.
 
 **Comment strings cap at 25 bytes.** The serializer (`packStringReferences` in gmParser.js) truncates silently. Print strings (opcode 0x3B) cap at 20 bytes similarly. Keep both short or you'll lose text without warning.
@@ -724,6 +741,7 @@ Format / runtime tests (node, no browser):
 | `gmRuntime.test.js` | VM execution, input simulation, frame goldens, collision |
 | `standalone-bundle.test.js` | Asserts `js/standalone-source.js` is in sync with `play.html` + the runtime JS it inlines |
 | `browser-load.test.js` | Loads each HTML page headlessly and asserts no script errors |
+| `gm-fidelity.test.js` | Checks against things that aren't us: the 1541 last-sector rule, VICE `c1541` (if installed), and byte-exact re-saves of every file on the original GameMaker S1/S2 disks (if present in `tests/disks/` — gitignored, never committed) |
 
 Editor UI tests (puppeteer):
 

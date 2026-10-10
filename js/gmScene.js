@@ -142,6 +142,9 @@ class gmScene {
 
         // Check RLE flag (byte 5): 0xFF means compressed
         if (fileData[5] === 0xFF) {
+            // GameMaker follows its RLE pairs with one stray byte (00/55/AA/FF in the originals,
+            // unrelated to the image; its loader never reads it). Keep it so a re-save is identical.
+            if ((fileData.length - headerLength) % 2 === 1) this._rleTrailer = fileData[fileData.length - 1];
             fileData = this.decodeRLE(fileData, headerLength, imageLength, footerLength);
         }
 
@@ -430,14 +433,18 @@ class gmScene {
         imageAndFooter[footerOffset + 9] = 0x00;
 
         // === COMPRESSION DECISION ===
-        // Try RLE compression and compare sizes
-        const rleData = this.encodeRLE(imageAndFooter);
+        // Try RLE compression and compare sizes. GameMaker's compressed stream covers one byte more
+        // than the uncompressed footer: every original ends its RLE with a run of TWO zeros (01 00)
+        // where the uncompressed file has one, so encode an extra 0x00 past the footer.
+        const rleSource = new Uint8Array(imageAndFooter.length + 1);
+        rleSource.set(imageAndFooter);
+        const rleData = this.encodeRLE(rleSource);
         const uncompressedSize = headerLength + imageLength + footerLength;
         const compressedSize = headerLength + rleData.length;
 
         if (compressedSize < uncompressedSize) {
             // Use RLE compression
-            const data = new Uint8Array(compressedSize);
+            const data = new Uint8Array(compressedSize + 1);
 
             // Header with RLE flag
             data[0] = 0x00;
@@ -447,8 +454,9 @@ class gmScene {
             data[4] = 0x4B;
             data[5] = 0xFF; // RLE flag: 0xFF = compressed
 
-            // Compressed data
+            // Compressed data, then GameMaker's stray trailing byte (see parseSceneFile)
             data.set(rleData, headerLength);
+            data[compressedSize] = this._rleTrailer ?? 0x00;
 
             return data;
         } else {

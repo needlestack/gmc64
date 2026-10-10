@@ -30,7 +30,8 @@
 // Note data (bytes 34+):
 //   Notes are grouped BY CHANNEL, not by beat.
 //   Each channel's notes are sequential <duration> <pitch> pairs.
-//   FF FF marks end of channel, single FF marks end of file.
+//   FF FF marks the end of each channel, the last included (so a file ends FF FF).
+//   (Songs saved by gmc64 before 2026-10 end in a single FF; parse() accepts either.)
 //   Channel order: Ch1 (highest voice), Ch2 (mid), Ch3 (lowest/bass)
 //
 // === DURATION ENCODING ===
@@ -153,6 +154,11 @@ class gmMusic {
         this.bpm = (this.tempo / 80) * gmMusic.BASE_BPM;
         this.quarterNoteDuration = 60 / this.bpm;
 
+        // Bytes 24-33 vary between GameMaker's own files in ways that look like leftover memory
+        // (most are FF..FF AD, others FF FF 7F 7F 00 FF ... or 00 00 55 06 ...). Not understood,
+        // so keep them verbatim so a re-save matches what GameMaker wrote.
+        this._preamble = this.fileData.slice(24, 34);
+
         this.channels = [[], [], []];
 
         let i = 34;
@@ -222,7 +228,9 @@ class gmMusic {
         // Channel end offsets (cumulative, INCLUDING the FF FF delimiters)
         const ch1EndOffset = ch1Size + 2;                      // ch1 notes + FF FF
         const ch2EndOffset = ch1Size + 2 + ch2Size + 2;        // ch1 + ch2 + both FF FFs
-        const totalNoteBytes = ch1Size + ch2Size + ch3Size + 5; // all notes + 2 + 2 + 1 delimiters
+        // Every channel, the last included, ends in FF FF. (We used to write a single FF for the
+        // last one: the old D64 reader dropped each file's final byte, so that's all it ever saw.)
+        const totalNoteBytes = ch1Size + ch2Size + ch3Size + 6; // all notes + three FF FF delimiters
 
         // Total file size: 34 byte header + all note data including delimiters
         const size = 34 + totalNoteBytes;
@@ -271,14 +279,15 @@ class gmMusic {
         data[offset++] = this.instruments[1];
         data[offset++] = this.instruments[2];
 
-        // Bytes 24-26: Delimiter FF FF FF
-        data[offset++] = 0xFF;
-        data[offset++] = 0xFF;
-        data[offset++] = 0xFF;
-
-        // Bytes 27-33: Preamble (FF padding + AD marker)
-        for (let i = 0; i < 6; i++) data[offset++] = 0xFF;
-        data[offset++] = 0xAD;
+        // Bytes 24-33: preamble. Carried verbatim from the parsed file; new songs get the most
+        // common pattern in GameMaker's files (FF x 9, AD).
+        if (this._preamble && this._preamble.length === 10) {
+            data.set(this._preamble, offset);
+            offset += 10;
+        } else {
+            for (let i = 0; i < 9; i++) data[offset++] = 0xFF;
+            data[offset++] = 0xAD;
+        }
 
         // Note data starting at byte 34
         for (let ch = 0; ch < 3; ch++) {
@@ -286,14 +295,8 @@ class gmMusic {
                 data[offset++] = note.durationByte;
                 data[offset++] = note.pitch;
             }
-            if (ch < 2) {
-                // Channels 0 and 1 end with FF FF delimiter
-                data[offset++] = 0xFF;
-                data[offset++] = 0xFF;
-            } else {
-                // Channel 2 ends with single FF (end of song)
-                data[offset++] = 0xFF;
-            }
+            data[offset++] = 0xFF;
+            data[offset++] = 0xFF;
         }
 
         return data.slice(0, offset);

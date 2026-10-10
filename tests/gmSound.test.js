@@ -114,9 +114,11 @@ describe('gmSound - parsing from disk', () => {
             for (let i = 0; i < sound.frames.length; i++) {
                 // The golden adds a synthetic `index` field per frame for
                 // readability — the runtime doesn't, so strip it before
-                // comparing.
+                // comparing. `_raw` (the frame's file bytes, kept so unmodeled
+                // bits survive a re-save) is covered by the round-trip tests.
                 const { index, ...exp } = expected.frames[i];
-                expect(sound.frames[i]).toEqual(exp);
+                const { _raw, ...actual } = sound.frames[i];
+                expect(actual).toEqual(exp);
             }
         });
 
@@ -144,9 +146,11 @@ describe('gmSound - parsing from disk', () => {
             for (let i = 0; i < sound.frames.length; i++) {
                 // The golden adds a synthetic `index` field per frame for
                 // readability — the runtime doesn't, so strip it before
-                // comparing.
+                // comparing. `_raw` (the frame's file bytes, kept so unmodeled
+                // bits survive a re-save) is covered by the round-trip tests.
                 const { index, ...exp } = expected.frames[i];
-                expect(sound.frames[i]).toEqual(exp);
+                const { _raw, ...actual } = sound.frames[i];
+                expect(actual).toEqual(exp);
             }
         });
     });
@@ -169,10 +173,10 @@ describe('gmSound - serialization round-trip', () => {
     });
 
     test('serialized size matches expected format', () => {
-        // Size = 18 (header) + 16 * frames + 1 (trailing zero)
+        // Size = 18 (header) + 16 * frames, exactly as in every GameMaker .SND
         for (const name of FIXTURES) {
             const sound = loadSoundFromDisk(disk, name);
-            const expectedSize = 18 + (16 * sound.frames.length) + 1;
+            const expectedSize = 18 + (16 * sound.frames.length);
             expect(sound.serialize().length).toBe(expectedSize);
         }
     });
